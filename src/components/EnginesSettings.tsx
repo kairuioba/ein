@@ -198,7 +198,9 @@ function CustomPicker({ instance, cliDefault, onClose, onSaved }: {
   );
 }
 
-function EngineRow({ instance }: { instance: InstanceInfo }) {
+/** One engine's CLI binary: what it runs now, and the "Set CLI…" picker.
+ * Settings › Engines shows it inside each engine's detail sheet too. */
+export function EngineRow({ instance }: { instance: InstanceInfo }) {
   const { refreshInstances } = useStore();
   const [open, setOpen] = useState(false);
   const [switching, setSwitching] = useState(false);

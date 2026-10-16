@@ -1,7 +1,18 @@
-import { BookOpen, ChevronDown, ChevronLeft, Crown, FolderOpen, Trash2, X } from "lucide-react";
-import { useEffect, useState } from "react";
+// Bot settings (U11): the right-hand panel for one bot. On top, the bot as
+// its engine's mascot with its name plate; then name, tag and description;
+// engine and department; permissions; notifications, memory and skills.
+// Everything else a bot has (avatar image, effort, the full computer choice,
+// auto-review, voice, usage, working folder, the memory editor and learned
+// skills) sits under "More settings" or in the … menu.
+import { BookOpen, ChevronDown, ChevronLeft, ChevronRight, Crown, FolderOpen, Lock, MoreHorizontal, PanelRightClose, Plus, Sparkles, Trash2, Wand2, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, useStore, type Bot } from "@/state/store";
+import { useOrg } from "@/state/org-api";
+import { chiefBot, buildDepartments } from "@/lib/org";
 import { stateForBot } from "@/lib/mascot";
+import { MASCOT_BODY, MASCOT_BRAND, mascotForBot } from "@/lib/engine-mascots";
+import { Mascot, BotTile } from "@/components/mascot/Mascot";
+import { Pill, Segmented } from "@/components/ui";
 import { CloudBackendPicker } from "./CloudBackendPicker";
 import { ModelPicker } from "./ModelPicker";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
@@ -12,26 +23,21 @@ import { botUsage, costCaption, formatTokens, formatUsd, hasFiniteCost } from "@
 import { shortPath } from "@/lib/short-path";
 import { instanceSupportsLocalComputer, localComputerDisabledReason, localComputerSelectable } from "@/lib/local-computer";
 import { BotProfileAvatarCard } from "./BotProfileAvatarCard";
+import { BotAvatar } from "./Avatar";
 import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
 import { VoiceSettings } from "./VoiceSettings";
 import { BOT_PROFILE_LIMITS } from "../../shared/bot-profile";
 import { Switch } from "./SettingsPrimitives";
 import { msg, t, tn, tRich } from "@/lib/i18n";
+import { useAppCatalog } from "./settings/app-catalog";
+import { countMemoryNotes, heroStatus, superiorOf, teamSize } from "./settings/bot-panel-model";
+import { recommendedFor } from "./settings/engine-model";
+import { FieldLabel, MarkTile, RowGroup, SettingRow, inputClass } from "./settings/parts";
 
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <label className="block">
-      <div className="mb-1.5 text-[13px] text-ink-secondary">{label}</div>
-      {children}
-    </label>
-  );
-}
+/** A bordered sub-card inside the panel (the panel itself is the white stage). */
+const cardCls = "rounded-xl p-3.5 shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_55%,transparent)]";
+const cardTitle = "text-[13.5px] font-semibold text-ink";
+const cardSub = "mt-0.5 text-[12px] leading-relaxed text-ink-secondary";
 
 /** What this bot has spent across its tasks. Cost is captioned by how the
  * engine is billed — on a subscription the figure is an equivalent. */
@@ -39,11 +45,18 @@ function BotUsageCard({ bot }: { bot: Bot }) {
   const { state, dispatch } = useStore();
   const usage = botUsage(bot);
   const instance = state.instances.find((i) => i.instanceId === bot.modelSelection.instanceId);
-  if (usage.turns === 0) return null;
+  if (usage.turns === 0) {
+    return (
+      <div className={cardCls}>
+        <div className={cardTitle}>{t("Usage")}</div>
+        <div className={cardSub}>{t("Nothing spent yet — figures appear after a bot's first turn.")}</div>
+      </div>
+    );
+  }
   return (
-    <div className="rounded-xl bg-card p-4">
+    <div className={cardCls}>
       <div className="flex items-baseline justify-between">
-        <div className="text-[15px] font-medium text-ink">{t("Usage")}</div>
+        <div className={cardTitle}>{t("Usage")}</div>
         <button
           onClick={() => dispatch({ type: "toggleAppSettings", open: true, section: "usage" })}
           className="text-[12px] text-ink-secondary hover:text-ink"
@@ -51,19 +64,19 @@ function BotUsageCard({ bot }: { bot: Bot }) {
           {t("All bots →")}
         </button>
       </div>
-      <div className="mt-3 grid grid-cols-3 gap-3 text-[13px]">
+      <div className="mt-2.5 grid grid-cols-3 gap-3 text-[13px]">
         <div>
-          <div className="text-[11.5px] uppercase tracking-wide text-ink-secondary">{t("Turns")}</div>
+          <div className="text-[11.5px] text-ink-secondary">{t("Turns")}</div>
           <div className="mt-0.5 tabular-nums text-ink">{usage.turns}</div>
         </div>
         <div>
-          <div className="text-[11.5px] uppercase tracking-wide text-ink-secondary">{t("Tokens")}</div>
+          <div className="text-[11.5px] text-ink-secondary">{t("Tokens")}</div>
           <div className="mt-0.5 tabular-nums text-ink" title={`${t("{input} in", { input: formatTokens(usage.input) })} · ${t("{output} out", { output: formatTokens(usage.output) })}`}>
             {formatTokens(usage.input + usage.output)}
           </div>
         </div>
         <div>
-          <div className="text-[11.5px] uppercase tracking-wide text-ink-secondary">{t("Cost")}</div>
+          <div className="text-[11.5px] text-ink-secondary">{t("Cost")}</div>
           <div className="mt-0.5 tabular-nums text-ink">{hasFiniteCost(usage.costUsd) ? formatUsd(usage.costUsd) : "—"}</div>
         </div>
       </div>
@@ -86,6 +99,22 @@ interface StagedSkillSummary {
   id: string;
   name: string;
   gist: string;
+}
+
+/** The bot's installed skills, read once per bot for the Skills row. */
+function useBotSkills(botId: string): ManagedSkill[] | null {
+  const [skills, setSkills] = useState<ManagedSkill[] | null>(null);
+  useEffect(() => {
+    let alive = true;
+    setSkills(null);
+    api(`/api/bots/${botId}/skills`)
+      .then((result: { skills?: ManagedSkill[] }) => alive && setSkills(result.skills ?? []))
+      .catch(() => alive && setSkills([]));
+    return () => {
+      alive = false;
+    };
+  }, [botId]);
+  return skills;
 }
 
 /** Skills are durable behavior, so the user needs a normal way to inspect,
@@ -187,12 +216,12 @@ function LearnedSkillsCard({ bot }: { bot: Bot }) {
 
   if (!featureEnabled && !loading && skills.length === 0 && staged.length === 0) return null;
   return (
-    <div className="rounded-xl bg-card p-4">
+    <div className={cardCls} id={`bot-skills-${bot.id}`}>
       <div className="flex items-center gap-2">
-        <BookOpen size={16} className="text-ink-secondary" />
-        <div className="text-[15px] font-medium text-ink">{t("Learned skills")}</div>
+        <BookOpen size={15} className="text-ink-secondary" />
+        <div className={cardTitle}>{t("Learned skills")}</div>
       </div>
-      <div className="mt-1 text-[12px] leading-relaxed text-ink-secondary">
+      <div className={cardSub}>
         {featureEnabled
           ? t("Use /learn in chat to stage a new skill. Nothing becomes active until you review and enable it.")
           : t("Skill authoring is off, but skills you already enabled stay under your control here.")}
@@ -302,9 +331,6 @@ const EFFORT_LABELS: Partial<Record<string, string>> = {
   max: msg("Max"),
 };
 
-const inputCls =
-  "w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2.5 text-[15px] text-ink placeholder:text-ink-secondary focus:outline-none focus:border-hairline";
-
 /** Where a bot's shell tools run. Set per bot; each task pins its own copy
  * on its first turn (the server does the pinning — Claude keeps sessions
  * per project folder, so a folder must not move under a live task). The
@@ -339,27 +365,27 @@ function WorkingFolder({ bot }: { bot: Bot }) {
   };
 
   return (
-    <div className="rounded-xl bg-card p-4">
-      <div className="text-[15px] font-medium text-ink">{t("Working folder")}</div>
-      <div className="mt-0.5 text-[13px] text-ink-secondary">{t("Where this bot runs its shell and file tools.")}</div>
+    <div className={cardCls}>
+      <div className={cardTitle}>{t("Working folder")}</div>
+      <div className={cardSub}>{t("Where this bot runs its shell and file tools.")}</div>
       {canPick ? (
-        <div className="mt-3 flex items-center gap-2">
-          <div className="min-w-0 flex-1 truncate rounded-lg border border-hairline/40 bg-inset px-3 py-2 font-mono text-[12.5px] text-ink" title={bot.cwd}>
+        <div className="mt-2.5 flex items-center gap-2">
+          <div className="min-w-0 flex-1 truncate rounded-lg bg-inset px-3 py-2 font-mono text-[12px] text-ink" title={bot.cwd}>
             {bot.cwd ? shortPath(bot.cwd, home) : <span className="text-ink-secondary">{t("Private bot workspace")}</span>}
           </div>
-          <button onClick={() => void pick()} disabled={saving} className="flex shrink-0 items-center gap-1.5 rounded-lg bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50">
+          <button onClick={() => void pick()} disabled={saving} className="flex shrink-0 items-center gap-1.5 rounded-lg bg-control px-3 py-2 text-[12.5px] text-ink hover:bg-raised-hover disabled:opacity-50">
             <FolderOpen size={14} />{" "}
             {t("Choose…")}
           </button>
           {bot.cwd && (
-            <button onClick={() => void save(null)} disabled={saving} className="shrink-0 rounded-lg px-2 py-2 text-[13px] text-ink-secondary hover:text-ink disabled:opacity-50">
+            <button onClick={() => void save(null)} disabled={saving} className="shrink-0 rounded-lg px-2 py-2 text-[12.5px] text-ink-secondary hover:text-ink disabled:opacity-50">
               {t("Clear")}
             </button>
           )}
         </div>
       ) : (
         <form
-          className="mt-3 flex items-center gap-2"
+          className="mt-2.5 flex items-center gap-2"
           onSubmit={(e) => {
             e.preventDefault();
             // an emptied field clears the folder — the server wants null
@@ -367,12 +393,12 @@ function WorkingFolder({ bot }: { bot: Bot }) {
           }}
         >
           <input
-            className={cn(inputCls, "font-mono text-[12.5px]")}
+            className={cn(inputClass, "font-mono text-[12px]")}
             placeholder={t("Private bot workspace — or an absolute path")}
             value={draft ?? bot.cwd ?? ""}
             onChange={(e) => setDraft(e.target.value)}
           />
-          <button type="submit" disabled={saving || draft === null} className="shrink-0 rounded-lg bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50">
+          <button type="submit" disabled={saving || draft === null} className="shrink-0 rounded-lg bg-control px-3 py-2 text-[12.5px] text-ink hover:bg-raised-hover disabled:opacity-50">
             {t("Save")}
           </button>
         </form>
@@ -401,11 +427,9 @@ interface MemoryTopic {
 const formatBytes = (bytes: number) => (bytes < 1024 ? `${bytes} B` : `${Math.round(bytes / 102.4) / 10} KB`);
 
 /** MEMORY.md + memory/ topic files, surfaced so the user can read and fix
- * what the bot believes. Fetched on expand, not on mount: settings opens for
- * every bot and most visits never look at memory — and an expand also
- * re-reads, so notes the bot wrote mid-session show up on the next open. */
-function MemoryCard({ bot }: { bot: Bot }) {
-  const [open, setOpen] = useState(false);
+ * what the bot believes. Loaded when opened; opening again re-reads, so notes
+ * the bot wrote mid-session show up. */
+function MemoryCard({ bot, open, onToggle, onSaved }: { bot: Bot; open: boolean; onToggle: () => void; onSaved: (text: string) => void }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [text, setText] = useState("");
@@ -434,6 +458,11 @@ function MemoryCard({ bot }: { bot: Bot }) {
     }
   };
 
+  useEffect(() => {
+    if (open) void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-read on every open
+  }, [open]);
+
   const save = async () => {
     setSaving(true);
     setError(null);
@@ -444,6 +473,7 @@ function MemoryCard({ bot }: { bot: Bot }) {
       });
       setTruncated(result.truncated);
       setDirty(false);
+      onSaved(text);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -461,48 +491,33 @@ function MemoryCard({ bot }: { bot: Bot }) {
   };
 
   return (
-    <div className="rounded-xl bg-card p-4">
-      <button
-        className="flex w-full items-center justify-between gap-4 text-left"
-        aria-expanded={open}
-        onClick={() => {
-          const next = !open;
-          setOpen(next);
-          if (next) void load();
-        }}
-      >
+    <div className={cardCls} id={`bot-memory-${bot.id}`}>
+      <button className="flex w-full items-center justify-between gap-4 text-left" aria-expanded={open} onClick={onToggle}>
         <div>
-          <div className="text-[15px] font-medium text-ink">{t("Memory")}</div>
-          <div className="mt-0.5 text-[13px] text-ink-secondary">
-            {t("Notes this bot keeps between tasks — plain files you can edit.")}
-          </div>
+          <div className={cardTitle}>{t("Memory")}</div>
+          <div className={cardSub}>{t("Notes this bot keeps between tasks — plain files you can edit.")}</div>
         </div>
         <ChevronDown size={16} className={cn("shrink-0 text-ink-secondary transition-transform", open && "rotate-180")} />
       </button>
 
-      {open && loading && <div className="mt-3 text-[13px] text-ink-secondary">{t("Loading…")}</div>}
+      {open && loading && <div className="mt-3 text-[12.5px] text-ink-secondary">{t("Loading…")}</div>}
 
       {open && !loading && topic && (
         <div className="mt-3">
           <div className="flex items-center justify-between gap-2">
-            <span className="truncate font-mono text-[12.5px] text-ink">memory/{topic.name}</span>
-            <button
-              onClick={() => setTopic(null)}
-              className="shrink-0 rounded-md px-2 py-1 text-[13px] text-ink-secondary hover:bg-control hover:text-ink"
-            >
+            <span className="truncate font-mono text-[12px] text-ink">memory/{topic.name}</span>
+            <button onClick={() => setTopic(null)} className="shrink-0 rounded-md px-2 py-1 text-[12.5px] text-ink-secondary hover:bg-control hover:text-ink">
               {t("Back")}
             </button>
           </div>
-          <pre className="mt-2 max-h-[240px] overflow-auto whitespace-pre-wrap rounded-lg border border-hairline/40 bg-inset p-3 font-mono text-[12.5px] leading-relaxed text-ink">
-            {topic.text}
-          </pre>
+          <pre className="mt-2 max-h-[240px] overflow-auto whitespace-pre-wrap rounded-lg bg-inset p-3 font-mono text-[12px] leading-relaxed text-ink">{topic.text}</pre>
         </div>
       )}
 
       {open && !loading && !topic && (
         <div className="mt-3">
           <textarea
-            className={cn(inputCls, "min-h-[160px] resize-y font-mono text-[12.5px] leading-relaxed")}
+            className={cn(inputClass, "min-h-[160px] resize-y font-mono text-[12px] leading-relaxed")}
             value={text}
             placeholder={t("Nothing remembered yet. The bot writes durable notes here — or add your own.")}
             aria-label={t("Bot memory")}
@@ -512,24 +527,14 @@ function MemoryCard({ bot }: { bot: Bot }) {
             }}
           />
           <div className="mt-2 flex items-center gap-3">
-            <button
-              onClick={() => void save()}
-              disabled={saving || !dirty}
-              className="rounded-lg bg-control px-3 py-1.5 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50"
-            >
+            <button onClick={() => void save()} disabled={saving || !dirty} className="rounded-lg bg-control px-3 py-1.5 text-[12.5px] text-ink hover:bg-raised-hover disabled:opacity-50">
               {saving ? t("Saving…") : t("Save")}
             </button>
-            {truncated && (
-              <span className="text-[11.5px] text-ink-secondary">
-                {t("Over the budget — only the top of this file loads each turn.")}
-              </span>
-            )}
+            {truncated && <span className="text-[11.5px] text-ink-secondary">{t("Over the budget — only the top of this file loads each turn.")}</span>}
           </div>
           {topics.length > 0 && (
             <div className="mt-3">
-              <div className="mb-1.5 text-[12px] font-medium uppercase tracking-[0.08em] text-ink-secondary">
-                {t("Topic files")}
-              </div>
+              <div className="mb-1.5 text-[12px] font-semibold text-ink-secondary">{t("Topic files")}</div>
               <div className="overflow-hidden rounded-lg border border-hairline/40">
                 {topics.map((entry) => (
                   <button
@@ -537,7 +542,7 @@ function MemoryCard({ bot }: { bot: Bot }) {
                     onClick={() => void openTopic(entry.name)}
                     className="flex w-full items-center justify-between gap-2 border-b border-hairline/40 px-3 py-2 text-left last:border-b-0 hover:bg-control/60"
                   >
-                    <span className="truncate font-mono text-[12.5px] text-ink">{entry.name}</span>
+                    <span className="truncate font-mono text-[12px] text-ink">{entry.name}</span>
                     <span className="shrink-0 text-[11.5px] text-ink-secondary">{formatBytes(entry.bytes)}</span>
                   </button>
                 ))}
@@ -552,13 +557,185 @@ function MemoryCard({ bot }: { bot: Bot }) {
   );
 }
 
+/** The name plate on the hero: the engine's official icon (unaltered) in its
+ * slot, then ">_ name" in the pixel face. */
+function HeroNameTag({ name, driverKind }: { name: string; driverKind?: string }) {
+  return (
+    <span className="relative mb-1 inline-flex h-9 max-w-full items-center gap-2 rounded-[4px] bg-[#14161C] pr-3 pl-2 shadow-[inset_0_0_0_2px_#3A404D,0_6px_14px_-8px_rgb(20_22_28/0.6)]">
+      <span aria-hidden className="absolute top-3 -left-2 border-y-[6px] border-r-[8px] border-y-transparent border-r-[#14161C]" />
+      <MarkTile driverKind={driverKind} size={18} markSize={13} />
+      <span className="truncate text-[16px] leading-none" style={{ fontFamily: "Unifont, ui-monospace, SFMono-Regular, Menlo, monospace" }}>
+        <span className="text-[#4ADE80]">&gt;_ </span>
+        <span className="text-[#F3F4F7]">{name}</span>
+      </span>
+    </span>
+  );
+}
+
+function BotHero({ bot, department, mainBotId, leads }: { bot: Bot; department?: string; mainBotId?: string; leads: number }) {
+  const { state } = useStore();
+  const kind = mascotForBot(bot, state.instances);
+  const brand = MASCOT_BRAND[kind];
+  const instance = state.instances.find((entry) => entry.instanceId === bot.modelSelection.instanceId);
+  const status = heroStatus(bot);
+  const isMain = bot.id === mainBotId;
+  const role = [bot.title.trim() || null, isMain ? t("Main bot") : department ?? t("No department")].filter(Boolean).join(" · ");
+  const label =
+    status.kind === "working"
+      ? t("Working")
+      : status.kind === "waiting"
+        ? t("Waiting for you")
+        : status.kind === "offline"
+          ? t("Can't reach it")
+          : t("Idle");
+  const team = isMain ? t("{count} departments", { count: leads }) : leads ? t("leads {count}", { count: leads }) : null;
+  return (
+    <div
+      className="relative h-[182px] shrink-0 overflow-hidden rounded-2xl"
+      style={{
+        backgroundColor: `color-mix(in oklab, ${brand} 10%, var(--color-raised))`,
+        backgroundImage: `radial-gradient(circle, color-mix(in oklab, ${brand} 22%, transparent) 1px, transparent 1.3px)`,
+        backgroundSize: "12px 12px",
+        boxShadow: `inset 0 0 0 1px color-mix(in oklab, ${brand} 24%, var(--color-raised))`,
+      }}
+    >
+      <span aria-hidden className="absolute bottom-2 left-[26px] h-3 w-32 rounded-[50%] bg-[rgb(20_40_28/0.16)] blur-[2px]" />
+      <Mascot
+        kind={kind}
+        pose={status.pose}
+        scale={2}
+        className="absolute bottom-[10px] left-[18px]"
+        title={t("{name}'s look: {body}", { name: bot.name, body: t(MASCOT_BODY[kind]) })}
+      />
+      <div className="absolute top-[24px] right-3.5 left-[186px] flex flex-col items-start gap-2">
+        <HeroNameTag name={bot.name || t("Unnamed")} driverKind={instance?.driverKind} />
+        <b className="max-w-full truncate text-[13.5px] font-bold text-ink">{role}</b>
+        <Pill tone={status.tone} dot>
+          {team ? `${label} · ${team}` : label}
+        </Pill>
+        <span className="text-[11.5px] leading-normal text-ink-secondary">
+          {t("Look follows the engine: {engine} {body}", { engine: instance?.displayName ?? "", body: t(MASCOT_BODY[kind]) })}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/** "Ask first" chips: the owner's locked rule, the harness's built-in
+ * backstop, and the one a bot can switch — asking before contacting bots. */
+function AskFirstChips({ bot, canCoordinate, onPeerComms }: { bot: Bot; canCoordinate: boolean; onPeerComms: (next: boolean) => void }) {
+  const [adding, setAdding] = useState(false);
+  const chip = "inline-flex h-6 items-center gap-1 rounded-full bg-warning/12 px-[9px] text-[12px] font-semibold text-warning";
+  return (
+    <span className="relative flex items-center gap-1.5">
+      <span className={chip} title={t("Set by you; bots can't change it")}>
+        <Lock size={11} />
+        {t("Publishing")}
+      </span>
+      <span className={chip} title={t("Built in: deleting files and other destructive commands always stop and ask")}>
+        <Lock size={11} />
+        {t("Deleting files")}
+      </span>
+      {bot.approvePeerComms && (
+        <span className={cn(chip, "pr-1")}>
+          {t("Contacting bots")}
+          <button type="button" onClick={() => onPeerComms(false)} aria-label={t("Stop asking before contacting other bots")} className="grid size-4 place-items-center rounded-full hover:bg-warning/20">
+            <X size={11} />
+          </button>
+        </span>
+      )}
+      <button
+        type="button"
+        onClick={() => setAdding((value) => !value)}
+        disabled={bot.approvePeerComms || !canCoordinate}
+        aria-label={t("Add an ask-first rule")}
+        title={bot.approvePeerComms || !canCoordinate ? t("Nothing else to add for this bot") : t("Add an ask-first rule")}
+        className="grid size-6 place-items-center rounded-full bg-control/70 text-ink-secondary hover:text-ink disabled:opacity-40"
+      >
+        <Plus size={12} />
+      </button>
+      {adding && !bot.approvePeerComms && (
+        <span className="absolute top-8 right-0 z-30 flex w-[230px] flex-col rounded-xl bg-raised p-1 shadow-[0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_55%,transparent),0_12px_28px_-12px_rgb(16_24_40/0.35)]">
+          <button
+            type="button"
+            onClick={() => {
+              onPeerComms(true);
+              setAdding(false);
+            }}
+            className="rounded-lg px-2.5 py-2 text-left text-[12.5px] whitespace-normal text-ink hover:bg-control/60"
+          >
+            <b className="block font-semibold">{t("Ask before contacting other bots")}</b>
+            <span className="text-[11.5px] text-ink-secondary">{t("It stops and asks before it reaches out to a teammate.")}</span>
+          </button>
+        </span>
+      )}
+    </span>
+  );
+}
+
+function MoreMenu({ bot, onAvatar, onClose }: { bot: Bot; onAvatar: () => void; onClose: () => void }) {
+  const { dispatch } = useStore();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (event: MouseEvent) => !ref.current?.contains(event.target as Node) && setOpen(false);
+    const key = (event: KeyboardEvent) => event.key === "Escape" && setOpen(false);
+    window.addEventListener("mousedown", away);
+    window.addEventListener("keydown", key);
+    return () => {
+      window.removeEventListener("mousedown", away);
+      window.removeEventListener("keydown", key);
+    };
+  }, [open]);
+  const item = "flex w-full items-center rounded-lg px-2.5 py-2 text-left text-[13px] text-ink hover:bg-control/60";
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        aria-label={t("More")}
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        className="grid size-8 place-items-center rounded-lg text-ink-secondary hover:bg-control hover:text-ink"
+      >
+        <MoreHorizontal size={16} />
+      </button>
+      {open && (
+        <div role="menu" className="absolute top-9 right-0 z-30 w-[200px] rounded-xl bg-raised p-1 shadow-[0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_55%,transparent),0_12px_28px_-12px_rgb(16_24_40/0.35)]">
+          <button role="menuitem" type="button" className={item} onClick={() => (setOpen(false), onAvatar())}>
+            {t("Change avatar")}
+          </button>
+          <button role="menuitem" type="button" className={item} onClick={() => (setOpen(false), dispatch({ type: "duplicateBot", botId: bot.id }))}>
+            {t("Duplicate this bot")}
+          </button>
+          <button role="menuitem" type="button" className={item} onClick={() => (setOpen(false), dispatch({ type: "toggleAppSettings", open: true, section: "org" }))}>
+            {t("Organization settings")}
+          </button>
+          <button role="menuitem" type="button" className={item} onClick={() => (setOpen(false), onClose())}>
+            {t("Close panel")}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function SettingsPanel({ bot }: { bot: Bot }) {
   const { state, dispatch } = useStore();
+  const { data: org } = useOrg();
   const { capabilities } = useDesktopCapabilities();
   const providerSupportsLocal = instanceSupportsLocalComputer(state.instances, bot);
   const localSelectable = localComputerSelectable({ capabilities, providerSupportsLocal });
   const [localAutoWarning, setLocalAutoWarning] = useState<"auto" | "local" | null>(null);
   const localDisabledReason = localComputerDisabledReason({ capabilities, providerSupportsLocal });
+  const [picking, setPicking] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [memoryOpen, setMemoryOpen] = useState(false);
+  const [memoryCount, setMemoryCount] = useState<number | null>(null);
+  const scroller = useRef<HTMLDivElement>(null);
+  const skills = useBotSkills(bot.id);
+  const { connected } = useAppCatalog();
+
   const patch = (
     p: Partial<
       Pick<
@@ -589,6 +766,7 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
   const activeState = stateForBot(bot);
   const mascotMotion = state.mascotMotion?.botId === bot.id ? state.mascotMotion : null;
   const engine = state.instances.find((instance) => instance.instanceId === bot.modelSelection.instanceId);
+  const kind = mascotForBot(bot, state.instances);
   const canAutoReview = engine?.capabilities?.approvalReview === true;
   const canCoordinate = engine?.capabilities?.agentsMcp === true;
   const canUseConnectedApps = engine?.capabilities?.composioMcp === true;
@@ -608,376 +786,468 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
       (candidate.section?.trim() || "") === (bot.section?.trim() || ""),
   );
 
+  const main = chiefBot(state.bots, org);
+  const departments = useMemo(() => buildDepartments(state.bots, org), [state.bots, org]);
+  const department = departments.find((dep) => dep.section === bot.section?.trim());
+  const superior = superiorOf(bot, state.bots, main?.id);
+  const led = bot.id === main?.id ? departments.length : teamSize(bot, state.bots, main?.id);
+  const recommendation = useMemo(
+    () => recommendedFor([bot.title, bot.description].filter(Boolean).join("\n"), state.instances),
+    [bot.title, bot.description, state.instances],
+  );
+  const modelLabel = engine?.models.options.find((option) => option.id === bot.modelSelection.model)?.label ?? bot.modelSelection.model;
+
+  // MEMORY.md's note count for the Memory row (the editor below re-reads on open)
+  useEffect(() => {
+    let alive = true;
+    setMemoryCount(null);
+    api(`/api/bots/${bot.id}/memory`)
+      .then((result: { text?: string }) => alive && setMemoryCount(countMemoryNotes(result.text ?? "")))
+      .catch(() => alive && setMemoryCount(null));
+    return () => {
+      alive = false;
+    };
+  }, [bot.id]);
+
+  // Opening a part of "More settings" from a row above scrolls it into view.
+  const reveal = (id: string) => {
+    setMoreOpen(true);
+    window.setTimeout(() => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
+  };
+
+  const close = () => dispatch({ type: "toggleSettings", open: false });
+  const computerChoice = bot.computer === "cloud" || bot.computer === "local" ? bot.computer : null;
+  const computerNow =
+    bot.computer === "vm" ? t("Local VM") : bot.computer === "off" ? t("Off") : !bot.computer ? t("Auto") : null;
+  const enabledSkills = (skills ?? []).filter((skill) => skill.enabled);
+  const appNames = connected.map((app) => app.label);
+
   return (
     <>
-    <aside className="animate-panel-in relative z-20 flex h-full w-[400px] shrink-0 flex-col border-l border-hairline/40 bg-panel">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3">
+    <aside aria-label={t("Bot Settings")} className="animate-panel-in relative z-20 flex h-full w-[420px] shrink-0 flex-col border-l border-hairline/40 bg-stage">
+      <div className="flex h-14 shrink-0 items-center gap-1.5 px-4">
         <button
-          onClick={() => dispatch({ type: "toggleSettings", open: false })}
+          onClick={close}
           aria-label={t("Collapse agent profile")}
           title={t("Collapse agent profile")}
-          className="flex size-10 items-center justify-center rounded-md text-ink-secondary hover:bg-control hover:text-ink"
+          className="grid size-8 place-items-center rounded-lg text-ink-secondary hover:bg-control hover:text-ink"
         >
-          <ChevronLeft size={18} />
+          <ChevronLeft size={16} />
         </button>
-        <span className="text-[15px] font-semibold text-ink">{t("Agent profile")}</span>
+        <b className="ml-1 flex-1 text-[15.5px] font-bold text-ink">{t("Bot Settings")}</b>
+        <MoreMenu bot={bot} onAvatar={() => reveal(`bot-avatar-${bot.id}`)} onClose={close} />
         <button
-          onClick={() => dispatch({ type: "toggleSettings", open: false })}
+          onClick={close}
           aria-label={t("Close agent profile")}
           title={t("Close agent profile")}
-          className="flex size-10 items-center justify-center rounded-md text-ink-secondary hover:bg-control hover:text-ink"
+          className="grid size-8 place-items-center rounded-lg text-ink-secondary hover:bg-control hover:text-ink"
         >
-          <X size={18} />
+          <PanelRightClose size={16} />
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-5 pb-5">
-        <div className="flex flex-col gap-4 pt-4">
-          <BotProfileAvatarCard
-            bot={bot}
-            activeState={activeState}
-            mascotMotion={mascotMotion}
-            onPatch={patch}
-          />
+      <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto px-4 pb-6">
+        <div className="flex flex-col gap-3">
+          <BotHero bot={bot} department={department?.section} mainBotId={main?.id} leads={led} />
 
-          <Field label={t("Name")}>
-            <input
-              className={inputCls}
-              maxLength={BOT_PROFILE_LIMITS.name}
-              value={bot.name}
-              onChange={(e) => patch({ name: e.target.value })}
-            />
-          </Field>
-          <Field label={t("Title")}>
-            <input
-              className={inputCls}
-              maxLength={BOT_PROFILE_LIMITS.title}
-              placeholder={t("Describe what your agent does")}
-              value={bot.title}
-              onChange={(e) => patch({ title: e.target.value })}
-            />
-          </Field>
-          <Field label={t("Description")}>
+          <div className="grid grid-cols-2 gap-2.5">
+            <label className="block">
+              <FieldLabel>{t("Name")}</FieldLabel>
+              <input className={inputClass} maxLength={BOT_PROFILE_LIMITS.name} value={bot.name} onChange={(e) => patch({ name: e.target.value })} />
+            </label>
+            <label className="block">
+              <FieldLabel>{t("Tag")}</FieldLabel>
+              <input
+                className={inputClass}
+                maxLength={BOT_PROFILE_LIMITS.title}
+                placeholder={t("Shown next to the name")}
+                value={bot.title}
+                onChange={(e) => patch({ title: e.target.value })}
+              />
+            </label>
+          </div>
+          <label className="block">
+            <FieldLabel>{t("Description")}</FieldLabel>
             <textarea
-              className={cn(inputCls, "min-h-[96px] resize-none")}
+              className={cn(inputClass, "min-h-[64px] resize-none")}
               maxLength={BOT_PROFILE_LIMITS.description}
-              placeholder={t("What this agent is for")}
+              placeholder={t("What this bot is for — it reads this to understand its job")}
               value={bot.description}
               onChange={(e) => patch({ description: e.target.value })}
             />
-          </Field>
+          </label>
 
-          <div className={cn(
-            "rounded-xl border p-4",
-            bot.chiefOfStaff ? "border-accent/40 bg-accent/10" : "border-hairline/40 bg-card",
-          )}>
-            <div className="flex items-center gap-3">
-              <span className={cn(
-                "flex size-8 shrink-0 items-center justify-center rounded-lg",
-                bot.chiefOfStaff ? "bg-primary text-primary-ink" : "bg-control text-ink-secondary",
-              )}>
-                <Crown size={17} />
+          <RowGroup>
+            <SettingRow label={t("Engine")} sub={modelLabel}>
+              <BotTile kind={kind} size={16} />
+              <b className="max-w-[92px] truncate font-semibold text-ink">{engine?.displayName ?? bot.modelSelection.instanceId}</b>
+              {recommendation && recommendation.instanceId !== bot.modelSelection.instanceId && (
+                <span
+                  className="inline-flex h-5 max-w-[124px] items-center gap-[3px] rounded-full bg-control/70 px-[7px] text-[11.5px] text-ink-secondary"
+                  title={t("For this bot's job the recommender would pick {engine} · {model}", { engine: recommendation.engineName, model: recommendation.model })}
+                >
+                  <Sparkles size={11} className="shrink-0" />
+                  <span className="truncate">{t("Suggested: {engine}", { engine: recommendation.engineName })}</span>
+                </span>
+              )}
+              <button
+                type="button"
+                onMouseDown={(event) => event.stopPropagation()}
+                onClick={() => setPicking((value) => !value)}
+                aria-expanded={picking}
+                className="ml-1 text-[12.5px] font-semibold text-accent-text hover:underline"
+              >
+                {t("Change model")}
+              </button>
+            </SettingRow>
+            {picking && (
+              <div className="pb-3">
+                <ModelPicker bot={bot} contained hideTrigger defaultOpen onClose={() => setPicking(false)} />
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => dispatch({ type: "toggleAppSettings", open: true, section: "org" })}
+              className="flex min-h-[42px] items-center gap-2.5 py-1.5 text-left"
+              title={t("Open the organization settings")}
+            >
+              <span className="flex-1 text-[13px] font-semibold text-ink">{t("Department")}</span>
+              <span className="flex min-w-0 items-center gap-1.5 text-[13px] whitespace-nowrap">
+                {department ? <i className="size-2 shrink-0 rounded-[2px]" style={{ background: department.color }} /> : null}
+                <b className="truncate font-semibold text-ink">{bot.id === main?.id ? t("Main bot") : department?.section ?? t("No department")}</b>
+                <span className="text-ink-secondary/70">· {t("Reports to")}</span>
+                {superior.kind === "bot" ? (
+                  <>
+                    <BotAvatar bot={superior.bot} size={16} />
+                    <b className="max-w-[80px] truncate font-semibold text-ink">{superior.bot.name}</b>
+                  </>
+                ) : superior.kind === "you" ? (
+                  <b className="font-semibold text-ink">{t("You")}</b>
+                ) : (
+                  <span className="text-ink-secondary">—</span>
+                )}
+                <ChevronRight size={13} className="shrink-0 text-ink-secondary/70" />
               </span>
-              <div className="min-w-0 flex-1">
-                <div className="text-[15px] font-medium text-ink">{t("Chief of Staff")}</div>
-                <div className="text-[11.5px] text-ink-secondary">{t("One for {section}", { section: sectionName })}</div>
-              </div>
-              <Switch
-                checked={Boolean(bot.chiefOfStaff)}
-                aria-label={t("Chief of Staff")}
-                disabled={!bot.chiefOfStaff && !canCoordinate}
-                onClick={() => patch({ chiefOfStaff: !bot.chiefOfStaff })}
-                title={!bot.chiefOfStaff && !canCoordinate ? t("This engine cannot contact other bots") : undefined}
-                className="disabled:cursor-not-allowed"
-              />
-            </div>
-            <div className="mt-3 text-[13px] leading-relaxed text-ink-secondary">
-              {bot.chiefOfStaff && !canCoordinate
-                ? t("This bot still holds the role, but its current engine cannot contact teammates. Choose a Claude or ACP engine to restore coordination.")
-                : bot.chiefOfStaff
-                  ? t("This is the primary contact for {section}. It can create and coordinate specialists in this section, then combine their work into one answer.", { section: sectionName })
-                : !canCoordinate
-                  ? t("Choose a Claude or ACP engine to let this bot coordinate teammates.")
-                  : currentChief
-                    ? t("Make this bot the {section} Chief and hand the role over from {name}.", { section: sectionName, name: currentChief.name })
-                    : t("Make this bot the primary contact for the {section} section.", { section: sectionName })}
-            </div>
-          </div>
+            </button>
+          </RowGroup>
 
-          <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
-            <div>
-              <div className="text-[15px] font-medium text-ink">
-                {t("Ask me before contacting other bots")}
-              </div>
-              <div className="mt-0.5 text-[13px] text-ink-secondary">
-                {bot.approvePeerComms
-                  ? t("This bot will stop and ask before it reaches out to another bot.")
-                  : t("Let this bot talk to teammates on its own, without a confirmation step.")}
-              </div>
-            </div>
-            <Switch
-              checked={Boolean(bot.approvePeerComms)}
-              aria-label={t("Ask me before contacting other bots")}
-              disabled={!bot.approvePeerComms && !canCoordinate}
-              onClick={() => patch({ approvePeerComms: !bot.approvePeerComms })}
-              title={!bot.approvePeerComms && !canCoordinate ? t("This engine cannot contact other bots") : undefined}
-              className="disabled:cursor-not-allowed"
-            />
-          </div>
-
-          <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
-            <div>
-              <div className="text-[15px] font-medium text-ink">{t("Connected apps")}</div>
-              <div className="mt-0.5 text-[13px] text-ink-secondary">
-                {!connectedAppsConfigured
-                  ? t("Connect apps in App Settings before giving this bot access.")
-                  : !canUseConnectedApps
-                    ? t("This bot's current engine cannot use connected apps.")
-                    : connectedAppsEnabled
-                      ? t("Let this bot use your connected Gmail, Calendar, Slack, and other apps.")
-                      : t("Keep your connected apps unavailable to this bot.")}
-              </div>
-            </div>
-            <Switch
-              checked={connectedAppsEnabled}
-              aria-label={t("Allow this bot to use connected apps")}
-              disabled={
-                !connectedAppsEnabled && (!connectedAppsConfigured || !canUseConnectedApps)
-              }
-              onClick={() => patch({ composio: !connectedAppsEnabled })}
-              title={
-                !connectedAppsEnabled && !connectedAppsConfigured
-                  ? t("Connect apps in App Settings first")
-                  : !connectedAppsEnabled && !canUseConnectedApps
-                    ? t("This engine cannot use connected apps")
-                    : undefined
-              }
-              className="disabled:cursor-not-allowed"
-            />
-          </div>
-
-          <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
-            <div>
-              <div className="text-[15px] font-medium text-ink">{t("Browser")}</div>
-              <div className="mt-0.5 text-[13px] text-ink-secondary">
-                {!desktopBrowser
-                  ? browserBlockedOnWindows
-                    ? t("The built-in browser is temporarily unavailable on Windows while Electron's production sandbox support is being verified.")
-                    : t("The built-in browser needs the OpenMausBot desktop app.")
-                  : !browserFeature
-                    ? t("The built-in browser is switched off under App Settings → Experimental.")
-                    : !canUseBrowser
-                      ? t("This bot's current engine cannot use the built-in browser.")
-                      : browserEnabled
-                        ? t("This bot has its own browser tab in the computer panel — its own logins, watchable and takeable at any time.")
-                        : t("Keep the built-in browser unavailable to this bot.")}
-              </div>
-            </div>
-            <Switch
-              checked={browserEnabled}
-              aria-label={t("Give this bot a built-in browser")}
-              disabled={!browserEnabled && (!desktopBrowser || !browserFeature || !canUseBrowser)}
-              onClick={() => patch({ browser: !browserAllowed })}
-              className="disabled:cursor-not-allowed"
-            />
-          </div>
-
-          <div className="rounded-xl bg-card p-4">
-            <ModelPicker
-              bot={bot}
-              contained
-              label={
-                <div>
-                  <div className="text-[15px] font-medium text-ink">{t("Model")}</div>
-                  <div className="mt-0.5 text-[13px] text-ink-secondary">
-                    {t("Which provider and model this bot runs on")}
-                  </div>
-                </div>
-              }
-            />
-          </div>
-
-          {!!engine?.capabilities?.effortLevels?.length && (
-            <div className="rounded-xl bg-card p-4">
-              <div className="text-[15px] font-medium text-ink">{t("Effort")}</div>
-              {/* Says what the app does, not what the engine ends up at:
-                  Codex applies a level to the whole thread and has no way to
-                  take one back, so "currently: engine default" was a promise
-                  we could not keep for a thread that had already been sent
-                  one. Sending nothing is true on every engine. */}
-              <div className="mt-0.5 text-[13px] text-ink-secondary">
-                {bot.modelSelection.effort ? t("How hard this bot thinks") : t("How hard this bot thinks (Default: no level is sent)")}
-              </div>
-              <div className="mt-3 flex overflow-hidden rounded-lg border border-hairline/40">
-                {([undefined, ...engine.capabilities.effortLevels] as const).map((level, i) => (
-                  <button
-                    key={level ?? "default"}
-                    aria-pressed={bot.modelSelection.effort === level}
-                    onClick={() => patch({ modelSelection: { ...bot.modelSelection, effort: level } })}
-                    className={cn(
-                      "flex-1 py-1.5 text-[13px] capitalize",
-                      i > 0 && "border-l border-hairline/40",
-                      bot.modelSelection.effort === level
-                        ? "bg-control text-ink"
-                        : "text-ink-secondary hover:bg-control/60 hover:text-ink",
-                    )}
-                  >
-                    {/* the others capitalize cleanly; "xhigh" would read "Xhigh" */}
-                    {level ? t(EFFORT_LABELS[level] ?? level) : t("Default")}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <div className="rounded-xl bg-card p-4">
-            <div className="text-[15px] font-medium text-ink">{t("Computer")}</div>
-            <div className="mt-0.5 text-[13px] text-ink-secondary">
-              {bot.computer ? t("Where this bot's computer runs") : t("Where this bot's computer runs (currently: auto)")}
-            </div>
-            <div className="mt-3 flex overflow-hidden rounded-lg border border-hairline/40">
-              {([
-                ["cloud", t("Cloud")],
-                ["vm", t("Local VM")],
-                ["local", t("This computer")],
-                ["off", t("Off")],
-              ] as const).map(([mode, label], i) => (
-                <button
-                  key={mode}
-                  disabled={mode === "local" && !localSelectable}
-                  title={mode === "local" && !localSelectable ? localDisabledReason ?? undefined : undefined}
+          <div>
+            <FieldLabel>{t("Permissions")}</FieldLabel>
+            <RowGroup>
+              <SettingRow label={t("Approve automatically")} sub={t("Low-risk steps run without waiting for you")}>
+                <Switch
+                  checked={Boolean(bot.autoApprove)}
+                  aria-label={t("Auto mode")}
                   onClick={() => {
+                    if (!bot.autoApprove && bot.computer === "local") setLocalAutoWarning("auto");
+                    else patch({ autoApprove: !bot.autoApprove });
+                  }}
+                />
+              </SettingRow>
+              <SettingRow label={t("Ask first")} sub={t("Beats approving automatically")}>
+                <AskFirstChips bot={bot} canCoordinate={canCoordinate} onPeerComms={(approvePeerComms) => patch({ approvePeerComms })} />
+              </SettingRow>
+              <SettingRow
+                label={t("Connect apps")}
+                sub={
+                  !connectedAppsConfigured
+                    ? t("Connect apps in App Settings before giving this bot access.")
+                    : !canUseConnectedApps
+                      ? t("This bot's current engine cannot use connected apps.")
+                      : appNames.length
+                        ? appNames.slice(0, 4).join(" · ")
+                        : t("No app is connected yet")
+                }
+              >
+                <Switch
+                  checked={connectedAppsEnabled}
+                  aria-label={t("Allow this bot to use connected apps")}
+                  disabled={!connectedAppsEnabled && (!connectedAppsConfigured || !canUseConnectedApps)}
+                  onClick={() => patch({ composio: !connectedAppsEnabled })}
+                  title={
+                    !connectedAppsEnabled && !connectedAppsConfigured
+                      ? t("Connect apps in App Settings first")
+                      : !connectedAppsEnabled && !canUseConnectedApps
+                        ? t("This engine cannot use connected apps")
+                        : undefined
+                  }
+                />
+              </SettingRow>
+              <SettingRow label={t("Computer")} sub={computerNow ? t("Where it works · now: {mode}", { mode: computerNow }) : t("Which computer it works on")}>
+                <Segmented<"cloud" | "local">
+                  size="sm"
+                  value={(computerChoice ?? "") as "cloud" | "local"}
+                  label={t("Computer")}
+                  onChange={(mode) => {
                     if (mode === bot.computer) return;
                     if (mode === "local" && bot.autoApprove) setLocalAutoWarning("local");
                     else patch({ computer: mode });
                   }}
-                  className={cn(
-                    "flex-1 py-1.5 text-[13px] capitalize",
-                    i > 0 && "border-l border-hairline/40",
-                    mode === "local" && !localSelectable && "cursor-not-allowed opacity-40",
-                    bot.computer === mode
-                      ? "bg-control text-ink"
-                      : "text-ink-secondary hover:bg-control/60 hover:text-ink",
-                  )}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-            {(!bot.computer || bot.computer === "cloud") && (
-              <>
-                <CloudBackendPicker
-                  value={bot.cloudBackend ?? "box"}
-                  vpsSupported={canUseVps}
-                  onChange={(backend) => patch({ cloudBackend: backend })}
+                  options={[
+                    { value: "cloud", label: t("Cloud") },
+                    { value: "local", label: t("This machine"), disabled: !localSelectable },
+                  ]}
                 />
-                {!bot.computer && bot.cloudBackend === "vps" && (
-                  <div className="mt-3 flex items-center justify-between gap-4 rounded-lg bg-inset px-3 py-2.5">
-                    <div className="min-w-0">
-                      <div className="text-[13px] text-ink">{t("Start VPS automatically")}</div>
-                      <div className="mt-0.5 text-[11.5px] text-ink-secondary">
-                        {t("Allow Auto to create or wake this bot's managed container when needed.")}
-                      </div>
-                    </div>
-                    <Switch
-                      checked={Boolean(bot.autoStartVps)}
-                      aria-label={t("Start VPS automatically")}
-                      onClick={() => patch({ autoStartVps: !bot.autoStartVps })}
-                    />
+              </SettingRow>
+            </RowGroup>
+          </div>
+
+          <RowGroup>
+            <SettingRow label={t("Notifications")} sub={t("When it finishes or needs you")}>
+              <Switch
+                checked={bot.notifications}
+                aria-label={t("Agent notifications")}
+                onClick={() => {
+                  const enabled = !bot.notifications;
+                  if (enabled) void requestNotificationPermission();
+                  patch({ notifications: enabled });
+                }}
+              />
+            </SettingRow>
+            <SettingRow label={t("Memory")}>
+              <span className="h-[22px] rounded-md bg-control/70 px-[7px] font-mono text-[11.5px] leading-[22px] text-ink">MEMORY.md</span>
+              <span className="text-ink-secondary/80">{memoryCount === null ? "—" : memoryCount ? t("{count} notes", { count: memoryCount }) : t("Empty")}</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setMemoryOpen(true);
+                  reveal(`bot-memory-${bot.id}`);
+                }}
+                className="ml-1 text-[12.5px] font-semibold text-accent-text hover:underline"
+              >
+                {t("View")}
+              </button>
+            </SettingRow>
+            <SettingRow label={t("Skills")}>
+              {skills === null ? (
+                <span className="text-ink-secondary/70">…</span>
+              ) : enabledSkills.length ? (
+                <>
+                  {enabledSkills.slice(0, 3).map((skill) => (
+                    <button
+                      key={skill.name}
+                      type="button"
+                      onClick={() => reveal(`bot-skills-${bot.id}`)}
+                      title={skill.description}
+                      className="inline-flex h-6 max-w-[92px] items-center gap-1 rounded-full bg-control/70 px-[9px] text-[12px] font-medium text-ink-secondary hover:text-ink"
+                    >
+                      <Wand2 size={11} className="shrink-0" />
+                      <span className="truncate">{skill.name}</span>
+                    </button>
+                  ))}
+                  {enabledSkills.length > 3 && <span className="text-[12px] text-ink-secondary">+{enabledSkills.length - 3}</span>}
+                </>
+              ) : (
+                <>
+                  <span className="text-ink-secondary/80">{t("None yet")}</span>
+                  {skillRecorderEnabled(state.config) && (
+                    <button type="button" onClick={() => dispatch({ type: "showSkillRecorder" })} className="ml-1 text-[12.5px] font-semibold text-accent-text hover:underline">
+                      {t("Teach one")}
+                    </button>
+                  )}
+                </>
+              )}
+            </SettingRow>
+          </RowGroup>
+
+          <button
+            type="button"
+            onClick={() => setMoreOpen((value) => !value)}
+            aria-expanded={moreOpen}
+            className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-left hover:bg-control/50"
+          >
+            <span className="min-w-0 flex-1">
+              <span className="block text-[13px] font-semibold text-ink">{t("More settings")}</span>
+              <span className="block truncate text-[11.5px] text-ink-secondary">{t("Avatar, role, browser, effort, computer, review, voice, usage, folder, memory, skills")}</span>
+            </span>
+            <ChevronDown size={16} className={cn("shrink-0 text-ink-secondary transition-transform", moreOpen && "rotate-180")} />
+          </button>
+
+          {moreOpen && (
+            <div className="flex flex-col gap-3">
+              <div id={`bot-avatar-${bot.id}`}>
+                <BotProfileAvatarCard bot={bot} activeState={activeState} mascotMotion={mascotMotion} onPatch={patch} />
+              </div>
+
+              <div className={cn(cardCls, bot.chiefOfStaff && "bg-select/[0.06]")}>
+                <div className="flex items-center gap-3">
+                  <span className={cn("flex size-8 shrink-0 items-center justify-center rounded-lg", bot.chiefOfStaff ? "bg-primary text-primary-ink" : "bg-control text-ink-secondary")}>
+                    <Crown size={16} />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className={cardTitle}>{bot.section?.trim() ? t("Department lead") : t("Chief of Staff")}</div>
+                    <div className="text-[11.5px] text-ink-secondary">{t("One for {section}", { section: sectionName })}</div>
                   </div>
-                )}
-              </>
-            )}
-          </div>
-
-          <BotUsageCard bot={bot} />
-          <WorkingFolder bot={bot} />
-
-          {/* keyed so switching bots never shows one bot's notes under another's name */}
-          <MemoryCard key={bot.id} bot={bot} />
-
-          <LearnedSkillsCard key={`skills-${bot.id}`} bot={bot} />
-
-          <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
-            <div>
-              <div className="text-[15px] font-medium text-ink">{t("Auto mode")}</div>
-              <div className="mt-0.5 text-[13px] text-ink-secondary">
-                {bot.computer === "local"
-                  ? bot.autoApprove
-                    ? t("Keeps going on this computer — you'll still be asked about anything destructive, and about questions it asks you.")
-                    : t("Approve each action on this computer yourself. Turn on to let this bot keep working without stopping to ask.")
-                  : bot.autoApprove
-                  ? t("Keeps going on its own — you'll still be asked about anything destructive, and about questions it asks you.")
-                  : t("Approve each action yourself. Turn on to let this bot keep working without stopping to ask.")}
+                  <Switch
+                    checked={Boolean(bot.chiefOfStaff)}
+                    aria-label={t("Chief of Staff")}
+                    disabled={!bot.chiefOfStaff && !canCoordinate}
+                    onClick={() => patch({ chiefOfStaff: !bot.chiefOfStaff })}
+                    title={!bot.chiefOfStaff && !canCoordinate ? t("This engine cannot contact other bots") : undefined}
+                    className="disabled:cursor-not-allowed"
+                  />
+                </div>
+                <div className="mt-2.5 text-[12px] leading-relaxed text-ink-secondary">
+                  {bot.chiefOfStaff && !canCoordinate
+                    ? t("This bot still holds the role, but its current engine cannot contact teammates. Choose a Claude or ACP engine to restore coordination.")
+                    : bot.chiefOfStaff
+                      ? t("This is the primary contact for {section}. It can create and coordinate specialists in this section, then combine their work into one answer.", { section: sectionName })
+                      : !canCoordinate
+                        ? t("Choose a Claude or ACP engine to let this bot coordinate teammates.")
+                        : currentChief
+                          ? t("Make this bot the {section} Chief and hand the role over from {name}.", { section: sectionName, name: currentChief.name })
+                          : t("Make this bot the primary contact for the {section} section.", { section: sectionName })}
+                </div>
               </div>
-            </div>
-            <Switch
-              checked={Boolean(bot.autoApprove)}
-              aria-label={t("Auto mode")}
-              onClick={() => {
-                if (!bot.autoApprove && bot.computer === "local") setLocalAutoWarning("auto");
-                else patch({ autoApprove: !bot.autoApprove });
-              }}
-            />
-          </div>
 
-          <div className="rounded-xl bg-card p-4">
-            <div className="text-[15px] font-medium text-ink">{t("Review routine approvals")}</div>
-            <div className="mt-0.5 text-[13px] text-ink-secondary">
-              {canAutoReview
-                ? t("The same engine reviews ordinary approval cards. Existing safety rules, unattended turns, local-computer access, and questions still wait for you.")
-                : t("This engine cannot run an isolated review safely, so approval cards continue to wait for you.")}
-            </div>
-            <div className="mt-3 flex gap-1 rounded-lg bg-inset p-0.5">
-              {(
-                [
-                  ["off", t("Off"), t("Every undecided approval waits for you.")],
-                  ["shadow", t("Watch"), t("Record the review without answering the card.")],
-                  ["enforce", t("On"), t("Answer only reviews that return a strict approval.")],
-                ] as const
-              ).map(([value, label, hint]) => {
-                const current = bot.autoReview === "shadow" || bot.autoReview === "enforce" ? bot.autoReview : "off";
-                const disabled = value !== "off" && !canAutoReview;
-                return (
-                  <button
-                    key={value}
-                    title={disabled ? t("Not supported by this engine") : hint}
-                    disabled={disabled}
-                    onClick={() => patch({ autoReview: value })}
-                    className={cn(
-                      "flex-1 rounded-md px-2.5 py-1.5 text-[13px] font-medium disabled:cursor-not-allowed disabled:opacity-40",
-                      current === value ? "bg-raised text-ink" : "text-ink-secondary hover:text-ink",
+              <div className={cn(cardCls, "flex items-center justify-between gap-4")}>
+                <div>
+                  <div className={cardTitle}>{t("Browser")}</div>
+                  <div className={cardSub}>
+                    {!desktopBrowser
+                      ? browserBlockedOnWindows
+                        ? t("The built-in browser is temporarily unavailable on Windows while Electron's production sandbox support is being verified.")
+                        : t("The built-in browser needs the OpenMausBot desktop app.")
+                      : !browserFeature
+                        ? t("The built-in browser is switched off under App Settings → Experimental.")
+                        : !canUseBrowser
+                          ? t("This bot's current engine cannot use the built-in browser.")
+                          : browserEnabled
+                            ? t("This bot has its own browser tab in the computer panel — its own logins, watchable and takeable at any time.")
+                            : t("Keep the built-in browser unavailable to this bot.")}
+                  </div>
+                </div>
+                <Switch
+                  checked={browserEnabled}
+                  aria-label={t("Give this bot a built-in browser")}
+                  disabled={!browserEnabled && (!desktopBrowser || !browserFeature || !canUseBrowser)}
+                  onClick={() => patch({ browser: !browserAllowed })}
+                  className="disabled:cursor-not-allowed"
+                />
+              </div>
+
+              {!!engine?.capabilities?.effortLevels?.length && (
+                <div className={cardCls}>
+                  <div className={cardTitle}>{t("Effort")}</div>
+                  {/* Says what the app does, not what the engine ends up at:
+                      Codex applies a level to the whole thread and has no way to
+                      take one back, so "currently: engine default" was a promise
+                      we could not keep for a thread that had already been sent
+                      one. Sending nothing is true on every engine. */}
+                  <div className={cardSub}>
+                    {bot.modelSelection.effort ? t("How hard this bot thinks") : t("How hard this bot thinks (Default: no level is sent)")}
+                  </div>
+                  <div className="mt-2.5 flex overflow-hidden rounded-lg border border-hairline/40">
+                    {([undefined, ...engine.capabilities.effortLevels] as const).map((level, i) => (
+                      <button
+                        key={level ?? "default"}
+                        aria-pressed={bot.modelSelection.effort === level}
+                        onClick={() => patch({ modelSelection: { ...bot.modelSelection, effort: level } })}
+                        className={cn(
+                          "flex-1 py-1.5 text-[12.5px] capitalize",
+                          i > 0 && "border-l border-hairline/40",
+                          bot.modelSelection.effort === level ? "bg-control text-ink" : "text-ink-secondary hover:bg-control/60 hover:text-ink",
+                        )}
+                      >
+                        {/* the others capitalize cleanly; "xhigh" would read "Xhigh" */}
+                        {level ? t(EFFORT_LABELS[level] ?? level) : t("Default")}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className={cardCls}>
+                <div className={cardTitle}>{t("Computer")}</div>
+                <div className={cardSub}>
+                  {bot.computer ? t("Where this bot's computer runs") : t("Where this bot's computer runs (currently: auto)")}
+                </div>
+                <div className="mt-2.5 flex overflow-hidden rounded-lg border border-hairline/40">
+                  {([
+                    ["cloud", t("Cloud")],
+                    ["vm", t("Local VM")],
+                    ["local", t("This computer")],
+                    ["off", t("Off")],
+                  ] as const).map(([mode, label], i) => (
+                    <button
+                      key={mode}
+                      disabled={mode === "local" && !localSelectable}
+                      title={mode === "local" && !localSelectable ? localDisabledReason ?? undefined : undefined}
+                      onClick={() => {
+                        if (mode === bot.computer) return;
+                        if (mode === "local" && bot.autoApprove) setLocalAutoWarning("local");
+                        else patch({ computer: mode });
+                      }}
+                      className={cn(
+                        "flex-1 py-1.5 text-[12.5px] capitalize",
+                        i > 0 && "border-l border-hairline/40",
+                        mode === "local" && !localSelectable && "cursor-not-allowed opacity-40",
+                        bot.computer === mode ? "bg-control text-ink" : "text-ink-secondary hover:bg-control/60 hover:text-ink",
+                      )}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {(!bot.computer || bot.computer === "cloud") && (
+                  <>
+                    <CloudBackendPicker value={bot.cloudBackend ?? "box"} vpsSupported={canUseVps} onChange={(backend) => patch({ cloudBackend: backend })} />
+                    {!bot.computer && bot.cloudBackend === "vps" && (
+                      <div className="mt-3 flex items-center justify-between gap-4 rounded-lg bg-inset px-3 py-2.5">
+                        <div className="min-w-0">
+                          <div className="text-[13px] text-ink">{t("Start VPS automatically")}</div>
+                          <div className="mt-0.5 text-[11.5px] text-ink-secondary">{t("Allow Auto to create or wake this bot's managed container when needed.")}</div>
+                        </div>
+                        <Switch checked={Boolean(bot.autoStartVps)} aria-label={t("Start VPS automatically")} onClick={() => patch({ autoStartVps: !bot.autoStartVps })} />
+                      </div>
                     )}
-                  >
-                    {label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          <VoiceSettings bot={bot} onPatch={patch} />
-
-          <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
-            <div>
-              <div className="text-[15px] font-medium text-ink">
-                {t("Notifications")}
+                  </>
+                )}
               </div>
-              <div className="mt-0.5 text-[13px] text-ink-secondary">
-                {t("Get notified when this agent finishes or needs input")}
+
+              <div className={cardCls}>
+                <div className={cardTitle}>{t("Review routine approvals")}</div>
+                <div className={cardSub}>
+                  {canAutoReview
+                    ? t("The same engine reviews ordinary approval cards. Existing safety rules, unattended turns, local-computer access, and questions still wait for you.")
+                    : t("This engine cannot run an isolated review safely, so approval cards continue to wait for you.")}
+                </div>
+                <div className="mt-2.5 flex gap-1 rounded-lg bg-inset p-0.5">
+                  {(
+                    [
+                      ["off", t("Off"), t("Every undecided approval waits for you.")],
+                      ["shadow", t("Watch"), t("Record the review without answering the card.")],
+                      ["enforce", t("On"), t("Answer only reviews that return a strict approval.")],
+                    ] as const
+                  ).map(([value, label, hint]) => {
+                    const current = bot.autoReview === "shadow" || bot.autoReview === "enforce" ? bot.autoReview : "off";
+                    const disabled = value !== "off" && !canAutoReview;
+                    return (
+                      <button
+                        key={value}
+                        title={disabled ? t("Not supported by this engine") : hint}
+                        disabled={disabled}
+                        onClick={() => patch({ autoReview: value })}
+                        className={cn(
+                          "flex-1 rounded-md px-2.5 py-1.5 text-[12.5px] font-medium disabled:cursor-not-allowed disabled:opacity-40",
+                          current === value ? "bg-raised text-ink shadow-[0_1px_2px_rgb(16_24_40/0.12)]" : "text-ink-secondary hover:text-ink",
+                        )}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
+
+              <VoiceSettings bot={bot} onPatch={patch} />
+              <BotUsageCard bot={bot} />
+              <WorkingFolder bot={bot} />
+              {/* keyed so switching bots never shows one bot's notes under another's name */}
+              <MemoryCard key={bot.id} bot={bot} open={memoryOpen} onToggle={() => setMemoryOpen((value) => !value)} onSaved={(text) => setMemoryCount(countMemoryNotes(text))} />
+              <LearnedSkillsCard key={`skills-${bot.id}`} bot={bot} />
             </div>
-            <Switch
-              checked={bot.notifications}
-              aria-label={t("Agent notifications")}
-              onClick={() => {
-                const enabled = !bot.notifications;
-                if (enabled) void requestNotificationPermission();
-                patch({ notifications: enabled });
-              }}
-            />
-          </div>
+          )}
         </div>
       </div>
     </aside>

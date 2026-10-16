@@ -8,6 +8,7 @@ import { useState } from "react";
 import { Check } from "lucide-react";
 import { SKINS, applySkin, readSkin, type SkinId } from "@/lib/skins";
 import { cn } from "@/lib/cn";
+import { t } from "@/lib/i18n";
 
 /**
  * The app's own layout at roughly 1/14 scale: rail, sidebar with a selected
@@ -76,7 +77,7 @@ export function SkinPicker() {
   return (
     // One row, so the whole set is visible without scrolling the modal —
     // 2x2 pushed the second row below the fold of its 560px frame.
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+    <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3">
       {SKINS.map((skin) => {
         const selected = skin.id === active;
         return (
@@ -98,9 +99,9 @@ export function SkinPicker() {
             <Miniature skin={skin.id} />
             <div className="flex items-start gap-1.5 px-0.5 pb-0.5">
               <div className="min-w-0 flex-1">
-                <div className="text-[13px] font-medium text-ink">{skin.name}</div>
+                <div className="text-[13px] font-medium text-ink">{t(skin.name)}</div>
                 <div className="mt-0.5 text-[11px] leading-snug text-ink-secondary">
-                  {skin.tagline}
+                  {t(skin.tagline)}
                 </div>
               </div>
               {selected && <Check size={13} className="mt-0.5 shrink-0 text-accent-text" />}

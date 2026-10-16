@@ -17,6 +17,7 @@ import {
 export {
   DEFAULT_LOCALE,
   LOCALE_OPTIONS,
+  allTranslations,
   LOCALE_STORAGE_KEY,
   getLocale,
   hasTranslation,

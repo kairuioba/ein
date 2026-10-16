@@ -229,6 +229,32 @@ describe("Dispatcher", () => {
     expect(submit([{ id: "a", title: "部署", brief: "上线", assignee: "Ops" }])).toMatchObject({ error: expect.stringContaining("not on your team") });
   });
 
+  it("creates no specialist when a later subtask makes the plan invalid", () => {
+    const rejected = submit([
+      { id: "data", title: "竞品数据分析", brief: "整理竞品对比表", role: "数据分析师" },
+      { id: "ops", title: "部署", brief: "上线", assignee: "Ops" },
+    ]);
+    expect(rejected).toMatchObject({ error: expect.stringContaining("not on your team") });
+    expect(host.created).toHaveLength(0);
+    expect(dispatcher.routes()).toHaveLength(0);
+    // the corrected plan creates the specialist exactly once
+    const accepted = submit([{ id: "data", title: "竞品数据分析", brief: "整理竞品对比表", role: "数据分析师" }]);
+    expect("error" in accepted).toBe(false);
+    expect(host.created).toHaveLength(1);
+  });
+
+  it("lets a later subtask reuse a specialist the same plan creates", () => {
+    const result = submit([
+      { id: "a", title: "竞品数据分析", brief: "整理竞品对比表", role: "数据分析师" },
+      { id: "b", title: "用户数据分析", brief: "分析留存数据", role: "数据分析师", depends_on: ["a"] },
+    ]);
+    expect("error" in result).toBe(false);
+    if ("error" in result) return;
+    expect(host.created).toHaveLength(1);
+    expect(result.run.subtasks.map((subtask) => subtask.assigneeBotId)).toEqual([host.created[0]!.id, host.created[0]!.id]);
+    expect(result.created).toEqual([host.created[0]!.id]);
+  });
+
   it("runs subtasks in dependency order and feeds results forward", async () => {
     const result = submit([
       { id: "research", title: "竞品调研", brief: "调研三家竞品", role: "文案策划" },

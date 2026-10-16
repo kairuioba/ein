@@ -112,6 +112,18 @@ export function msg<const Source extends string>(source: Source): Source {
   return source;
 }
 
+/** Every rendering of a source — the English text and each translation —
+ * for code that recognizes a message produced by another process (the
+ * harness, the desktop shell), whichever language that process runs in. */
+export function allTranslations(source: string): string[] {
+  const renderings = [source];
+  for (const dictionary of Object.values(DICTIONARIES)) {
+    const translated = Object.hasOwn(dictionary, source) ? dictionary[source] : undefined;
+    if (translated && !renderings.includes(translated)) renderings.push(translated);
+  }
+  return renderings;
+}
+
 /** True when the active dictionary has an entry for `source`. */
 export function hasTranslation(source: string): boolean {
   return current === "en" || Object.hasOwn(DICTIONARIES[current], source);

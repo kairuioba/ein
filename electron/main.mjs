@@ -1323,7 +1323,6 @@ function installApplicationMenu() {
     appName: app.getName(),
     platform: process.platform,
     isFullScreen: menuFullScreen,
-    packaged: app.isPackaged,
     homepage: readHomepage(),
     command: (name) => {
       const target = BrowserWindow.getFocusedWindow() ?? mainWindow;

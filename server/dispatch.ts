@@ -388,16 +388,22 @@ export class Dispatcher {
           assignee = this.leastLoaded(team.concat(created), subtasks);
           if (!assignee) return { error: "No team member is available and no more bots can be created. Ask the user to add a bot." };
         } else {
+          // Planned, not created: a later subtask can still reject the whole
+          // plan, and a rejected plan must not leave specialists behind (the
+          // Chief would resubmit and create duplicates). Later subtasks may
+          // reuse this planned specialist exactly like an existing member.
           const recommendation = this.host.recommend(task, policy);
-          const bot = this.host.createBot({
-            name: uniqueName(item.role, this.host.bots().map((b) => b.name)),
+          const takenNames = [...this.host.bots().map((b) => b.name), ...created.map((b) => b.name)];
+          const bot: DispatchBot = {
+            id: `${PLANNED_PREFIX}${created.length}`,
+            name: uniqueName(item.role, takenNames),
             title: item.role,
             description: t("{role} — created by @{chief} for dispatched work.", { role: item.role, chief: chief.name }),
             section: chief.section,
             modelSelection: recommendation
               ? { instanceId: recommendation.instanceId, model: recommendation.model, ...(recommendation.effort ? { effort: recommendation.effort } : {}) }
               : { ...chief.modelSelection },
-          });
+          };
           created.push(bot);
           assignee = bot;
         }
@@ -417,8 +423,23 @@ export class Dispatcher {
         attempts: 0,
       });
     }
-    // new specialists are wired to their Chief on the workbench
-    for (const bot of created) this.setRoute(chiefId, bot.id, true);
+    // The whole plan is valid: now the planned specialists become real bots,
+    // and each is wired to its Chief on the workbench.
+    const realIds = new Map<string, string>();
+    for (const planned of created) {
+      const { id: plannedId, ...input } = planned;
+      const bot = this.host.createBot({
+        name: input.name,
+        title: input.title,
+        description: input.description,
+        section: input.section,
+        modelSelection: input.modelSelection,
+      });
+      realIds.set(plannedId, bot.id);
+      planned.id = bot.id;
+      this.setRoute(chiefId, bot.id, true);
+    }
+    for (const subtask of subtasks) subtask.assigneeBotId = realIds.get(subtask.assigneeBotId) ?? subtask.assigneeBotId;
 
     const now = Date.now();
     const run: DispatchRun = {
@@ -763,6 +784,9 @@ function clip(value: string, max: number): string {
 }
 
 /** A display name for a new specialist, unique among existing bots. */
+/** Id of a specialist a plan will create, before the plan is accepted. */
+const PLANNED_PREFIX = "planned:";
+
 export function uniqueName(role: string, taken: string[]): string {
   const base = clip(role.replace(/[@\n]/g, " ").trim() || "Specialist", 24);
   const used = new Set(taken.map((name) => name.trim().toLowerCase()));

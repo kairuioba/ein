@@ -13,7 +13,6 @@ const build = (overrides = {}) =>
     appName: "OpenMausBot",
     platform: "darwin",
     isFullScreen: false,
-    packaged: true,
     homepage: "https://example.test/omb",
     command: () => {},
     openExternal: () => {},
@@ -41,12 +40,11 @@ describe("application menu", () => {
     expect(labels(build({ platform: "win32" }))).toEqual(["文件", "编辑", "视图", "窗口", "帮助"]);
   });
 
-  it("follows full screen and hides developer tools in a packaged app", () => {
+  it("follows full screen and keeps developer tools, like Electron's default menu", () => {
     i18n.setLocale("zh-CN");
     expect(find(build({ isFullScreen: true }), "退出全屏幕")?.role).toBe("togglefullscreen");
     expect(find(build({ isFullScreen: false }), "进入全屏幕")?.role).toBe("togglefullscreen");
-    expect(find(build({ packaged: true }), "开发者工具")).toBeUndefined();
-    expect(find(build({ packaged: false }), "开发者工具")?.role).toBe("toggleDevTools");
+    expect(find(build(), "开发者工具")?.role).toBe("toggleDevTools");
   });
 
   it("leaves the workbench's ⌘0 / ⌘= / ⌘- to the page", () => {

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { allTranslations } from "@/lib/i18n";
+
 import {
   connectedInventoryCopy,
   connectorActionLabel,
@@ -134,6 +136,10 @@ describe("connected-app status races", () => {
 
   it("recognizes the existing-account alias guard and ignores unrelated errors", () => {
     expect(requiresAccountAlias("Add an account alias so the existing connection is not replaced")).toBe(true);
+    // the harness sends it translated when it runs in Chinese
+    for (const rendering of allTranslations("Add an account alias so the existing connection is not replaced")) {
+      expect(requiresAccountAlias(rendering)).toBe(true);
+    }
     expect(requiresAccountAlias("Authorization expired")).toBe(false);
   });
 

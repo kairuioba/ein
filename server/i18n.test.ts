@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import zhCN from "../shared/i18n/zh-CN.json" with { type: "json" };
 import {
+  allTranslations,
   detectLocale,
   getLocale,
   interpolate,
@@ -44,6 +45,13 @@ describe("translation", () => {
   it("picks the singular or plural source and passes the count", () => {
     expect(tn(1, "{count} bot", "{count} bots")).toBe("1 bot");
     expect(tn(4, "{count} bot", "{count} bots")).toBe("4 bots");
+  });
+
+  it("lists every rendering of a source, whatever the active language", () => {
+    const renderings = allTranslations("Workbench");
+    expect(renderings[0]).toBe("Workbench");
+    expect(renderings).toContain((zhCN as Record<string, string>).Workbench);
+    expect(allTranslations("A sentence no dictionary has")).toEqual(["A sentence no dictionary has"]);
   });
 
   it("marks without translating", () => {

@@ -85,14 +85,13 @@ function localizedLabel(english, params = {}, platform = process.platform) {
  *   appName: string,
  *   platform: NodeJS.Platform,
  *   isFullScreen: boolean,
- *   packaged: boolean,
  *   homepage: string,
  *   command: (name: "new-bot" | "open-settings" | "open-workbench") => void,
  *   openExternal: (url: string) => void,
  * }} options
  * @returns {Electron.MenuItemConstructorOptions[]}
  */
-export function applicationMenuTemplate({ appName, platform, isFullScreen, packaged, homepage, command, openExternal }) {
+export function applicationMenuTemplate({ appName, platform, isFullScreen, homepage, command, openExternal }) {
   const mac = platform === "darwin";
   const app = { app: appName };
   const menuLabel = (english, params) => localizedLabel(english, params, platform);
@@ -163,7 +162,8 @@ export function applicationMenuTemplate({ appName, platform, isFullScreen, packa
     submenu: [
       { label: menuLabel("Reload"), role: "reload" },
       { label: menuLabel("Force Reload"), role: "forceReload" },
-      ...(packaged ? [] : [{ label: menuLabel("Developer Tools"), role: "toggleDevTools" }]),
+      // kept in packaged builds too, as Electron's default menu always had it
+      { label: menuLabel("Developer Tools"), role: "toggleDevTools" },
       { type: "separator" },
       // ⌘0 / ⌘= / ⌘- belong to the workbench canvas (fit, zoom in, zoom out),
       // so the page-zoom items show their keys without claiming them

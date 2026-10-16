@@ -7,7 +7,7 @@ import { Check, Loader2, RefreshCw, Search, TriangleAlert, X } from "lucide-reac
 import { api, useStore } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { readCachedInventory, writeCachedInventory } from "@/lib/connected-apps-cache";
-import { msg, t, tRich } from "@/lib/i18n";
+import { allTranslations, msg, t, tRich } from "@/lib/i18n";
 
 interface ToolkitCard {
   slug: string;
@@ -95,8 +95,16 @@ export function disconnectAccountConfirmation(
   );
 }
 
+/** The harness's refusal when a second account would replace the first
+ * (server/composio.ts). It arrives translated when the harness runs in
+ * Chinese, so recognize every rendering, not only the English one. */
+const ACCOUNT_ALIAS_REQUIRED = msg("Add an account alias so the existing connection is not replaced");
+
 export function requiresAccountAlias(message: string) {
-  return /account alias.*existing connection.*not replaced/i.test(message);
+  return (
+    /account alias.*existing connection.*not replaced/i.test(message) ||
+    allTranslations(ACCOUNT_ALIAS_REQUIRED).some((rendering) => message.includes(rendering))
+  );
 }
 
 export type ConnectorInventoryPhase = "loading" | "ready" | "error";

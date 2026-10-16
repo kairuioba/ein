@@ -15,7 +15,7 @@ import type { Routine, RoutineRun, RoutineSchedule } from "@/lib/routines";
  * with `tool.system`; they render as a centred system line. */
 export function isSystemLine(message: Message): boolean {
   if (message.kind !== "activity" || !message.tool) return false;
-  return (message.tool as { system?: unknown }).system === true;
+  return message.tool.system === true;
 }
 
 /** The note the company layer posts when an approval waited too long while

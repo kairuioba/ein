@@ -28,6 +28,7 @@ import { createBotPatchQueue, type BotUpdatePatch } from "./bot-patch-queue";
 import { skillRecorderEnabled } from "@/lib/feature-flags";
 import { openLiveEvents } from "@/lib/live-events";
 import { intlLocale, t } from "@/lib/i18n";
+import { isQuizCard } from "@/lib/onboarding-quiz";
 
 export type { MausColor } from "@/lib/mascot";
 export type { RoutineRunCardData } from "../../shared/routine-run";
@@ -97,7 +98,14 @@ export interface Message {
   /** activity messages: tool name + outcome. `spoken` is the server's
    * narration of the same chip ("reading a file"), used by call mode. */
   /** `setup` marks an error fixed by installing something, not by retrying. */
-  tool?: { name: string; ok?: boolean; spoken?: string; setup?: boolean };
+  tool?: {
+    name: string;
+    ok?: boolean;
+    spoken?: string;
+    setup?: boolean;
+    /** written by the harness ABOUT the work (a dispatch or company event), not a tool call: shown as a system line */
+    system?: boolean;
+  };
   /** user messages sent into a running turn — the model saw it mid-turn */
   steered?: boolean;
   /** screen messages: a frame of the bot's computer (base64) */
@@ -726,9 +734,9 @@ function roomCard(groups: Group[], messageId: string): { threadId: string; reque
 
 /** First-run quiz still sitting on this bot's thread. */
 function openOnboardingCard(bot: Bot): Message | undefined {
-  return bot.messages.find(
-    (message) => message.kind === "options" && message.card && !message.card.requestId && !message.card.dismissed,
-  );
+  // only the first-run quiz — a request-less org question or proposal must
+  // survive the person sending a message
+  return bot.messages.find((message) => message.kind === "options" && isQuizCard(message.card) && !message.card?.dismissed);
 }
 
 function dismissOnboardingCard(state: AppState, botId: string): AppState {

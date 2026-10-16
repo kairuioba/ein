@@ -292,6 +292,20 @@ const Transcript = memo(function Transcript({
     const source = meeting.sources.list.find((entry) => entry.n === n);
     if (source) onJump(source.messageId);
   };
+  // A member's question is answered in the room: a live ask on the room's
+  // thread (the decision lands on the room), anything else as a room message —
+  // never as a 1:1 message to the bot that asked.
+  const answerInRoom = (message: Message, answer: string) => {
+    const requestId = message.card?.requestId;
+    if (!requestId) {
+      dispatch({ type: "sendGroup", groupId: group.id, text: answer });
+      return;
+    }
+    api(`/api/threads/${encodeURIComponent(group.threadId)}/respond`, {
+      method: "POST",
+      body: JSON.stringify({ requestId, behavior: "answer", message: answer }),
+    }).catch((error: unknown) => dispatch({ type: "error", message: error instanceof Error ? error.message : String(error) }));
+  };
   return (
     <>
       {items.map((item, i) => {
@@ -310,7 +324,9 @@ const Transcript = memo(function Transcript({
           prev.from?.botId !== first.from?.botId ||
           newDay ||
           first.at - prev.at > CLUSTER_GAP_MS ||
-          (previous?.kind === "message" && isPrivateRequest(previous.message));
+          (previous?.kind === "message" && isPrivateRequest(previous.message)) ||
+          // a system line in between starts the speaker over
+          (prev.kind === "activity" && prev.tool?.system === true && prev.tool.ok !== false);
         if (item.kind === "run") {
           if (!showToolCalls) return null;
           return (
@@ -367,7 +383,7 @@ const Transcript = memo(function Transcript({
           row = (
             <div className="flex w-full flex-col items-start gap-2">
               <div className="w-full max-w-[560px]">
-                <OptionCard botId={m.from?.botId ?? ""} message={m} />
+                <OptionCard botId={m.from?.botId ?? ""} message={m} showDecision={false} onAnswer={(answer) => answerInRoom(m, answer)} />
               </div>
               {decision && (
                 <DecisionCard
@@ -386,6 +402,9 @@ const Transcript = memo(function Transcript({
               onOpen={routineTarget ? () => openNotificationTarget(dispatch, routineTarget, state) : undefined}
             />
           );
+        } else if (m.kind === "activity" && m.tool?.system && m.tool.ok !== false) {
+          // dispatch and company events in the room: a centred system line
+          row = <SystemLine icon={<Users size={13} className="shrink-0 opacity-70" aria-hidden />}>{m.tool.name}</SystemLine>;
         } else if (m.kind === "activity" && m.tool) {
           row = m.tool.ok === false || m.tool.name.startsWith("error:") || showToolCalls ? <RoomToolChip message={m} /> : null;
         } else if (m.kind === "text" && m.text && user) {
@@ -446,10 +465,12 @@ const Transcript = memo(function Transcript({
           );
         }
         if (!row) return null;
+        // a system line stands on its own, outside any bot's cluster
+        const standalone = user || (m.kind === "activity" && m.tool?.system === true && m.tool.ok !== false);
         return (
           <div key={m.id} className="contents" data-mid={m.id}>
             {dayLine}
-            {user ? (
+            {standalone ? (
               row
             ) : (
               <BotCluster bot={sender} from={m.from} at={m.at} color={meeting.colors.get(m.from?.botId ?? "")} first={newCluster}>

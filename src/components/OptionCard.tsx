@@ -9,25 +9,16 @@ import { Check } from "lucide-react";
 import { visibleMessages, type Message, type OptionCardData } from "@/state/store";
 import { useDecisions } from "@/state/org-api";
 import { cn } from "@/lib/cn";
-import { allTranslations, msg, t, tn } from "@/lib/i18n";
+import { msg, t, tn } from "@/lib/i18n";
+import { isQuizCard } from "@/lib/onboarding-quiz";
 import { ChatCard, MetaDot, RING, StatusPill, type StatusTone } from "./chat/primitives";
 import { IconX } from "./chat/icons";
 import { useOptionalStore } from "./chat/use-optional-store";
 
-/** The first-run quiz the harness posts under a new bot's greeting (see
- * server/store.ts onboardingCard), in whichever language it was written. */
-const QUIZ_TITLES = new Set(allTranslations("What do you mostly want help with?"));
-
 /** First-run quiz, not a live provider ask (those carry requestId) and not
  * an org question card (those are recorded as decisions). */
 export function isOnboardingCard(message: Message): boolean {
-  return (
-    message.kind === "options" &&
-    !!message.card &&
-    !message.card.requestId &&
-    decisionIdOf(message.card) === undefined &&
-    QUIZ_TITLES.has(message.card.title)
-  );
+  return message.kind === "options" && !!message.card && decisionIdOf(message.card) === undefined && isQuizCard(message.card);
 }
 
 /** Hide the quiz once they have talked past it — picked an option, typed in

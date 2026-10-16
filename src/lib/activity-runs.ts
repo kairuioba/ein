@@ -20,6 +20,8 @@ function foldable(message: Message): boolean {
   const tool = message.tool;
   if (message.kind !== "activity" || !tool) return false;
   if (message.comm) return false;
+  // news about the work (a dispatch or company event) is never folded away
+  if (tool.system) return false;
   if (tool.ok !== true) return false;
   return !tool.name.startsWith("error:");
 }

@@ -2146,7 +2146,8 @@ const dispatcher = new Dispatcher({
   },
   event: (event) => orgEvents.append(event),
   activity: (threadId, label, ok) => {
-    store.appendMessage(threadId, { role: "bot", kind: "activity", tool: { name: label, ...(ok === false ? { ok: false } : {}) } });
+    // dispatch progress is news about the work: a system line in the chat
+    store.appendMessage(threadId, { role: "bot", kind: "activity", tool: { name: label, ...(ok === false ? { ok: false } : { system: true }) } });
   },
   recommend: (task, policy) => recommendModels(task, candidatesFromInstances(recommenderInstances), policy, { limit: 1 })[0] ?? null,
   // SSE frames are keyed on `kind` (broadcast() reads payload.kind; `type`
@@ -4457,7 +4458,7 @@ const orgLayer = new OrgLayer(
     groups: () => store.groups,
     messages: (threadId) => store.messagesFor(threadId),
     patchCard: (threadId, messageId, card) => void store.patchMessage(threadId, messageId, { card: card as OptionCardData }),
-    chip: (threadId, text, ok) => void store.appendMessage(threadId, { role: "bot", kind: "activity", tool: { name: text, ok } }),
+    chip: (threadId, text, ok) => void store.appendMessage(threadId, { role: "bot", kind: "activity", tool: { name: text, ok, ...(ok ? { system: true } : {}) } }),
     runs: () => dispatcher.list(),
     maxAttempts: () => dispatchSettings(cfg.dispatch).maxAttempts,
     usdToCny: () => cfg.usage?.usdToCny,

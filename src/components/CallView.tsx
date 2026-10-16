@@ -17,19 +17,32 @@
 // every activity chip the harness narrates (`tool.spoken`) is read aloud as
 // it happens, which is why waiting feels like listening to someone work
 // rather than listening to nothing.
-import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { Loader2, Phone, PhoneOff, X } from "lucide-react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { Phone, PhoneOff } from "lucide-react";
 
 import { useStore, visibleMessages, type Bot } from "@/state/store";
-import { currentCall, deferCallCleanup, endCall, startCall, useOnCall } from "@/lib/call";
+import { callStartedAt, currentCall, deferCallCleanup, endCall, startCall, useOnCall } from "@/lib/call";
 import { speaker } from "@/lib/tts";
 import { useSpeech } from "@/lib/tts/useSpeech";
 import { usePushToTalk } from "@/lib/push-to-talk";
-import { MausAvatar } from "./Avatar";
+import { callActions, callPoints, captionLines } from "@/lib/group-call-notes";
 import { isRoutineApproval, isSkillApproval, pendingApprovals, spokenApprovalPrompt } from "./PendingApproval";
 import { cn } from "@/lib/cn";
 import { track } from "@/lib/analytics";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
+import {
+  CallBotTile,
+  CallDock,
+  CallShell,
+  CallStage,
+  CallYouTile,
+  CaptionsPanel,
+  callMascotScale,
+  useSecondClock,
+  type LiveCaption,
+  type YouStatus,
+} from "./group/CallChrome";
+import { estimateSpeechMs, useCallContext } from "./group/useCallContext";
 import { t } from "@/lib/i18n";
 import { spokenNo, spokenYes } from "@/lib/spoken-answer";
 
@@ -146,17 +159,17 @@ export function CallTargetButton({
         aria-label={label}
         title={label}
         className={cn(
-          "relative flex size-9 items-center justify-center rounded-full transition-colors",
+          "relative grid size-8 shrink-0 place-items-center rounded-[9px] transition-colors",
           active
             ? "bg-danger text-white hover:brightness-110"
             : unavailable
-              ? "text-ink-secondary/50 hover:bg-raised hover:text-ink-secondary"
-              : "text-ink-secondary hover:bg-raised hover:text-ink",
+              ? "text-ink-secondary/50 hover:bg-raised-hover hover:text-ink-secondary"
+              : "text-ink-secondary hover:bg-raised-hover hover:text-ink",
         )}
       >
         {active ? <PhoneOff size={17} /> : <Phone size={17} />}
         {unavailable && (
-          <span className="absolute right-1 top-1 size-1.5 rounded-full bg-warning ring-2 ring-app" aria-hidden="true" />
+          <span className="absolute top-1 right-1 size-1.5 rounded-full bg-warning ring-2 ring-stage" aria-hidden="true" />
         )}
       </button>
 
@@ -165,7 +178,7 @@ export function CallTargetButton({
           id={helpId}
           role="group"
           aria-label={t("Call unavailable")}
-          className="animate-pop-in absolute right-0 z-30 mt-1.5 w-[280px] rounded-xl border border-hairline bg-panel p-3 text-left shadow-2xl"
+          className="animate-pop-in absolute right-0 z-30 mt-1.5 w-[280px] rounded-xl bg-raised p-3 text-left shadow-[0_0_0_1px_var(--color-hairline),0_18px_40px_-16px_rgb(16_24_40/0.35)]"
         >
           <div className="text-[13px] font-medium text-ink">{t("Call unavailable")}</div>
           <div className="mt-1 text-[12px] leading-[1.45] text-ink-secondary">{reason}</div>
@@ -195,12 +208,25 @@ export function CallOverlay({ bot }: { bot: Bot }) {
 }
 
 function Call({ bot }: { bot: Bot }) {
-  const { dispatch } = useStore();
+  const { state, dispatch } = useStore();
   const speech = useSpeech();
+  const context = useCallContext();
+  const now = useSecondClock();
+  const [startedAt] = useState(() => callStartedAt() ?? Date.now());
   const initialPhase: Phase = bot.busy ? "working" : "listening";
   const [phase, setPhase] = useState<Phase>(initialPhase);
   const [heard, setHeard] = useState("");
   const [note, setNote] = useState<string | null>(null);
+  // what the screen shows, and your controls (see GroupCallView)
+  const [live, setLive] = useState<LiveCaption | null>(null);
+  const [spokenMs, setSpokenMs] = useState(0);
+  const [panelOpen, setPanelOpen] = useState(true);
+  const [muted, setMuted] = useState(false);
+  const [speakerOn, setSpeakerOn] = useState(true);
+  const [voiceMuted, setVoiceMuted] = useState(false);
+  const mutedRef = useRef(false);
+  const audibleRef = useRef(true);
+  const hearingSince = useRef<number>(Date.now());
   const pushToTalk = usePushToTalk(bot.id, phase === "listening", () => {
     setNote(t("Push to talk couldn't start. Check Microphone and Speech Recognition access."));
   });
@@ -255,6 +281,10 @@ function Call({ bot }: { bot: Bot }) {
     move("listening");
     setHeard("");
     setNote(null);
+    setLive(null);
+    hearingSince.current = Date.now();
+    // muted: it is your turn, but the microphone stays closed until you unmute
+    if (mutedRef.current) return;
     void window.ogb?.speechStart({ endpointMs: CALL_ENDPOINT_MS }).catch(() => {
       if (alive.current && currentCall() === bot.id) {
         setNote(t("The microphone couldn't start. Check Microphone and Speech Recognition access."));
@@ -265,22 +295,27 @@ function Call({ bot }: { bot: Bot }) {
   /** Speak, with the microphone closed for the duration (see the header
    * comment — an open mic during playback is a feedback loop). */
   const say = useCallback(
-    async (text: string) => {
+    async (text: string, lineId?: string) => {
       if (!alive.current || currentCall() !== bot.id) return false;
       const mine = ++sayGeneration.current;
       // Move first. stopSpeech() finishes asynchronously, and its close must
       // never observe an old "listening" phase and reopen the mic.
       move("speaking");
+      const begin = Date.now();
+      setLive({ lineId, speakerId: bot.id, name: bot.name, text: lineId ? undefined : text, startedAt: begin });
       hush();
-      await speaker.speak(text, { botId: bot.id, voiceId: bot.voice });
+      // speaker off (or this bot silenced): the reply is read as a caption
+      if (audibleRef.current) await speaker.speak(text, { botId: bot.id, voiceId: bot.voice });
+      else await new Promise((resolve) => setTimeout(resolve, 600));
+      if (alive.current) setSpokenMs((total) => total + (Date.now() - begin));
       return alive.current && currentCall() === bot.id && sayGeneration.current === mine;
     },
-    [bot.id, bot.voice, hush, move],
+    [bot.id, bot.name, bot.voice, hush, move],
   );
 
   const sayThenListen = useCallback(
-    async (text: string) => {
-      const stillMine = await say(text);
+    async (text: string, lineId?: string) => {
+      const stillMine = await say(text, lineId);
       if (stillMine && phaseRef.current === "speaking") listen();
     },
     [listen, say],
@@ -474,10 +509,13 @@ function Call({ bot }: { bot: Bot }) {
     for (const m of fresh) spokenIds.current.add(m.id);
 
     if (reply?.text) {
-      void sayThenListen(reply.text);
+      void sayThenListen(reply.text, reply.id);
     } else if (chip?.tool?.spoken && phase === "working") {
       void say(chip.tool.spoken).then((stillMine) => {
-        if (stillMine && phaseRef.current === "speaking") move("working");
+        if (stillMine && phaseRef.current === "speaking") {
+          move("working");
+          setLive(null);
+        }
       });
     }
   }, [messages, approval, question, phase, bot.busy, bot.name, hush, listen, move, say, sayThenListen]);
@@ -520,90 +558,127 @@ function Call({ bot }: { bot: Bot }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [bot.id, listen]);
 
-  const mascotState =
-    phase === "listening" ? "listening" : phase === "speaking" ? "sending" : phase === "sending" ? "thinking" : "working";
-  const status =
-    phase === "listening"
+  // ── your controls ─────────────────────────────────────────────────────
+  const interrupt = () => {
+    sayGeneration.current += 1;
+    speaker.stop();
+    listen();
+  };
+  const toggleMute = () => {
+    const next = !mutedRef.current;
+    mutedRef.current = next;
+    setMuted(next);
+    if (next) {
+      setHeard("");
+      if (phaseRef.current === "listening") hush();
+    } else if (phaseRef.current === "listening") {
+      listen();
+    }
+  };
+  const setAudible = (speakerNext: boolean, voiceNext: boolean) => {
+    setSpeakerOn(speakerNext);
+    setVoiceMuted(voiceNext);
+    audibleRef.current = speakerNext && !voiceNext;
+    if (!audibleRef.current && speaker.isSpeaking()) speaker.stop();
+  };
+
+  // ── what the screen shows ─────────────────────────────────────────────
+  const lines = useMemo(() => captionLines(messages, startedAt, { botId: bot.id, name: bot.name }), [messages, startedAt, bot.id, bot.name]);
+  const actions = useMemo(() => callActions(lines), [lines]);
+  const points = useMemo(() => callPoints(lines), [lines]);
+  const spoke = Math.max(
+    spokenMs,
+    lines.filter((line) => line.speaker.kind === "bot").reduce((sum, line) => sum + estimateSpeechMs(line.text), 0),
+  );
+  const youStatus: YouStatus = muted ? "muted" : phase === "listening" ? (heard || pushToTalk ? "talking" : "open") : "listening";
+  const leftHint = muted
+    ? { title: t("You're muted"), detail: t("Click the mic to talk · Space interrupts") }
+    : phase === "listening"
       ? pushToTalk
-        ? t("Push to talk")
-        : t("Listening")
-      : phase === "sending"
-        ? t("One moment")
-        : phase === "speaking"
-          ? bot.name
-          : t("Working");
-
-  return (
-    <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-6 bg-app/95 backdrop-blur-sm">
-      <button
-        onClick={() => endCall(bot.id)}
-        aria-label={t("Hang up")}
-        className="absolute right-5 top-5 rounded-md p-2 text-ink-secondary hover:bg-raised hover:text-ink"
-      >
-        <X size={18} />
-      </button>
-
-      <MausAvatar color={bot.color} state={mascotState} size={220} animated trackPointer />
-
-      <div className="flex flex-col items-center gap-1.5 text-center">
-        <div className="text-[20px] font-medium text-ink">{bot.name}</div>
-        <div className="flex items-center gap-2 text-[13.5px] text-ink-secondary">
-          {(phase === "working" || phase === "sending") && <Loader2 size={13} className="animate-spin" />}
-          {status}
-        </div>
-      </div>
-
-      {/* one line, whichever is current: what you're saying, or what it is */}
-      <div className="min-h-[3.5rem] max-w-[560px] px-6 text-center text-[15px] leading-relaxed text-ink">
-        {phase === "listening" ? (
-          heard || (
-            <span className="text-ink-secondary">
-              {pushToTalk ? t("Release Control + Option to send…") : t("Say something…")}
-            </span>
-          )
-        ) : (
-          speech.caption
-        )}
-      </div>
-
-      {note && (
-        <div className="flex max-w-[460px] flex-col items-center gap-2 text-center text-[12.5px] text-warning">
-          <span>{note}</span>
-          <button
-            onClick={listen}
-            className="rounded-full border border-warning/40 px-3 py-1.5 text-[12px] hover:bg-warning/10"
-          >
+        ? { title: t("Listening to you"), detail: t("Release Control + Option to send…") }
+        : { title: t("Your turn"), detail: t("Just talk, or hold Control + Option") }
+      : phase === "speaking"
+        ? { title: t("You're listening"), detail: t("Space interrupts · Esc hangs up") }
+        : { title: phase === "sending" ? t("One moment") : t("{name} is working", { name: bot.name }) };
+  const liveCaption: LiveCaption | null =
+    phase === "speaking" && live
+      ? { ...live, caption: speech.caption }
+      : phase === "listening" && heard
+        ? { you: true, name: t("You"), text: heard, startedAt: hearingSince.current }
+        : null;
+  const notice =
+    note || speech.error ? (
+      <div className="flex max-w-[560px] items-center gap-2 rounded-xl bg-raised px-3 py-2 text-[12.5px] text-warning shadow-[0_8px_24px_-14px_rgb(16_24_40/0.4)]">
+        <span className="min-w-0 flex-1">{note ?? speech.error}</span>
+        {note && (
+          <button onClick={listen} className="shrink-0 rounded-full px-2.5 py-1 font-semibold hover:bg-warning/10">
             {t("Try microphone again")}
           </button>
-        </div>
-      )}
-      {speech.error && <div className="max-w-[420px] text-center text-[12.5px] text-danger">{speech.error}</div>}
-
-      <div className="flex items-center gap-3">
-        {speaker.isSpeaking() && (
-          <button
-            onClick={() => {
-              sayGeneration.current += 1;
-              speaker.stop();
-              listen();
-            }}
-            className="rounded-full border border-hairline/50 px-4 py-2 text-[13.5px] text-ink hover:bg-raised"
-          >
-            {t("Interrupt")}
-          </button>
         )}
-        <button
-          onClick={() => endCall(bot.id)}
-          className="flex items-center gap-2 rounded-full bg-danger px-5 py-2.5 text-[14px] font-medium text-white hover:brightness-110"
-        >
-          <PhoneOff size={16} />{" "}
-          {t("Hang up")}
-        </button>
       </div>
+    ) : null;
 
-      <div className="text-[11.5px] text-ink-secondary/70">
-        {t("Hold Control + Option to talk · Space interrupts · Esc hangs up")}
-      </div>
-    </div>
+  return (
+    <CallShell
+      label={t("Call with {name}", { name: bot.name })}
+      title={bot.name}
+      startedAt={startedAt}
+      now={now}
+      linkLabel={bot.title || undefined}
+      people={[bot]}
+      count={2}
+      panelOpen={panelOpen}
+      onTogglePanel={() => setPanelOpen((open) => !open)}
+      stage={
+        <CallStage
+          count={2}
+          tiles={
+            <>
+              <CallBotTile
+                scale={callMascotScale(2)}
+                onToggleVoice={() => setAudible(speakerOn, !voiceMuted)}
+                tile={{
+                  bot,
+                  status: phase === "speaking" ? "speaking" : phase === "working" || phase === "sending" ? "working" : spoke > 0 ? "spoke" : "listening",
+                  ms: phase === "speaking" ? now - (live?.startedAt ?? now) : spoke,
+                  color: context.colors.get(bot.id),
+                  engine: context.engineOf(bot),
+                  voiceMuted,
+                }}
+              />
+              <CallYouTile status={youStatus} onToggleMute={toggleMute} scale={callMascotScale(2)} name={state.config?.profile?.name?.trim() || t("Owner")} />
+            </>
+          }
+          dock={
+            <CallDock
+              muted={muted}
+              onToggleMute={toggleMute}
+              speakerOn={speakerOn}
+              onToggleSpeaker={() => setAudible(!speakerOn, voiceMuted)}
+              canRaiseHand={phase === "speaking"}
+              onRaiseHand={interrupt}
+              onHangUp={() => endCall(bot.id)}
+            />
+          }
+          leftHint={leftHint}
+          notice={notice}
+        />
+      }
+      panel={
+        <CaptionsPanel
+          lines={lines}
+          live={liveCaption}
+          startedAt={startedAt}
+          bots={state.bots}
+          points={points}
+          actions={actions}
+          keeper={bot.name}
+          updatedAt={lines.length ? Math.max(...lines.map((line) => line.at)) : null}
+          pending={phase === "working" ? t("{name} is preparing a reply", { name: bot.name }) : undefined}
+          footer={t("Everything said stays in your chat with {name}", { name: bot.name })}
+          onCollapse={() => setPanelOpen(false)}
+        />
+      }
+    />
   );
 }

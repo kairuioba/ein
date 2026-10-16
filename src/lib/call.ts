@@ -11,6 +11,9 @@ import { useSyncExternalStore } from "react";
 import { speaker } from "./tts";
 
 let current: string | null = null;
+/** When the current call was placed — the call screen's 通话中 timer and the
+ * captions' mm:ss offsets count from here. */
+let startedAt: number | null = null;
 const watchers = new Set<() => void>();
 
 function notify() {
@@ -22,13 +25,19 @@ export function currentCall(): string | null {
   return current;
 }
 
-export function startCall(targetId: string) {
+/** Epoch ms the current call started, or null when nobody is on a call. */
+export function callStartedAt(): number | null {
+  return current === null ? null : startedAt;
+}
+
+export function startCall(targetId: string, now = Date.now()) {
   if (current === targetId) return;
   // Switching calls must silence both halves before ownership changes; the
   // old overlay may not unmount until React's next render.
   speaker.stop();
   void window.ogb?.speechStop();
   current = targetId;
+  startedAt = now;
   notify();
 }
 
@@ -38,6 +47,7 @@ export function endCall(targetId?: string): boolean {
   if (targetId && current !== targetId) return false;
   if (current === null) return false;
   current = null;
+  startedAt = null;
   speaker.stop();
   void window.ogb?.speechStop();
   notify();

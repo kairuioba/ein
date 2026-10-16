@@ -256,7 +256,7 @@ function Shell() {
         <div
           aria-hidden
           onMouseDown={(e) => e.target === e.currentTarget && setDrawerOpen(false)}
-          className="absolute inset-0 z-30 bg-[rgb(20_22_28/0.38)] md:hidden"
+          className="absolute inset-0 z-30 bg-black/40 md:hidden"
         />
       )}
       <Sidebar
@@ -270,7 +270,7 @@ function Shell() {
           draws it as an inset card (the --stage-* tokens); the other skins
           keep it edge to edge. Below md the sidebar is a drawer, so the card
           keeps its gap on the left too. */}
-      <div className="flex min-h-0 min-w-0 flex-1 p-[var(--stage-gap)] md:pl-0">
+      <div className="flex min-h-0 min-w-0 flex-1 md:pl-0!" style={{ padding: "var(--stage-gap)" }}>
       <div
         className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-stage"
         style={{ borderRadius: "var(--stage-radius)", outline: "1px solid var(--stage-border)", outlineOffset: -1 }}

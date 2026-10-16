@@ -116,7 +116,7 @@ export function SidebarSectionHeader({
         <span aria-hidden="true" className="pointer-events-none relative size-[7px] shrink-0 rounded-[2px]" style={{ background: color }} />
       )}
       <span className="pointer-events-none relative truncate">{name}</span>
-      {note && <span className="relative flex min-w-0 shrink-0 items-center font-medium">{note}</span>}
+      {note && <span className="relative flex min-w-0 shrink-0 items-center gap-1.5 font-medium">{note}</span>}
       {collapsed && badges}
       {attentionLabel && <span className="sr-only">{attentionLabel}</span>}
       <span

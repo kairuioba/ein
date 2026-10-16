@@ -361,6 +361,8 @@ function PaletteDialog({ initialQuery, onClose }: { initialQuery: string; onClos
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
+    // keys that belong to an input method's candidate list (pinyin …)
+    if (e.nativeEvent.isComposing || e.key === "Process") return;
     if (e.key === "Escape") {
       e.preventDefault();
       // shield the window listeners other modals hang their own Esc on
@@ -372,7 +374,7 @@ function PaletteDialog({ initialQuery, onClose }: { initialQuery: string; onClos
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
       setCursor(items.length ? (selected - 1 + items.length) % items.length : 0);
-    } else if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+    } else if (e.key === "Enter") {
       e.preventDefault();
       const item = items[selected];
       if (item) void activate(item);
@@ -554,7 +556,7 @@ function PaletteDialog({ initialQuery, onClose }: { initialQuery: string; onClos
         className={cn(
           "flex shrink-0 cursor-default items-center gap-2.5 rounded-[10px] pl-2 pr-2.5",
           size === "message" ? "h-[52px]" : size === "action" ? "h-10" : "h-[46px]",
-          isSelected ? "bg-select/[0.08] shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-select)_22%,transparent)]" : "",
+          isSelected ? "bg-select/[0.08] inset-ring-1 inset-ring-select/20" : "",
         )}
       >
         <span className={cn("grid shrink-0 place-items-center", size === "action" ? "h-[30px] w-[34px]" : "size-[34px]")}>{icon}</span>
@@ -570,7 +572,7 @@ function PaletteDialog({ initialQuery, onClose }: { initialQuery: string; onClos
           {isSelected ? (
             <span className="flex items-center gap-1.5 text-[12px] font-semibold text-accent-text">
               {t("Open")}
-              <Key className="text-accent-text shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-select)_35%,transparent)]">↵</Key>
+              <Key className="text-accent-text shadow-none inset-ring-1 inset-ring-select/35">↵</Key>
             </span>
           ) : (
             right
@@ -583,7 +585,7 @@ function PaletteDialog({ initialQuery, onClose }: { initialQuery: string; onClos
   let flatIndex = -1;
   return (
     <div
-      className="fixed inset-0 z-50 bg-[rgb(20_22_28/0.34)] backdrop-blur-[1.5px]"
+      className="fixed inset-0 z-50 bg-black/35 backdrop-blur-[1.5px]"
       onMouseDown={(e) => e.target === e.currentTarget && onClose(true)}
       onKeyDown={onKeyDown}
     >
@@ -591,7 +593,8 @@ function PaletteDialog({ initialQuery, onClose }: { initialQuery: string; onClos
         role="dialog"
         aria-modal="true"
         aria-label={t("Command palette")}
-        className="animate-pop-in absolute left-1/2 top-[58px] flex max-h-[calc(100dvh-96px)] w-[min(720px,calc(100vw-32px))] -translate-x-1/2 flex-col overflow-hidden rounded-2xl bg-card shadow-[0_0_0_1px_rgb(16_24_40/0.1),0_2px_6px_rgb(16_24_40/0.08),0_44px_96px_-28px_rgb(16_24_40/0.6)] max-sm:top-3"
+        style={{ width: "min(720px, calc(100vw - 32px))", maxHeight: "calc(100dvh - 96px)" }}
+        className="animate-pop-in absolute left-1/2 top-[58px] flex -translate-x-1/2 flex-col overflow-hidden rounded-2xl bg-card shadow-2xl ring-1 ring-black/10 max-sm:top-3"
       >
         <div className="flex h-[58px] shrink-0 items-center gap-3 border-b border-hairline/30 pl-5 pr-4">
           <Search size={19} className="shrink-0 text-ink-secondary" aria-hidden />
@@ -664,9 +667,9 @@ function PaletteDialog({ initialQuery, onClose }: { initialQuery: string; onClos
             </div>
           )}
           {sections.map((section) => (
-            <div key={section.key} role="group" aria-label={typeof section.title === "string" ? section.title : undefined} className="flex flex-col">
+            <div key={section.key} role="group" aria-labelledby={`${baseId}-group-${section.key}`} className="flex flex-col">
               <div className="flex h-[26px] shrink-0 items-end px-2.5 pb-1 text-[11.5px] font-semibold text-ink-secondary/70">
-                <span>{section.title}</span>
+                <span id={`${baseId}-group-${section.key}`}>{section.title}</span>
                 {section.more && (
                   <button
                     type="button"

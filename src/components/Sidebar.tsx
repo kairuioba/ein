@@ -119,12 +119,12 @@ import { SidebarSectionHeader } from "./SidebarSectionHeader";
 
 // ── shared styles ─────────────────────────────────────────────────────────────
 const MENU =
-  "fixed z-40 overflow-hidden rounded-xl bg-card p-1.5 text-ink shadow-[0_0_0_1px_rgb(16_24_40/0.08),0_16px_40px_-12px_rgb(16_24_40/0.32)]";
+  "fixed z-40 overflow-hidden rounded-xl bg-card p-1.5 text-ink shadow-xl ring-1 ring-hairline/40";
 const MENU_ITEM =
   "flex h-8 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-[13.5px] text-ink hover:bg-raised-hover disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent";
 const MENU_SEPARATOR = "mx-1.5 my-1 h-px bg-hairline/35";
 /** the white "you are here" fill of the design's selected rows */
-const SELECTED_FILL = "bg-raised shadow-[0_1px_2px_rgb(16_24_40/0.06),0_0_0_1px_rgb(16_24_40/0.04)]";
+const SELECTED_FILL = "bg-raised shadow-xs ring-1 ring-black/[0.04]";
 const ROW_HOVER = "hover:bg-raised/55";
 /** amber "needs you" — the same tone as the kit's Diamond */
 const AMBER = "#D97706";
@@ -439,7 +439,7 @@ function BotRow({
                 ? t("Keep at least one active bot")
                 : t("Archive {name}", { name: bot.name })
           }
-          className="absolute right-1 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-lg bg-card text-ink-secondary opacity-0 shadow-[0_0_0_1px_rgb(16_24_40/0.06),0_1px_2px_rgb(16_24_40/0.08)] transition hover:text-ink focus:opacity-100 disabled:hidden group-hover:opacity-100 group-focus-within:opacity-100"
+          className="absolute right-1 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-lg bg-card text-ink-secondary opacity-0 shadow-xs ring-1 ring-hairline/40 transition hover:text-ink focus:opacity-100 disabled:hidden group-hover:opacity-100 group-focus-within:opacity-100"
         >
           <Archive size={13} />
         </button>
@@ -537,7 +537,8 @@ function GroupRow({
           <span className={cn("flex items-center", !compact && "h-[15.5px]")}>
             {unreadCount > 0 && (
               <span
-                className="grid h-[18px] min-w-[18px] place-items-center rounded-full bg-select px-[5px] text-[11px] font-bold leading-none text-[var(--color-accent-ink)]"
+                className="grid h-[18px] min-w-[18px] place-items-center rounded-full bg-select px-[5px] text-[11px] font-bold leading-none"
+                style={{ color: "var(--color-accent-ink)" }}
                 role="img"
                 aria-label={tn(unreadCount, "{count} unread message", "{count} unread messages")}
               >
@@ -758,14 +759,14 @@ function NewRoomPanel({ onClose }: { onClose: () => void }) {
   };
   return (
     <div
-      className="fixed inset-0 z-40 flex items-center justify-center bg-[rgb(20_22_28/0.34)]"
+      className="fixed inset-0 z-40 flex items-center justify-center bg-black/35"
       onMouseDown={(e) => e.target === e.currentTarget && onClose()}
     >
       <div
         role="dialog"
         aria-modal="true"
         aria-label={t("New group chat")}
-        className="animate-pop-in w-[360px] rounded-2xl bg-card p-4 shadow-[0_0_0_1px_rgb(16_24_40/0.08),0_28px_64px_-24px_rgb(16_24_40/0.42)]"
+        className="animate-pop-in w-[360px] rounded-2xl bg-card p-4 shadow-2xl ring-1 ring-hairline/40"
       >
         <div className="mb-3 text-[15px] font-semibold text-ink">{t("New group chat")}</div>
         <input
@@ -1115,7 +1116,7 @@ function ArchivedBotsPanel({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-[rgb(20_22_28/0.38)] p-4 sm:p-6"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 sm:p-6"
       onMouseDown={(event) => event.target === event.currentTarget && !busyId && !restoringAll && onClose()}
     >
       <div
@@ -1124,7 +1125,8 @@ function ArchivedBotsPanel({
         aria-modal="true"
         aria-labelledby="archived-bots-title"
         tabIndex={-1}
-        className="animate-pop-in flex max-h-[min(680px,calc(100dvh-2rem))] w-full max-w-[760px] flex-col overflow-hidden rounded-[20px] bg-card shadow-[0_0_0_1px_rgb(16_24_40/0.08),0_28px_64px_-24px_rgb(16_24_40/0.42)] outline-none"
+        style={{ maxHeight: "min(680px, calc(100dvh - 2rem))" }}
+        className="animate-pop-in flex w-full max-w-[760px] flex-col overflow-hidden rounded-[20px] bg-card shadow-2xl ring-1 ring-hairline/40 outline-none"
       >
         <header className="flex items-start justify-between gap-4 px-6 pb-4 pt-6 sm:px-8 sm:pt-7">
           <div>
@@ -1456,7 +1458,9 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const pinnedIds = new Set(pinned.map((bot) => bot.id));
   const departments = buildDepartments(state.bots, org);
   const unassigned = unassignedBots(state.bots, org).filter((bot) => !pinnedIds.has(bot.id));
-  const partitioned = partitionSidebarGroups(state.groups);
+  // group chats in the order they were made, like bots: a new one never
+  // moves the ones you already know where to find
+  const partitioned = partitionSidebarGroups([...state.groups].sort((a, b) => a.createdAt - b.createdAt));
   const botChats = partitioned.botChats;
   const sectionedRooms = partitioned.sectionedRooms.filter((group) => group.section!.trim());
   // a section of only spaces is no section
@@ -1488,7 +1492,9 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     const shown = expanded ? members : folding.shown;
     // "+N" counts the quiet members; those working in the lead's run are
     // already summed up on the lead's row ("8 people · 13/24")
-    const canToggle = expanded ? folding.folded + folding.inRun > 0 : folding.folded > 0;
+    const canToggle =
+      !sidebarSectionCollapsed(id, collapsedSections, density, "") &&
+      (expanded ? folding.folded + folding.inRun > 0 : folding.folded > 0);
     const everyone = [...(lead ? [lead] : []), ...members];
     const delivered = departmentDelivered(department.section, brief.departments, runs, new Set(everyone.map((bot) => bot.id)), now);
     const squad = leadRun ? addedSquadName(leadRun) : null;
@@ -1506,7 +1512,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         <>
           {delivered && <span className="pointer-events-none text-success">{t("Delivered")}</span>}
           {squad && (
-            <span className="pointer-events-none ml-0.5 h-4 rounded-[4px] bg-[#6D3FE0] px-[5px] text-[10px] font-bold leading-4 text-white">
+            <span className="pointer-events-none h-4 rounded-[4px] bg-[#6D3FE0] px-[5px] text-[10px] font-bold leading-4 text-white">
               {t("{squad} new", { squad })}
             </span>
           )}
@@ -1516,7 +1522,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
               onClick={toggleMembers}
               aria-expanded={expanded}
               title={expanded ? t("Fold quiet members") : tn(folding.folded, "Show {count} more bot", "Show {count} more bots")}
-              className="ml-0.5 rounded px-1 font-medium text-ink-secondary/70 hover:bg-raised hover:text-ink"
+              className="-ml-1 rounded px-1 font-medium text-ink-secondary/70 hover:bg-raised hover:text-ink"
             >
               {expanded ? t("Fold") : `+${folding.folded}`}
             </button>
@@ -1743,7 +1749,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         // descendants. Cancelling it with an `md:` prefix still emits a value, which
         // silently reparents NewRoomPanel's overlay and the "+" menu backdrop on
         // desktop.
-        "max-md:absolute max-md:inset-y-0 max-md:left-0 max-md:z-40 max-md:shadow-[0_0_0_1px_rgb(16_24_40/0.06),0_24px_48px_-12px_rgb(16_24_40/0.35)]",
+        "max-md:absolute max-md:inset-y-0 max-md:left-0 max-md:z-40 max-md:shadow-2xl",
         "max-md:transition-transform max-md:duration-200",
         open ? "max-md:translate-x-0" : "max-md:-translate-x-full",
       )}
@@ -1909,18 +1915,21 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
             data-sidebar-search
             onClick={() => openCommandPalette()}
             onKeyDown={(event) => {
-              // typing on the focused field starts the search with that key
-              if (event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey && event.key !== " ") {
+              // typing on the focused field starts the search with that key;
+              // an input method's keystroke ("Process") just opens it
+              if (event.key === "Process") {
+                openCommandPalette();
+              } else if (event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey && event.key !== " ") {
                 event.preventDefault();
                 openCommandPalette(event.key);
               }
             }}
             aria-keyshortcuts="Meta+K Control+K"
-            className="flex h-[34px] w-full items-center gap-2 rounded-[10px] bg-raised/70 pl-3 pr-1.5 text-left shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_45%,transparent)] transition-colors hover:bg-raised"
+            className="flex h-[34px] w-full items-center gap-2 rounded-[10px] bg-raised/70 pl-3 pr-1.5 text-left inset-ring-1 inset-ring-hairline/45 transition-colors hover:bg-raised"
           >
             <Search size={16} strokeWidth={1.8} className="shrink-0 text-ink-secondary" />
             <span className="min-w-0 flex-1 truncate text-[13.5px] text-ink-secondary/70">{t("Search bots, group chats, files…")}</span>
-            <Kbd className="text-[10.5px] shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_55%,transparent),0_1px_0_color-mix(in_oklab,var(--color-hairline)_55%,transparent)]">⌘K</Kbd>
+            <Kbd className="text-[10.5px] shadow-none inset-ring-1 inset-ring-hairline/55">⌘K</Kbd>
           </button>
         )}
       </div>
@@ -2169,7 +2178,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           <div
             role="status"
             className={cn(
-              "fixed bottom-4 left-4 z-[60] max-w-[300px] rounded-xl bg-card px-3.5 py-2.5 text-[13px] shadow-[0_0_0_1px_rgb(16_24_40/0.08),0_16px_40px_-12px_rgb(16_24_40/0.32)]",
+              "fixed bottom-4 left-4 z-[60] max-w-[300px] rounded-xl bg-card px-3.5 py-2.5 text-[13px] shadow-xl ring-1 ring-hairline/40",
               teamFeedback.error ? "text-danger" : "text-ink",
             )}
           >

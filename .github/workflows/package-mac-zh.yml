@@ -3,8 +3,14 @@
 # The Chinese edition's Mac build. A Mac .dmg can only be built on macOS
 # (Swift helpers, codesign, hdiutil), so this runs on GitHub's macOS runner:
 #
-#   1. verify  — typecheck, unit tests and the localization coverage check
-#   2. mac     — package both architectures and smoke-test the packaged server
+#   1. verify   — typecheck, unit tests and the localization coverage check
+#   2. mac      — package both architectures and smoke-test the packaged server
+#   3. publish  — (optional) attach the DMGs to a prerelease, only when both
+#                 jobs above passed
+#
+# verify and mac run side by side: the installers are always produced (the
+# packaging step type-checks and builds everything itself), while a release
+# still requires the full test suite to be green.
 #
 # Signing: with the MAC_CERT_P12_BASE64 / MAC_CERT_PASSWORD secrets present
 # the app is signed with that Developer ID (and notarized when the three
@@ -62,7 +68,6 @@ jobs:
 
   mac:
     name: macOS arm64 + x64
-    needs: verify
     runs-on: macos-14
     timeout-minutes: 90
     steps:
@@ -167,14 +172,30 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+    outputs:
+      version: ${{ steps.names.outputs.version }}
+      signing: ${{ steps.signing.outputs.mode }}
+
+  publish:
+    name: prerelease
+    needs: [verify, mac]
+    if: inputs.release || startsWith(github.ref, 'refs/tags/zh-v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: OpenMausBot-zh-mac-${{ needs.mac.outputs.version }}
+          path: dist-zh
       - name: Publish a prerelease
-        if: inputs.release || startsWith(github.ref, 'refs/tags/zh-v')
         env:
           GH_TOKEN: ${{ github.token }}
+          NOTES_ADHOC: "本版本未经 Apple 公证：首次打开时请在“系统设置 → 隐私与安全性”中点“仍要打开”。"
         run: |
-          tag="zh-v${{ steps.names.outputs.version }}"
+          tag="zh-v${{ needs.mac.outputs.version }}"
+          notes="中文版 Mac 安装包：Apple 芯片选 apple-silicon，Intel 机型选 intel。"
+          if [ "${{ needs.mac.outputs.signing }}" = "adhoc" ]; then notes="$notes$NOTES_ADHOC"; fi
           gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
             || gh release create "$tag" --repo "$GITHUB_REPOSITORY" --prerelease --target "$GITHUB_SHA" \
-                 --title "OpenMausBot 中文版 ${{ steps.names.outputs.version }}" \
-                 --notes "中文版 Mac 安装包：Apple 芯片选 apple-silicon，Intel 机型选 intel。${{ steps.signing.outputs.mode == 'adhoc' && '本版本未经 Apple 公证：首次打开时请在“系统设置 → 隐私与安全性”中点“仍要打开”。' || '' }}"
+                 --title "OpenMausBot 中文版 ${{ needs.mac.outputs.version }}" --notes "$notes"
           gh release upload "$tag" dist-zh/*.dmg --repo "$GITHUB_REPOSITORY" --clobber

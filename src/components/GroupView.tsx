@@ -80,6 +80,7 @@ import {
   tailWindowStart,
 } from "@/lib/transcript-window";
 import { useReplyDraft } from "@/lib/drafts";
+import { openLibraryDoc } from "@/lib/deep-links";
 
 /** A new sender cluster also starts when the same member speaks again after a pause. */
 const CLUSTER_GAP_MS = 5 * 60_000;
@@ -1277,10 +1278,18 @@ export function GroupView({ group }: { group: Group }) {
     (messageId: string) => dispatch({ type: "focusMessage", threadId: group.threadId, messageId }),
     [dispatch, group.threadId],
   );
-  const openLibrary = useCallback(() => dispatch({ type: "showPage", page: "library" }), [dispatch]);
+  // the library page, opened at one doc (and the version cited) when given
+  const openLibrary = useCallback(
+    (docId?: string, version?: number) => {
+      const show = () => dispatch({ type: "showPage", page: "library" });
+      if (docId) openLibraryDoc(show, { docId, version });
+      else show();
+    },
+    [dispatch],
+  );
   const openSource = useCallback(
     (source: NumberedSource) => {
-      if (source.kind === "library") return openLibrary();
+      if (source.kind === "library") return openLibrary(source.docId, source.version);
       if (source.kind === "web") {
         window.open(source.target, "_blank", "noopener,noreferrer");
         return;
@@ -1515,7 +1524,7 @@ export function GroupView({ group }: { group: Group }) {
                               "Meeting ended {time} · minutes filed to <b>Library</b>",
                               {
                                 b: (children) => (
-                                  <button type="button" onClick={openLibrary} className="font-semibold text-ink hover:underline">
+                                  <button type="button" onClick={() => openLibrary(meeting.minutesDoc?.id)} className="font-semibold text-ink hover:underline">
                                     {children}
                                   </button>
                                 ),

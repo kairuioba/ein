@@ -211,7 +211,18 @@ export function useLibrary() {
   return useApi<{ docs: LibraryDoc[] }>("/api/library", { docs: [] }, 10_000);
 }
 
-export async function publishLibraryDoc(input: { id?: string; title: string; section: string | null; text: string; note?: string; ownerBotId?: string }) {
+export async function publishLibraryDoc(input: {
+  id?: string;
+  title: string;
+  section: string | null;
+  text: string;
+  note?: string;
+  ownerBotId?: string;
+  /** the line under the title; the server takes the text's first line otherwise */
+  summary?: string;
+  /** the decision (决议 #n) this version carries out */
+  decisionId?: number;
+}) {
   const doc = await send<LibraryDoc>("POST", "/api/library", input);
   await refreshApi("/api/library");
   return doc;

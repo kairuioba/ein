@@ -38,6 +38,7 @@ import {
 import { Button, Dialog, Segmented } from "@/components/ui";
 import { WebhooksPanel } from "@/components/WebhooksPanel";
 import type { CalendarCall } from "@/lib/calendar-calls";
+import { CALENDAR_OPEN_EVENT, CALENDAR_OPEN_KEY, useHandOff, type CalendarOpen } from "@/lib/deep-links";
 import { addMonths, isRecurringRoutine, monthGridDays, monthLabel, weekRangeLabel } from "@/lib/calendar-view";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
@@ -294,6 +295,25 @@ export function RoutinesPage({ onOpenRoom }: { onBack?: () => void; onOpenRoom: 
     setSelection({ kind: "routine", routineId: routine.id, at });
     if (failed) dispatch({ type: "markRoutineRunSeen", runId: failed.id });
   };
+
+  // ⌘K (or another page) asked to show one routine: open its panel, on the
+  // week it next runs, once the routine list has it
+  const [linkedRoutineId, setLinkedRoutineId] = useState<string | null>(null);
+  useHandOff<CalendarOpen>(CALENDAR_OPEN_KEY, CALENDAR_OPEN_EVENT, (detail) => {
+    if (detail.routineId) setLinkedRoutineId(detail.routineId);
+  });
+  useEffect(() => {
+    if (!linkedRoutineId) return;
+    const routine = state.routines.find((candidate) => candidate.id === linkedRoutineId);
+    if (!routine) return;
+    setLinkedRoutineId(null);
+    setSection("calendar");
+    const at = nextOccurrence(routine.schedule) ?? (routine.schedule.type === "daily" ? atLocalTime(Date.now(), routine.schedule.time) : routine.schedule.at);
+    setAnchor(startOfDay(at));
+    openRoutine(routine);
+    // openRoutine reads the latest state; it is not a dependency worth re-running for
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkedRoutineId, state.routines]);
 
   // a selection whose entry was deleted elsewhere closes the panel
   useEffect(() => {

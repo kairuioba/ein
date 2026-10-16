@@ -151,7 +151,8 @@ export function MinutesPanel({
   meeting: Meeting;
   onClose: () => void;
   onJump: (messageId: string) => void;
-  onOpenLibrary: () => void;
+  /** open the library, at one doc when given */
+  onOpenLibrary: (docId?: string) => void;
 }) {
   const { state } = useStore();
   const jumpToSource = (n: number) => {
@@ -276,7 +277,7 @@ export function MinutesPanel({
               <span className="min-w-0 flex-1 truncate">
                 {[t("Library"), t("Meeting minutes"), minutesDocName(meeting.minutesDoc.title)].join(" › ")}
               </span>
-              <button type="button" onClick={onOpenLibrary} className="shrink-0 font-semibold text-accent-text hover:underline">
+              <button type="button" onClick={() => onOpenLibrary(meeting.minutesDoc?.id)} className="shrink-0 font-semibold text-accent-text hover:underline">
                 {t("Open")}
               </button>
             </div>
@@ -298,9 +299,7 @@ function FileMinutes({ group, meeting, bots }: { group: Group; meeting: Meeting;
     setState("saving");
     setError("");
     const latest = meeting.decisions.at(-1);
-    // summary and decisionId are accepted by POST /api/library (A1); the
-    // client helper's input type predates them
-    const input: Parameters<typeof publishLibraryDoc>[0] & { summary?: string; decisionId?: number } = {
+    const input: Parameters<typeof publishLibraryDoc>[0] = {
       title: `${t("Meeting minutes")} · ${filedName(group, meeting)}`,
       section: null,
       text: minutesMarkdown(group, meeting, bots),

@@ -11,7 +11,7 @@ import { redactSecrets } from "../redact.ts";
 import { approvalEventFor, autoApprovedRow } from "./approval-events.ts";
 import { buildBrief, type AutoApprovedRow, type ConversationState } from "./brief.ts";
 import { OrgConfigStore } from "./config.ts";
-import { OrgDecisionStore } from "./decisions.ts";
+import { basisFromTexts, OrgDecisionStore } from "./decisions.ts";
 import type { OrgEventLog } from "./events.ts";
 import { ApprovalExpiry, type UnattendedApproval } from "./expiry.ts";
 import { collectInbox, isDecisionCard, questionOf } from "./inbox.ts";
@@ -271,6 +271,12 @@ export class OrgLayer {
       const owner = group ? undefined : this.botForThread(threadId);
       const botId = message.from?.botId ?? owner?.id;
       const title = questionOf(card);
+      // the sources the question leans on: library docs cited in the run-up
+      // (a meeting's recent discussion, a chat's last few turns) and the card
+      const thread = this.host.messages(threadId);
+      const index = thread.findIndex((entry) => entry.id === messageId);
+      const leadUp = thread.slice(Math.max(0, index - (group ? 30 : 8)), Math.max(0, index)).map((entry) => entry.text ?? "");
+      const basis = basisFromTexts([...leadUp, card.title, card.subtitle, ...card.options], this.library.list());
       const decision = this.decisions.create({
         title,
         options: card.options,
@@ -278,6 +284,7 @@ export class OrgLayer {
         source: group
           ? { kind: "group", id: group.id, threadId, messageId }
           : { kind: "chat", id: owner?.id ?? threadId, threadId, messageId },
+        ...(basis.length ? { basis } : {}),
       });
       // read the card again: the provider's own settle may have landed meanwhile
       const latest = this.host.messages(threadId).find((entry) => entry.id === messageId)?.card ?? card;

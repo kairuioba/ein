@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { DispatchRun, DispatchSubtask } from "../../shared/dispatch-types.ts";
 import { removeTempDir } from "../testing/cleanup.ts";
-import { actionStatus, DECISION_LINK_WINDOW_MS, OrgDecisionStore } from "./decisions.ts";
+import { actionStatus, basisFromTexts, DECISION_LINK_WINDOW_MS, OrgDecisionStore } from "./decisions.ts";
 
 const subtask = (id: string, status: DispatchSubtask["status"] = "pending", assigneeBotId = `bot-${id}`): DispatchSubtask => ({
   id,
@@ -123,5 +123,34 @@ describe("decisions", () => {
     expect(decision.choice.length).toBeLessThanOrEqual(200);
     writeFileSync(join(dir, "org-decisions.json"), "{ nope");
     expect(new OrgDecisionStore(dir).list()).toEqual([]);
+  });
+});
+
+describe("basisFromTexts", () => {
+  const docs = [
+    { id: "pricing", title: "价格表", versions: [{ version: 1 }, { version: 2 }, { version: 3 }] },
+    { id: "pricing-form", title: "价格表单模板", versions: [{ version: 1 }] },
+    { id: "survey", title: "竞品调研", versions: [{ version: 1 }, { version: 2 }] },
+    { id: "x", title: "PR", versions: [{ version: 1 }] },
+  ];
+
+  it("names each cited doc once, first-cited order, at the version named", () => {
+    expect(basisFromTexts(["对比竞品调研 v1 和价格表 v3 之后，建议 799", "再看一眼竞品调研 v2"], docs)).toEqual(["竞品调研 v2", "价格表 v3"]);
+  });
+
+  it("reads a doc named without a version as its latest", () => {
+    expect(basisFromTexts(["按价格表来"], docs)).toEqual(["价格表 v3"]);
+  });
+
+  it("reads library links, with or without a version", () => {
+    expect(basisFromTexts(["依据 [价格](library:pricing?v=2) 与 library:survey"], docs)).toEqual(["价格表 v2", "竞品调研 v2"]);
+  });
+
+  it("lets a longer title claim its characters and ignores very short titles", () => {
+    expect(basisFromTexts(["用价格表单模板 v1 填一下这个 PR"], docs)).toEqual(["价格表单模板 v1"]);
+  });
+
+  it("returns nothing when no doc is cited", () => {
+    expect(basisFromTexts(["", "随便聊聊"], docs)).toEqual([]);
   });
 });

@@ -4,11 +4,12 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
 import { WorkingTimer } from "@/components/WorkingIndicator";
+import { t } from "@/lib/i18n";
 
 export function TurnPresence({
   avatar,
   visible,
-  label = "Thinking",
+  label = t("Thinking"),
   answering = false,
   since = null,
   children,

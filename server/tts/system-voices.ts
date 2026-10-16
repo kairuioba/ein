@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
+import { getLocale } from "../../shared/i18n.ts";
 import type { Audio, Voice } from "./elevenlabs.ts";
 
 const SAY = "/usr/bin/say";
@@ -51,10 +52,21 @@ export function parseVoiceList(stdout: string): Voice[] {
 export async function listSystemVoices(run: Runner = defaultRun): Promise<Voice[]> {
   try {
     const { stdout } = await run(SAY, ["-v", "?"], 5_000);
-    return parseVoiceList(stdout);
+    return chineseFirst(parseVoiceList(stdout));
   } catch {
     return [];
   }
+}
+
+/** In the Chinese edition the Chinese voices (zh_CN, then zh_TW / zh_HK)
+ * lead the picker: bots answer in Chinese, which an English voice skips. */
+export function chineseFirst(voices: Voice[], locale: string = getLocale()): Voice[] {
+  if (locale !== "zh-CN") return voices;
+  const rank = (voice: Voice) => (voice.description?.startsWith("zh_CN") ? 0 : voice.description?.startsWith("zh_") ? 1 : 2);
+  return voices
+    .map((voice, index) => ({ voice, index }))
+    .sort((a, b) => rank(a.voice) - rank(b.voice) || a.index - b.index)
+    .map(({ voice }) => voice);
 }
 
 /** Synthesize one utterance to 22 kHz mono WAV — small, and every browser

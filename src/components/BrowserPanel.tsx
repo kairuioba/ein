@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { usePageVisible } from "@/lib/page-visible";
 import { cn } from "@/lib/cn";
+import { getLocale, t } from "@/lib/i18n";
 import { transitionBrowserControlLease } from "@/lib/computer-control";
 import { api, useStore, type Bot, type BotAnnouncement, type BrowserProfile } from "@/state/store";
 import { browserProfilePartitionId, browserProfilesForPatch } from "@/lib/browser-profiles";
@@ -121,9 +122,9 @@ export function shouldClearBrowserSurfaceFailure(
 }
 
 function browserSurfaceFailureText(code: BrowserSurfaceState["code"]): string {
-  if (code === "renderer-gone") return "The page stopped unexpectedly.";
-  if (code === "evicted") return "This page was paused to free memory.";
-  return "The browser surface needs to be reopened.";
+  if (code === "renderer-gone") return t("The page stopped unexpectedly.");
+  if (code === "evicted") return t("This page was paused to free memory.");
+  return t("The browser surface needs to be reopened.");
 }
 
 export function BrowserSurfacePlaceholder({
@@ -146,7 +147,7 @@ export function BrowserSurfacePlaceholder({
       >
         <AlertTriangle size={22} className="text-danger" aria-hidden="true" />
         <div>
-          <div className="font-medium text-ink">Page unavailable</div>
+          <div className="font-medium text-ink">{t("Page unavailable")}</div>
           <div className="mt-0.5">{browserSurfaceFailureText(failureCode)}</div>
         </div>
         {onRetry ? (
@@ -158,7 +159,7 @@ export function BrowserSurfacePlaceholder({
             }}
             className="mt-1 inline-flex items-center gap-1.5 rounded-lg bg-control px-3 py-1.5 font-medium text-ink outline-none hover:bg-raised-hover focus-visible:ring-2 focus-visible:ring-accent"
           >
-            <RotateCcw size={13} aria-hidden="true" /> Retry
+            <RotateCcw size={13} aria-hidden="true" /> {t("Retry")}
           </button>
         ) : null}
       </div>
@@ -171,7 +172,7 @@ export function BrowserSurfacePlaceholder({
         role="status"
       >
         <Globe size={22} className="opacity-60" aria-hidden="true" />
-        <span>Nothing open yet. Ask {botName} to look something up, or enter an address above.</span>
+        <span>{t("Nothing open yet. Ask {name} to look something up, or enter an address above.", { name: botName })}</span>
       </div>
     );
   }
@@ -182,7 +183,7 @@ export function BrowserSurfacePlaceholder({
       aria-live="polite"
     >
       <Loader2 size={20} className="animate-spin text-accent" aria-hidden="true" />
-      <span>{presentation === "connecting" ? "Preparing browser…" : "Opening page…"}</span>
+      <span>{presentation === "connecting" ? t("Preparing browser…") : t("Opening page…")}</span>
     </div>
   );
 }
@@ -308,9 +309,9 @@ export function BrowserPanel({
     controlTransition: controlPending,
   });
   const profileChangeLockMessage = bot.busy
-    ? `Stop ${bot.name}'s current turn before changing profiles.`
+    ? t("Stop {name}'s current turn before changing profiles.", { name: bot.name })
     : profileChangesLocked
-      ? "Finish the current browser action before changing profiles."
+      ? t("Finish the current browser action before changing profiles.")
       : null;
 
   // Layout: tell main where the tab's rectangle is, on every change that can
@@ -408,7 +409,7 @@ export function BrowserPanel({
           if (control.held) {
             try {
               const applied = await bridge?.setHumanControl?.(botId, true, activePartition) === true;
-              if (!applied) setError("The browser tab is not ready for takeover yet.");
+              if (!applied) setError(t("The browser tab is not ready for takeover yet."));
               return applied;
             } catch (cause) {
               setError(cause instanceof Error ? cause.message : String(cause));
@@ -420,9 +421,9 @@ export function BrowserPanel({
         }
         const setLocalControl = async (held: boolean): Promise<boolean> => {
           try {
-            if (!bridge?.setHumanControl) throw new Error("Update OpenMausBot before using browser takeover.");
+            if (!bridge?.setHumanControl) throw new Error(t("Update OpenMausBot before using browser takeover."));
             const applied = await bridge.setHumanControl(botId, held, activePartition);
-            if (!applied) throw new Error("The browser tab is not ready for takeover yet.");
+            if (!applied) throw new Error(t("The browser tab is not ready for takeover yet."));
             return true;
           } catch (cause) {
             setError(cause instanceof Error ? cause.message : String(cause));
@@ -440,11 +441,11 @@ export function BrowserPanel({
           // The person may already be typing into the native page. Keep the
           // agent gated even though the durable lease endpoint failed; a
           // subsequent Take control click retries the server transition.
-          setError("Browser control could not be confirmed. The bot remains paused here for safety — retry Take control.");
+          setError(t("Browser control could not be confirmed. The bot remains paused here for safety — retry Take control."));
         } else if (result.failed === "durable-release") {
-          setError("Control could not be handed back. The bot remains paused here for safety — retry Hand back.");
+          setError(t("Control could not be handed back. The bot remains paused here for safety — retry Hand back."));
         } else if (result.failed === "native-release") {
-          setError("The server released control, but this browser remains paused locally for safety. Reopen the Browser panel to retry.");
+          setError(t("The server released control, but this browser remains paused locally for safety. Reopen the Browser panel to retry."));
         }
         if (action === "take") nativeTakePending.current = false;
         return false;
@@ -508,7 +509,7 @@ export function BrowserPanel({
       if (!(await changeControl("take"))) return;
       if (direction === "back") await bridge.back(botId, activePartition);
       else if (bridge.forward) await bridge.forward(botId, activePartition);
-      else throw new Error("Update OpenMausBot before using Forward.");
+      else throw new Error(t("Update OpenMausBot before using Forward."));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -535,7 +536,7 @@ export function BrowserPanel({
 
   const chooseProfile = async (value: string) => {
     if (profileBusy || profileChangesLocked) {
-      setError(profileChangeLockMessage ?? "Wait for the current profile change to finish.");
+      setError(profileChangeLockMessage ?? t("Wait for the current profile change to finish."));
       return;
     }
     const finishOperation = beginBrowserPanelOperation(botId);
@@ -574,7 +575,7 @@ export function BrowserPanel({
       if (botBusyRef.current) {
         setAddingProfile(false);
         setNewProfileName("");
-        setError(`Created ${name}, but ${bot.name}'s turn started before it could switch profiles. Stop the turn, then select it.`);
+        setError(t("Created {profile}, but {name}'s turn started before it could switch profiles. Stop the turn, then select it.", { profile: name, name: bot.name }));
         return;
       }
       const result: { bot: BotAnnouncement } = await api(`/api/bots/${botId}`, {
@@ -595,7 +596,7 @@ export function BrowserPanel({
   if (!bridge) {
     return (
       <div className="rounded-xl bg-card p-4 text-[13px] text-ink-secondary">
-        The built-in browser needs the OpenMausBot desktop app.
+        {t("The built-in browser needs the OpenMausBot desktop app.")}
       </div>
     );
   }
@@ -607,9 +608,9 @@ export function BrowserPanel({
       {!expanded ? (
         <div className="mb-2 mt-2 flex items-center justify-between text-[13px] text-ink-secondary">
           <span className="flex items-center gap-2" aria-live="polite">
-            {bot.name}'s browser
+            {t("{name}'s browser", { name: bot.name })}
             {presentation === "loading" || presentation === "connecting" ? (
-              <Loader2 size={13} className="animate-spin" aria-label="Browser is loading" />
+              <Loader2 size={13} className="animate-spin" aria-label={t("Browser is loading")} />
             ) : null}
           </span>
           {onExpand ? (
@@ -617,9 +618,9 @@ export function BrowserPanel({
               type="button"
               onClick={onExpand}
               className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[12px] outline-none hover:bg-control hover:text-ink focus-visible:ring-2 focus-visible:ring-accent"
-              title="Show the page large"
+              title={t("Show the page large")}
             >
-              <Maximize2 size={13} aria-hidden="true" /> Expand
+              <Maximize2 size={13} aria-hidden="true" /> {t("Expand")}
             </button>
           ) : null}
         </div>
@@ -636,8 +637,8 @@ export function BrowserPanel({
           onClick={() => void moveHistory("back")}
           disabled={!activeSurface?.canGoBack || busy || profileBusy || operationPending}
           className="rounded-md p-1.5 text-ink-secondary outline-none hover:bg-control hover:text-ink focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
-          title="Back"
-          aria-label="Back"
+          title={t("Back")}
+          aria-label={t("Back")}
         >
           <ArrowLeft size={15} aria-hidden="true" />
         </button>
@@ -646,8 +647,8 @@ export function BrowserPanel({
           onClick={() => void moveHistory("forward")}
           disabled={!bridge.forward || !activeSurface?.canGoForward || busy || profileBusy || operationPending}
           className="rounded-md p-1.5 text-ink-secondary outline-none hover:bg-control hover:text-ink focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
-          title="Forward"
-          aria-label="Forward"
+          title={t("Forward")}
+          aria-label={t("Forward")}
         >
           <ArrowRight size={15} aria-hidden="true" />
         </button>
@@ -656,8 +657,8 @@ export function BrowserPanel({
           onClick={() => void reload()}
           disabled={!bridge.reload || !currentUrl || busy || profileBusy || operationPending}
           className="rounded-md p-1.5 text-ink-secondary outline-none hover:bg-control hover:text-ink focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
-          title="Reload"
-          aria-label="Reload"
+          title={t("Reload")}
+          aria-label={t("Reload")}
         >
           <RefreshCw size={15} aria-hidden="true" />
         </button>
@@ -668,13 +669,13 @@ export function BrowserPanel({
             onChange={(event) => setAddress(event.target.value)}
             onFocus={() => setAddressFocused(true)}
             onBlur={() => setAddressFocused(false)}
-            placeholder="Enter a web address"
+            placeholder={t("Enter a web address")}
             spellCheck={false}
             autoCapitalize="off"
             autoCorrect="off"
             disabled={busy || profileBusy || operationPending}
             className="min-w-0 flex-1 bg-transparent text-[13px] text-ink outline-none placeholder:text-ink-secondary/70"
-            aria-label="Web address"
+            aria-label={t("Web address")}
           />
         </div>
         <button
@@ -682,15 +683,15 @@ export function BrowserPanel({
           disabled={!address.trim() || busy || profileBusy || operationPending}
           className="rounded-lg bg-control px-2.5 py-1.5 text-[12px] font-medium text-ink outline-none hover:bg-raised-hover focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
         >
-          Go
+          {t("Go")}
         </button>
         {currentUrl && (
           <button
             type="button"
             onClick={() => void window.ogb?.openExternal?.(currentUrl)}
             className="rounded-md p-1.5 text-ink-secondary outline-none hover:bg-control hover:text-ink focus-visible:ring-2 focus-visible:ring-accent"
-            title="Open in your default browser"
-            aria-label="Open in your default browser"
+            title={t("Open in your default browser")}
+            aria-label={t("Open in your default browser")}
           >
             <ExternalLink size={15} aria-hidden="true" />
           </button>
@@ -702,7 +703,7 @@ export function BrowserPanel({
           takes control without also activating whatever is underneath it. */}
       <div
         onClick={!expanded && onExpand ? onExpand : undefined}
-        title={!expanded && onExpand ? "Click to expand" : undefined}
+        title={!expanded && onExpand ? t("Click to expand") : undefined}
         data-browser-presentation={presentation}
         className={cn(
           "relative overflow-hidden rounded-2xl border border-hairline/60 bg-card p-[3px] shadow-sm shadow-black/10",
@@ -732,8 +733,8 @@ export function BrowserPanel({
       <div className="mt-3 flex items-center justify-between gap-3">
         <div className="min-w-0 text-[12px] leading-relaxed text-ink-secondary">
           {control.held
-            ? "You have the wheel — the bot waits until you hand it back."
-            : "Click into the page to take over any time; the bot pauses while you drive."}
+            ? t("You have the wheel — the bot waits until you hand it back.")
+            : t("Click into the page to take over any time; the bot pauses while you drive.")}
         </div>
         <button
           type="button"
@@ -745,7 +746,7 @@ export function BrowserPanel({
           )}
         >
           <Hand size={14} aria-hidden="true" />
-          {control.held ? "Hand back" : "Take control"}
+          {control.held ? t("Hand back") : t("Take control")}
         </button>
       </div>
 
@@ -754,21 +755,22 @@ export function BrowserPanel({
         <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2 text-[13px] text-ink">
             <UserRound size={14} className="shrink-0 text-ink-secondary" aria-hidden="true" />
-            <span className="shrink-0">Profile</span>
+            {/* "Profile" means the user's own profile elsewhere; in Chinese this one says 浏览器配置 */}
+            <span className="shrink-0">{getLocale() === "en" ? "Profile" : t("Browser profile")}</span>
             <select
               value={activeProfile}
               onChange={(event) => void chooseProfile(event.target.value)}
               disabled={profileBusy || profileChangesLocked}
-              aria-label="Browser profile"
+              aria-label={t("Browser profile")}
               className="min-w-0 flex-1 rounded-md bg-inset px-2 py-1 text-[13px] text-ink outline-none focus-visible:ring-2 focus-visible:ring-accent"
             >
-              <option value={OWN_PROFILE}>{bot.name}'s own</option>
+              <option value={OWN_PROFILE}>{t("{name}'s own", { name: bot.name })}</option>
               {profiles.map((profile) => (
                 <option key={profile.id} value={profile.id}>
                   {profile.name}
                 </option>
               ))}
-              <option value={GUEST_PROFILE}>Guest (forgets everything)</option>
+              <option value={GUEST_PROFILE}>{t("Guest (forgets everything)")}</option>
             </select>
           </div>
           <button
@@ -776,8 +778,8 @@ export function BrowserPanel({
             onClick={() => setAddingProfile((open) => !open)}
             disabled={profileBusy || profileChangesLocked}
             className="rounded-md p-1.5 text-ink-secondary outline-none hover:bg-control hover:text-ink focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
-            title={profileChangeLockMessage ?? "Add a profile"}
-            aria-label="Add a profile"
+            title={profileChangeLockMessage ?? t("Add a profile")}
+            aria-label={t("Add a profile")}
             aria-expanded={addingProfile}
           >
             <Plus size={15} aria-hidden="true" />
@@ -795,18 +797,18 @@ export function BrowserPanel({
               autoFocus
               value={newProfileName}
               onChange={(event) => setNewProfileName(event.target.value)}
-              placeholder="Profile name, e.g. Work"
+              placeholder={t("Profile name, e.g. Work")}
               maxLength={40}
               disabled={profileBusy || profileChangesLocked}
               className="min-w-0 flex-1 rounded-md bg-inset px-2.5 py-1.5 text-[13px] text-ink outline-none placeholder:text-ink-secondary/70 focus-visible:ring-2 focus-visible:ring-accent"
-              aria-label="New profile name"
+              aria-label={t("New profile name")}
             />
             <button
               type="submit"
               disabled={!newProfileName.trim() || profileBusy || profileChangesLocked}
               className="rounded-md bg-accent px-3 py-1.5 text-[13px] font-medium text-accent-ink outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50"
             >
-              Add
+              {t("Add")}
             </button>
             <button
               type="button"
@@ -816,16 +818,16 @@ export function BrowserPanel({
               }}
               className="rounded-md px-2 py-1.5 text-[13px] text-ink-secondary outline-none hover:text-ink focus-visible:ring-2 focus-visible:ring-accent"
             >
-              Cancel
+              {t("Cancel")}
             </button>
           </form>
         )}
         <div className="mt-1.5 text-[11.5px] leading-relaxed text-ink-secondary">
           {profileChangesLocked
             ? bot.busy
-              ? `Stop ${bot.name}'s current turn before changing profiles, so it cannot keep acting in a hidden session.`
+              ? t("Stop {name}'s current turn before changing profiles, so it cannot keep acting in a hidden session.", { name: bot.name })
               : profileChangeLockMessage
-            : `Profiles keep logins separate. “${bot.name}'s own” is private to this bot; Guest is cleared when you switch away.`}
+            : t("Profiles keep logins separate. “{name}'s own” is private to this bot; Guest is cleared when you switch away.", { name: bot.name })}
         </div>
       </div>
       {error && (

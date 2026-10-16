@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Globe, X } from "lucide-react";
 import { z } from "zod";
 import { api, useStore, type Bot } from "@/state/store";
+import { t } from "@/lib/i18n";
 import { BrowserPanel } from "./BrowserPanel";
 
 const controlSnapshotSchema = z.looseObject({
@@ -71,17 +72,17 @@ export function BrowserWorkspace({ bot, onClose }: { bot: Bot; onClose: () => vo
           <Globe size={18} />
         </div>
         <div className="min-w-0 flex-1">
-          <h1 className="truncate text-[14px] font-semibold text-ink">{bot.name}'s browser</h1>
+          <h1 className="truncate text-[14px] font-semibold text-ink">{t("{name}'s browser", { name: bot.name })}</h1>
           <p className="truncate text-[11.5px] text-ink-secondary">
-            Live page · click into it to take over · the bot pauses while you drive
+            {t("Live page · click into it to take over · the bot pauses while you drive")}
           </p>
         </div>
         <button
           type="button"
           onClick={onClose}
           className="rounded-md p-1.5 text-ink-secondary hover:bg-raised hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-          aria-label="Back to the small browser"
-          title="Back to the panel"
+          aria-label={t("Back to the small browser")}
+          title={t("Back to the panel")}
         >
           <X size={18} />
         </button>

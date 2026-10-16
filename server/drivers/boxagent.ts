@@ -21,8 +21,10 @@ import type {
 } from "../contracts.ts";
 import { newEventId, newId } from "../contracts.ts";
 import { appendNative } from "./native.ts";
+import { t } from "../../shared/i18n.ts";
 
 const DRIVER_KIND = "boxAgent";
+const BOX_CONFIG_SNIPPET = '{"box":{"token":"…"}}';
 const BOX_API = "https://ascii.dev/api/box/v1";
 
 const MODELS = {
@@ -86,11 +88,11 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
       const { threadId } = turn;
       const computer = turn.integrations?.computer;
       const boxId = computer && (!computer.kind || computer.kind === "box") ? computer.boxId : undefined;
-      if (!token) throw new Error('box not configured — add {"box":{"token":"…"}} to ~/.openmausbot/config.json');
+      if (!token) throw new Error(t("box not configured — add {snippet} to ~/.openmausbot/config.json", { snippet: BOX_CONFIG_SNIPPET }));
       if (!boxId) {
-        throw new Error("this bot has no computer yet — open the Computer panel and provision one");
+        throw new Error(t("this bot has no computer yet — open the Computer panel and provision one"));
       }
-      if (active.has(threadId)) throw new Error("a turn is already running on this thread");
+      if (active.has(threadId)) throw new Error(t("a turn is already running on this thread"));
       const turnId = newId();
       const model = turn.model || MODELS.default;
 
@@ -212,7 +214,7 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
               }
             }
             if (Date.now() - startedAt > 30 * 60_000) {
-              throw new Error("box run exceeded 30 minutes — interrupted");
+              throw new Error(t("box run exceeded 30 minutes — interrupted"));
             }
           }
           // cancelled
@@ -232,13 +234,13 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
 
     const snapshot = async (): Promise<ProviderSnapshot> => {
       if (!token) {
-        return { state: "unavailable", reason: 'no Box token — add {"box":{"token":"…"}} to ~/.openmausbot/config.json' };
+        return { state: "unavailable", reason: t("no Box token — add {snippet} to ~/.openmausbot/config.json", { snippet: BOX_CONFIG_SNIPPET }) };
       }
       try {
         await api("/me");
         return { state: "available", authenticated: true, version: null };
       } catch (e) {
-        return { state: "unavailable", reason: `box API unreachable: ${(e as Error).message}` };
+        return { state: "unavailable", reason: t("box API unreachable: {error}", { error: String((e as Error).message) }) };
       }
     };
 

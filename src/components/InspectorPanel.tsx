@@ -15,6 +15,7 @@ import { useStore, type Bot } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { formatTime, toRows, type InspectorEntry, type InspectorPage, type InspectorRow } from "@/lib/inspector";
 import { openLiveEvents } from "@/lib/live-events";
+import { t } from "@/lib/i18n";
 import type { RuntimeEvent } from "../../server/contracts.ts";
 
 type Lens = "events" | "raw";
@@ -184,12 +185,12 @@ export function InspectorPanel({ bot }: { bot: Bot }) {
     <aside className="animate-panel-in flex h-full w-[460px] shrink-0 flex-col border-l border-hairline/40 bg-panel">
       <div className="flex items-center justify-between px-4 py-3">
         <span className="flex items-center gap-2 text-[15px] font-semibold text-ink">
-          <Bug size={16} className="text-ink-secondary" /> Inspector
+          <Bug size={16} className="text-ink-secondary" /> {t("Inspector")}
         </span>
         <button
           onClick={() => dispatch({ type: "toggleInspector", open: false })}
-          aria-label="Close the Inspector"
-          title="Close the Inspector"
+          aria-label={t("Close the Inspector")}
+          title={t("Close the Inspector")}
           className="rounded-md p-1 text-ink-secondary hover:bg-raised hover:text-ink"
         >
           <X size={18} />
@@ -207,23 +208,29 @@ export function InspectorPanel({ bot }: { bot: Bot }) {
                 lens === l ? "bg-raised text-ink" : "text-ink-secondary hover:text-ink",
               )}
             >
-              {l}
+              {l === "raw" ? t("Raw") : t("Events")}
             </button>
           ))}
         </div>
         <span className="ml-auto text-[11px] text-ink-secondary">
-          {page ? (shown < total ? `last ${shown} of ${total}` : `${shown} entries`) : "loading…"}
+          {page
+            ? shown < total
+              ? t("last {shown} of {total}", { shown, total })
+              : t("{count} entries", { count: shown })
+            : t("loading…")}
         </span>
-        <button onClick={() => managedRefresh.current()} className="rounded-md p-1 text-ink-secondary hover:bg-raised hover:text-ink" title="Reload from disk">
+        <button onClick={() => managedRefresh.current()} className="rounded-md p-1 text-ink-secondary hover:bg-raised hover:text-ink" title={t("Reload from disk")}>
           <RefreshCw size={14} />
         </button>
       </div>
 
       <div ref={listRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto font-mono text-[11.5px]">
-        {error && <div className="px-4 py-3 text-danger">couldn't load: {error}</div>}
+        {error && <div className="px-4 py-3 text-danger">{t("couldn't load: {error}", { error })}</div>}
         {page && rows.length === 0 && !error && (
           <div className="px-4 py-6 text-ink-secondary">
-            {lens === "raw" ? "No native protocol messages recorded for this thread yet." : "No runtime events for this thread yet."}
+            {lens === "raw"
+              ? t("No native protocol messages recorded for this thread yet.")
+              : t("No runtime events for this thread yet.")}
           </div>
         )}
         {rows.map((row) => (

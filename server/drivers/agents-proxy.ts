@@ -12,6 +12,8 @@
 //                                          delivered to the source conversation
 //   create_bot(name, role, instructions) → Chiefs can add a specialist to
 //                                          their own section
+//   submit_plan(goal, subtasks)          → Chiefs hand a whole multi-step plan
+//                                          to the dispatch hub (server/dispatch.ts)
 //   request_credential(id, reason?)       → show a secure, allowlisted key card
 //   list_routines()                       → inspect this bot's scheduled work
 //   propose_routine(...)                  → show a confirmation card for a new routine
@@ -34,6 +36,9 @@ const THREAD_ID = process.env.OMB_THREAD_ID ?? "";
 const TOKEN = process.env.OMB_COMMS_TOKEN ?? "";
 const DEPTH = Number(process.env.OMB_TURN_DEPTH ?? "0") || 0;
 const SKILL_AUTHORING_ENABLED = process.env.OMB_SKILL_AUTHORING_ENABLED === "1";
+/** Set by the harness only for a Chief of Staff while dispatch is enabled. */
+const DISPATCH_ENABLED = process.env.OMB_DISPATCH_ENABLED === "1";
+const DISPATCH_MAX_SUBTASKS = Number(process.env.OMB_DISPATCH_MAX_SUBTASKS ?? "8") || 8;
 const MAX_CREATED_PER_TURN = 4;
 let createdThisTurn = 0;
 const delegationTaskIdsThisTurn = new Set<string>();
@@ -257,6 +262,44 @@ const TOOLS = [
     },
   },
   {
+    name: "submit_plan",
+    description:
+      "CHIEF OF STAFF ONLY. Submit a whole multi-step plan and let OpenMausBot run it: each subtask goes to the best-fitting teammate (a specialist with a recommended model is created when nobody fits), subtasks run in dependency order and in parallel where possible, each specialist receives the results it depends on, and you are asked for one consolidated report when everything has finished. Returns immediately with the assignments. Prefer this over several delegate_bot calls whenever a request has two or more distinct pieces of work. After it succeeds, tell the user the plan in a few lines and end your turn — do not wait, poll, or do the subtasks yourself.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        goal: { type: "string", description: "One sentence: the overall outcome the user wants." },
+        subtasks: {
+          type: "array",
+          description: `The plan: 1 to ${DISPATCH_MAX_SUBTASKS} subtasks. A specialist sees only its own brief plus the results of the subtasks it depends on — never this conversation.`,
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "string", description: "Short unique id, e.g. s1, research, copy." },
+              title: { type: "string", description: "A few words naming the subtask." },
+              brief: {
+                type: "string",
+                description: "Self-contained instructions: everything the specialist needs, including any facts, files, or preferences from this conversation.",
+              },
+              role: { type: "string", description: "The specialist this needs, e.g. 'frontend engineer', 'data analyst', '文案策划'." },
+              needs: {
+                type: "array",
+                items: { type: "string", enum: ["coding", "reasoning", "writing", "chinese", "vision", "computer", "longContext", "speed"] },
+                description: "Capabilities the subtask needs; used to pick the model.",
+              },
+              difficulty: { type: "integer", minimum: 1, maximum: 5, description: "1 = trivial … 5 = hardest; used to pick the model." },
+              depends_on: { type: "array", items: { type: "string" }, description: "Ids of subtasks whose results this one needs first." },
+              acceptance: { type: "string", description: "Optional: how to tell the subtask is done well." },
+              assignee: { type: "string", description: "Optional: a teammate's name or id from list_bots, to force who does it." },
+            },
+            required: ["title", "brief"],
+          },
+        },
+      },
+      required: ["goal", "subtasks"],
+    },
+  },
+  {
     name: "request_credential",
     description:
       "Ask the user for a supported API key through OpenMausBot's secure credential card. Use this instead of asking them to paste a secret into chat. The secret is saved by the desktop app and is never returned to you. After calling this tool, end the turn; OpenMausBot resumes the task after the user saves or declines.",
@@ -363,9 +406,9 @@ const TOOLS = [
 ];
 
 const SKILL_TOOL_NAMES = new Set(["skills_list", "skill_manage"]);
-const AVAILABLE_TOOLS = SKILL_AUTHORING_ENABLED
-  ? TOOLS
-  : TOOLS.filter((tool) => !SKILL_TOOL_NAMES.has(tool.name));
+const AVAILABLE_TOOLS = TOOLS.filter(
+  (tool) => (SKILL_AUTHORING_ENABLED || !SKILL_TOOL_NAMES.has(tool.name)) && (DISPATCH_ENABLED || tool.name !== "submit_plan"),
+);
 
 type Json = Record<string, unknown>;
 type RoutineAction = "update" | "pause" | "resume" | "run_now" | "delete";
@@ -538,6 +581,25 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     createdThisTurn += 1;
     return {
       text: `Created @${r.name ?? botName} in ${r.section ?? "General"} [id: ${r.id}]. Assign work with delegate_bot.`,
+    };
+  }
+  if (name === "submit_plan") {
+    const r = await api(`/api/internal/dispatch/plan`, {
+      method: "POST",
+      body: JSON.stringify({ fromBotId: BOT_ID, fromThreadId: THREAD_ID, goal: args.goal, subtasks: args.subtasks }),
+    });
+    if (r.error) return { text: `The plan was not accepted: ${r.error}`, isError: true };
+    const assignments = Array.isArray(r.assignments) ? (r.assignments as Array<Json>) : [];
+    const lines = assignments.map((a) => {
+      const after = Array.isArray(a.dependsOn) && a.dependsOn.length ? ` (after ${a.dependsOn.join(", ")})` : "";
+      const created = a.created ? `, new specialist on ${a.model ?? "its recommended model"}` : "";
+      return `- ${a.id} "${a.title}" → @${a.assignee}${created}${after}`;
+    });
+    const approval = r.status === "awaiting-approval"
+      ? "The user must press Start on the workbench before it runs."
+      : "It is running now; independent subtasks run in parallel.";
+    return {
+      text: `Plan accepted (run ${r.runId}).\n${lines.join("\n")}\n\n${approval} When every subtask has finished you will be asked for one consolidated report. Tell the user the plan in a few lines and end your turn.`,
     };
   }
   if (name === "request_credential") {

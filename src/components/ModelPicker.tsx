@@ -11,6 +11,7 @@ import { EngineSetup, needsCli, needsSignIn } from "./EngineSetup";
 import { EngineGroupLabel } from "./EngineGroupLabel";
 import { cn } from "@/lib/cn";
 import { COMPACT_SQUARE } from "@/lib/compact-chip";
+import { t, tn } from "@/lib/i18n";
 
 type ModelOption = InstanceInfo["models"]["options"][number];
 const COMPACT_MODEL_COUNT = 5;
@@ -20,9 +21,9 @@ function modelLabel(instance: InstanceInfo | undefined, model: string): string {
 }
 
 function engineStatus(instance: InstanceInfo): string {
-  if (needsCli(instance)) return "Not installed";
-  if (needsSignIn(instance)) return "Sign-in required";
-  return instance.snapshot.version ?? "Ready";
+  if (needsCli(instance)) return t("Not installed");
+  if (needsSignIn(instance)) return t("Sign-in required");
+  return instance.snapshot.version ?? t("Ready");
 }
 
 function ModelRow({
@@ -48,10 +49,10 @@ function ModelRow({
       <span className="flex min-w-0 items-center gap-2">
         <span className="truncate">{option.label}</span>
         {option.id === defaultId && (
-          <span className="shrink-0 rounded bg-inset px-1.5 py-px text-[10px] text-ink-secondary">Default</span>
+          <span className="shrink-0 rounded bg-inset px-1.5 py-px text-[10px] text-ink-secondary">{t("Default")}</span>
         )}
         {option.loaded && (
-          <span className="shrink-0 rounded bg-accent/10 px-1.5 py-px text-[10px] text-accent">Loaded</span>
+          <span className="shrink-0 rounded bg-accent/10 px-1.5 py-px text-[10px] text-accent">{t("Loaded")}</span>
         )}
       </span>
       {current && <Check size={14} className="shrink-0 text-accent" />}
@@ -82,8 +83,8 @@ function ModelSearch({
             event.stopPropagation();
             onEscape();
           }}
-          placeholder="Search models"
-          aria-label={local ? "Search local models" : "Search models"}
+          placeholder={t("Search models")}
+          aria-label={local ? t("Search local models") : t("Search models")}
           className="w-full bg-transparent text-[12.5px] text-ink placeholder:text-ink-secondary focus:outline-none"
         />
       </div>
@@ -257,7 +258,7 @@ export function ModelPicker({
         <div
           data-model-picker-content
           role="dialog"
-          aria-label="Choose model"
+          aria-label={t("Choose model")}
           className={cn(
             "flex overflow-hidden rounded-2xl border border-hairline/50 bg-card",
             contained
@@ -294,11 +295,11 @@ export function ModelPicker({
               return (
                 <>
                   {subscription.length > 0 && (
-                    <EngineGroupLabel className="px-0 pb-0.5 pt-0.5 text-center text-[9px]">Cloud</EngineGroupLabel>
+                    <EngineGroupLabel className="px-0 pb-0.5 pt-0.5 text-center text-[9px]">{t("Cloud")}</EngineGroupLabel>
                   )}
                   {subscription.map(railButton)}
                   {local.length > 0 && (
-                    <EngineGroupLabel className="px-0 pb-0.5 pt-2 text-center text-[9px]">Local</EngineGroupLabel>
+                    <EngineGroupLabel className="px-0 pb-0.5 pt-2 text-center text-[9px]">{t("Local")}</EngineGroupLabel>
                   )}
                   {local.map(railButton)}
                 </>
@@ -318,13 +319,13 @@ export function ModelPicker({
                         blocked ? "bg-warning/10 text-warning" : "bg-success/10 text-success",
                       )}
                     >
-                      {pane === "custom" && !blocked ? "Local models" : engineStatus(railInstance)}
+                      {pane === "custom" && !blocked ? t("Local models") : engineStatus(railInstance)}
                     </span>
                   </div>
                   <div className="mt-0.5 text-[11.5px] text-ink-secondary">
                     {pane === "custom"
-                      ? "Run this agent with a model already on your machine."
-                      : "Choose a model for this bot."}
+                      ? t("Run this agent with a model already on your machine.")
+                      : t("Choose a model for this bot.")}
                   </div>
                 </div>
 
@@ -337,7 +338,8 @@ export function ModelPicker({
                     }}
                     className="mx-2 mb-1 flex shrink-0 items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-[12px] text-ink-secondary hover:bg-control/60"
                   >
-                    <ChevronLeft size={13} /> Back to {railInstance.displayName} models
+                    <ChevronLeft size={13} />
+                    {" "}{t("Back to {name} models", { name: railInstance.displayName })}
                   </button>
                 )}
 
@@ -346,8 +348,8 @@ export function ModelPicker({
                     <EngineSetup instance={railInstance} intent={pane === "custom" ? "inject" : "cloud"} />
                     <p className="mt-2 text-center text-[11.5px] text-ink-secondary/70">
                       {pane === "main" && official.length > 0
-                        ? `${official.length} ${official.length === 1 ? "model" : "models"} will appear after setup.`
-                        : "Local models will appear as soon as the agent is installed."}
+                        ? tn(official.length, "{count} model will appear after setup.", "{count} models will appear after setup.")
+                        : t("Local models will appear as soon as the agent is installed.")}
                     </p>
                   </div>
                 ) : (
@@ -372,12 +374,16 @@ export function ModelPicker({
                       {pane === "main" ? (
                         <>
                           <EngineGroupLabel className="px-2 pb-1 pt-0.5">
-                            {query ? `${filteredOfficial.length} results` : showAll ? `All models · ${official.length}` : "Suggested"}
+                            {query
+                              ? t("{count} results", { count: filteredOfficial.length })
+                              : showAll
+                                ? t("All models · {count}", { count: official.length })
+                                : t("Suggested")}
                           </EngineGroupLabel>
                           {shownOfficial.map(renderRow)}
                           {shownOfficial.length === 0 && (
                             <div className="px-2 py-5 text-center text-[12.5px] text-ink-secondary">
-                              Nothing matches “{query.trim()}”
+                              {t("Nothing matches “{query}”", { query: query.trim() })}
                             </div>
                           )}
                           {!query && !showAll && official.length > compactOfficial.length && (
@@ -386,7 +392,7 @@ export function ModelPicker({
                               onClick={() => setShowAll(true)}
                               className="mt-1 flex w-full items-center justify-between rounded-lg border-t border-hairline/40 px-2.5 py-2 text-[12.5px] font-medium text-ink-secondary hover:bg-control/60 hover:text-ink"
                             >
-                              Show all {official.length} models <ChevronDown size={13} />
+                              {t("Show all {count} models", { count: official.length })} <ChevronDown size={13} />
                             </button>
                           )}
                           {!query && showAll && official.length > COMPACT_MODEL_COUNT && (
@@ -395,14 +401,14 @@ export function ModelPicker({
                               onClick={() => setShowAll(false)}
                               className="mt-1 w-full rounded-lg px-2.5 py-2 text-[12px] text-ink-secondary hover:bg-control/60 hover:text-ink"
                             >
-                              Show suggested only
+                              {t("Show suggested only")}
                             </button>
                           )}
                         </>
                       ) : (
                         <>
                           {pinned.length > 0 && (
-                            <EngineGroupLabel className="px-2 pb-1 pt-0.5">Loaded now</EngineGroupLabel>
+                            <EngineGroupLabel className="px-2 pb-1 pt-0.5">{t("Loaded now")}</EngineGroupLabel>
                           )}
                           {pinned.map(renderRow)}
                           {pinned.length > 0 && rest.length > 0 && (
@@ -411,15 +417,15 @@ export function ModelPicker({
                           {rest.map(renderRow)}
                           {custom.length === 0 && (
                             <div className="mx-1 rounded-xl border border-dashed border-hairline/50 px-3 py-5 text-center">
-                              <div className="text-[12.5px] font-medium text-ink">No local models found</div>
+                              <div className="text-[12.5px] font-medium text-ink">{t("No local models found")}</div>
                               <div className="mt-1 text-[11.5px] leading-relaxed text-ink-secondary">
-                                Start oMLX, Ollama, Unsloth, LM Studio, or EXO, then reopen this picker.
+                                {t("Start oMLX, Ollama, Unsloth, LM Studio, or EXO, then reopen this picker.")}
                               </div>
                             </div>
                           )}
                           {custom.length > 0 && filteredCustom.length === 0 && (
                             <div className="px-2 py-5 text-center text-[12.5px] text-ink-secondary">
-                              Nothing matches “{query.trim()}”
+                              {t("Nothing matches “{query}”", { query: query.trim() })}
                             </div>
                           )}
                         </>
@@ -432,7 +438,9 @@ export function ModelPicker({
                   <button
                     type="button"
                     aria-label={
-                      custom.length > 0 ? `Use a local model (${custom.length} available)` : "Use a local model"
+                      custom.length > 0
+                        ? t("Use a local model ({count} available)", { count: custom.length })
+                        : t("Use a local model")
                     }
                     disabled={!canOpenCustom}
                     onClick={() => {
@@ -441,11 +449,11 @@ export function ModelPicker({
                     }}
                     className="flex w-full shrink-0 items-center justify-between gap-2 border-t border-hairline/40 px-4 py-3 text-left text-[12.5px] font-medium text-ink hover:bg-control/60 disabled:cursor-not-allowed disabled:text-ink-secondary/40 disabled:hover:bg-transparent"
                   >
-                    <span>Use a local model</span>
+                    <span>{t("Use a local model")}</span>
                     <span className="flex items-center gap-2">
                       {custom.length > 0 && (
                         <span className="rounded-full bg-inset px-2 py-0.5 text-[10.5px] text-ink-secondary">
-                          {custom.length} available
+                          {t("{count} available", { count: custom.length })}
                         </span>
                       )}
                       <ChevronRight size={14} className="text-ink-secondary" />
@@ -454,7 +462,7 @@ export function ModelPicker({
                 )}
               </>
             ) : (
-              <div className="px-4 py-5 text-[13px] text-ink-secondary">No model providers are available.</div>
+              <div className="px-4 py-5 text-[13px] text-ink-secondary">{t("No model providers are available.")}</div>
             )}
           </div>
         </div>

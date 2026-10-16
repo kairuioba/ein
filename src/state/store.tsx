@@ -27,6 +27,7 @@ import { speaker } from "@/lib/tts";
 import { createBotPatchQueue, type BotUpdatePatch } from "./bot-patch-queue";
 import { skillRecorderEnabled } from "@/lib/feature-flags";
 import { openLiveEvents } from "@/lib/live-events";
+import { intlLocale, t } from "@/lib/i18n";
 
 export type { MausColor } from "@/lib/mascot";
 export type { RoutineRunCardData } from "../../shared/routine-run";
@@ -1598,7 +1599,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           const source = stateRef.current.bots.find((b) => b.id === action.botId);
           if (!source) break;
           const duplicateProfile = {
-            name: `${source.name} copy`,
+            name: t("{name} copy", { name: source.name }),
             title: source.title,
             description: source.description,
             notifications: source.notifications,
@@ -2163,7 +2164,8 @@ export function useStore() {
 }
 
 export function formatTime(at: number) {
-  return new Date(at).toLocaleTimeString([], {
+  // the app's language, not the system's: a Chinese UI shows 上午10:30
+  return new Date(at).toLocaleTimeString(intlLocale(), {
     hour: "numeric",
     minute: "2-digit",
   });

@@ -4,6 +4,7 @@
 // keeps every message a departing bot already sent.
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { track } from "@/lib/analytics";
+import { t, tn } from "@/lib/i18n";
 import { useStore, type Group } from "@/state/store";
 import { BotPickerList } from "./BotPickerList";
 import { nextMemberIds } from "@/lib/room-members";
@@ -85,7 +86,7 @@ export function ManageMembersPanel({
     const rosterChanged =
       opened.length !== group.memberIds.length || opened.some((id, index) => id !== group.memberIds[index]);
     if (rosterChanged) {
-      setSaveError("This channel's members changed while the panel was open. Close it and try again.");
+      setSaveError(t("This channel's members changed while the panel was open. Close it and try again."));
       return;
     }
     if (changed) {
@@ -108,13 +109,13 @@ export function ManageMembersPanel({
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
-        aria-label={`Manage members of ${group.name}`}
+        aria-label={t("Manage members of {name}", { name: group.name })}
         className="w-[340px] rounded-2xl border border-hairline/50 bg-card p-4 shadow-2xl"
       >
-        <div className="mb-1 text-[15px] font-semibold text-ink">Manage Members</div>
+        <div className="mb-1 text-[15px] font-semibold text-ink">{t("Manage Members")}</div>
         <div className="mb-3 truncate text-[13px] text-ink-secondary">{group.name}</div>
-        <BotPickerList bots={bots} picked={picked} onToggle={toggle} emptyHint="Create a bot first — channels are made of bots." />
-        {!memberIds.length && <div className="mt-2 text-[12px] text-ink-secondary">A channel needs at least one bot.</div>}
+        <BotPickerList bots={bots} picked={picked} onToggle={toggle} emptyHint={t("Create a bot first — channels are made of bots.")} />
+        {!memberIds.length && <div className="mt-2 text-[12px] text-ink-secondary">{t("A channel needs at least one bot.")}</div>}
         {saveError && (
           <div role="alert" className="mt-2 text-[12px] text-danger">
             {saveError}
@@ -125,14 +126,14 @@ export function ManageMembersPanel({
             onClick={onClose}
             className="flex-1 rounded-lg bg-raised py-2 text-[14px] font-medium text-ink hover:brightness-110"
           >
-            Cancel
+            {t("Cancel")}
           </button>
           <button
             onClick={save}
             disabled={!memberIds.length}
             className="flex-1 rounded-lg bg-accent py-2 text-[14px] font-medium text-white hover:brightness-110 disabled:opacity-40"
           >
-            Save{memberIds.length ? ` · ${memberIds.length} ${memberIds.length === 1 ? "bot" : "bots"}` : ""}
+            {memberIds.length ? tn(memberIds.length, "Save · {count} bot", "Save · {count} bots") : t("Save")}
           </button>
         </div>
       </div>

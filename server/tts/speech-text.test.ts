@@ -113,6 +113,41 @@ describe("toUtterances", () => {
     expect(toUtterances("```\ncode only\n```")).not.toContain("code only");
     expect(toUtterances("")).toEqual([]);
   });
+
+  it("splits Chinese sentences, which have no space after the full stop", () => {
+    expect(toUtterances("测试已经全部通过了。我改了两个文件，分别是配置和驱动。要我现在推送吗？")).toEqual([
+      "测试已经全部通过了。",
+      "我改了两个文件，分别是配置和驱动。",
+      "要我现在推送吗？",
+    ]);
+  });
+
+  it("glues a short Chinese reply onto the next sentence without a space", () => {
+    expect(toUtterances("好的。我这就去改配置文件，然后重新运行测试。")).toEqual(["好的。我这就去改配置文件，然后重新运行测试。"]);
+  });
+
+  it("keeps every Chinese utterance under the cap, at a clause when there is one", () => {
+    const clauses = "这是一个相当长的分句，".repeat(40);
+    const pieces = toUtterances(clauses, { maxChars: 100 });
+    expect(pieces.length).toBeGreaterThan(1);
+    for (const piece of pieces) {
+      expect(piece.length).toBeLessThanOrEqual(100);
+      expect(piece.endsWith("，") || piece === pieces[pieces.length - 1]).toBe(true);
+    }
+    expect(pieces.join("")).toBe(clauses.replace(/，$/, "，"));
+    const run = "字".repeat(450);
+    const hard = toUtterances(run, { maxChars: 200 });
+    expect(hard.every((piece) => piece.length <= 200)).toBe(true);
+    expect(hard.join("")).toBe(run);
+  });
+});
+
+describe("speakable (Chinese)", () => {
+  it("makes paragraph breaks a Chinese pause instead of a Latin full stop", () => {
+    expect(speakable("第一段\n\n第二段")).toBe("第一段。第二段");
+    expect(speakable("## 总结\n全部完成了。")).toBe("总结。全部完成了。");
+    expect(speakable("完成了。\n\n下一步呢？")).toBe("完成了。下一步呢？");
+  });
 });
 
 describe("narrateTool", () => {

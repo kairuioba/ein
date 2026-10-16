@@ -1,3 +1,5 @@
+import { t } from "../../shared/i18n.ts";
+
 /** The persisted message fields this pure projection needs. Keeping this
  * structural avoids pulling the renderer's TSX store into server tests. */
 export interface TimelineMessage {
@@ -29,7 +31,7 @@ export function timelineEvents(messages: TimelineMessage[]): TimelineEvent[] {
       events.push({
         id: message.id,
         at: message.at,
-        label: sawUserInput ? "User input" : "Task started",
+        label: sawUserInput ? t("User input") : t("Task started"),
         state: "observed",
         kind: "task",
       });
@@ -46,9 +48,9 @@ export function timelineEvents(messages: TimelineMessage[]): TimelineEvent[] {
         kind: "tool",
       });
     } else if (message.kind === "screen") {
-      events.push({ id: message.id, at: message.at, label: "Screen observed", state: "observed", kind: "screen" });
+      events.push({ id: message.id, at: message.at, label: t("Screen observed"), state: "observed", kind: "screen" });
     } else if (message.kind === "text" && message.role === "bot" && message.text?.trim()) {
-      events.push({ id: message.id, at: message.at, label: "Response recorded", state: "complete", kind: "result" });
+      events.push({ id: message.id, at: message.at, label: t("Response recorded"), state: "complete", kind: "result" });
     }
   }
   return events;

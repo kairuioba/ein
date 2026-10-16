@@ -1,3 +1,5 @@
+import { msg } from "@/lib/i18n";
+
 export interface TeamMapBot {
   id: string;
   name: string;
@@ -51,7 +53,8 @@ export function buildTeamMapSections<T extends TeamMapBot>(bots: T[]): TeamMapSe
   }
   return [...sections].map(([key, sectionBots]) => ({
     key,
-    name: key || "General",
+    // English identifier kept for comparisons; display with t() when key is "".
+    name: key || msg("General"),
     chiefs: sectionBots.filter((bot) => bot.chiefOfStaff),
     members: sectionBots.filter((bot) => !bot.chiefOfStaff),
   }));
@@ -98,9 +101,11 @@ export function buildTeamMapEdges(bots: TeamMapBot[], snapshot: TeamMapSnapshot)
   });
 }
 
+/** `label` stays English (callers compare it, e.g. `=== "Working"`); render
+ * it with t(status.label). */
 export function teamMapStatus(bot: TeamMapBot): TeamMapStatus {
-  if (bot.activity === "waiting-on-you") return { label: "Waiting for you", tone: "warning" };
-  if (bot.activity === "dead" || bot.activity === "no-signal") return { label: "No signal", tone: "danger" };
-  if (bot.busy || bot.activity === "working") return { label: "Working", tone: "success" };
-  return { label: "Ready", tone: "idle" };
+  if (bot.activity === "waiting-on-you") return { label: msg("Waiting for you"), tone: "warning" };
+  if (bot.activity === "dead" || bot.activity === "no-signal") return { label: msg("No signal"), tone: "danger" };
+  if (bot.busy || bot.activity === "working") return { label: msg("Working"), tone: "success" };
+  return { label: msg("Ready"), tone: "idle" };
 }

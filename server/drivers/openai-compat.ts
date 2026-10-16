@@ -2,6 +2,7 @@
 // other endpoints that speak the OpenAI chat-completions contract.
 import type { ModelCatalog, ProviderDriver } from "../contracts.ts";
 import { createOpenAIChatRuntime } from "./openai-chat.ts";
+import { t } from "../../shared/i18n.ts";
 
 const DRIVER_KIND = "openai-compat";
 const DEFAULT_MODELS: ModelCatalog = {
@@ -56,18 +57,22 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
     access: "custom",
   },
   models: DEFAULT_MODELS,
-  install: {
-    docsUrl: "https://openrouter.ai/keys",
-    signInCommand:
-      "add {\"openaiCompat\":{\"key\":\"sk-or-v1-…\"}} to ~/.openmausbot/config.json (or set OPENAI_COMPAT_API_KEY)",
-    command: {
-      darwin:
-        "Get a free key at https://openrouter.ai/keys (or https://console.groq.com) then add it to ~/.openmausbot/config.json under openaiCompat.key",
-      linux:
-        "Get a free key at https://openrouter.ai/keys (or https://console.groq.com) then add it to ~/.openmausbot/config.json under openaiCompat.key",
-      win32:
-        "Get a free key at https://openrouter.ai/keys (or https://console.groq.com) then add it to %USERPROFILE%\\.openmausbot\\config.json under openaiCompat.key",
-    },
+  // A getter so the setup copy is localized when the UI asks for it, not at
+  // module load.
+  get install() {
+    const getKey = (path: string) =>
+      t("Get a free key at https://openrouter.ai/keys (or https://console.groq.com) then add it to {path} under openaiCompat.key", { path });
+    return {
+      docsUrl: "https://openrouter.ai/keys",
+      signInCommand: t("add {snippet} to ~/.openmausbot/config.json (or set OPENAI_COMPAT_API_KEY)", {
+        snippet: "{\"openaiCompat\":{\"key\":\"sk-or-v1-…\"}}",
+      }),
+      command: {
+        darwin: getKey("~/.openmausbot/config.json"),
+        linux: getKey("~/.openmausbot/config.json"),
+        win32: getKey("%USERPROFILE%\\.openmausbot\\config.json"),
+      },
+    };
   },
   decodeConfig,
   defaultConfig: () => decodeConfig({}),
@@ -139,8 +144,12 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
           : {}),
       }),
       httpErrorLabel: "upstream",
-      missingKeyError: `no API key — set ${config.apiKeyEnv} or add it to the instance config`,
-      unavailableReason: `no API key — set ${config.apiKeyEnv} or add it to the instance config`,
+      get missingKeyError() {
+        return t("no API key — set {env} or add it to the instance config", { env: config.apiKeyEnv });
+      },
+      get unavailableReason() {
+        return t("no API key — set {env} or add it to the instance config", { env: config.apiKeyEnv });
+      },
       timeoutMs: 120_000,
       reasoning: true,
       billing: "metered",

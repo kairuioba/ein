@@ -1,3 +1,5 @@
+import { t } from "./i18n.cjs";
+
 export function createUpdaterCoordinator(updater, setState) {
   let checkOperation = null;
   let downloadOperation = null;
@@ -135,7 +137,7 @@ export function createUpdaterCoordinator(updater, setState) {
       operation.timer = setTimeout(() => {
         if (installOperation !== operation) return;
         installOperation = null;
-        setState({ status: "error", message: "The update could not be staged. Quit the app and try again." });
+        setState({ status: "error", message: t("The update could not be staged. Quit the app and try again.") });
       }, 2 * 60 * 1000);
       operation.timer.unref?.();
     }

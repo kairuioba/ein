@@ -40,6 +40,7 @@ import {
 } from "./local-inject.ts";
 import { appendNative } from "./native.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
+import { t } from "../../shared/i18n.ts";
 
 /** Whether `claude` has been signed in.
  *
@@ -382,12 +383,12 @@ function createPermissionBroker(opts: {
 
 function decodeToolList(value: unknown, field: "tools" | "disallowedTools"): string[] | undefined {
   if (value === undefined) return undefined;
-  if (!Array.isArray(value)) throw new Error(`claude: ${field} must be an array of non-empty strings`);
+  if (!Array.isArray(value)) throw new Error(t("claude: {field} must be an array of non-empty strings", { field }));
   const decoded: string[] = [];
   const seen = new Set<string>();
   for (const entry of value) {
     if (typeof entry !== "string" || !entry.trim()) {
-      throw new Error(`claude: ${field} must be an array of non-empty strings`);
+      throw new Error(t("claude: {field} must be an array of non-empty strings", { field }));
     }
     const normalized = entry.trim();
     if (seen.has(normalized)) continue;
@@ -401,7 +402,7 @@ function decodeConfig(raw: unknown): ClaudeConfig {
   const o = (raw ?? {}) as Record<string, unknown>;
   const mode = o.permissionMode;
   if (mode !== undefined && mode !== "acceptEdits" && mode !== "auto" && mode !== "bypassPermissions") {
-    throw new Error(`claude: invalid permissionMode ${JSON.stringify(mode)}`);
+    throw new Error(t("claude: invalid permissionMode {value}", { value: JSON.stringify(mode) }));
   }
   const tools = decodeToolList(o.tools, "tools");
   const disallowedTools = decodeToolList(o.disallowedTools, "disallowedTools");
@@ -549,10 +550,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
 
     const sendTurn = async (turn: SendTurnInput) => {
       const { threadId } = turn;
-      if (active.has(threadId)) throw new Error("a turn is already running on this thread");
+      if (active.has(threadId)) throw new Error(t("a turn is already running on this thread"));
       const controlsHost = turn.integrations?.localComputer?.scope === "local-computer";
       if (controlsHost && config.permissionMode === "bypassPermissions") {
-        throw new Error("local computer control requires the interactive approval broker");
+        throw new Error(t("local computer control requires the interactive approval broker"));
       }
       const turnId = newId();
       const retryAbort = new AbortController();
@@ -688,7 +689,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           active.delete(threadId);
           live.turn = null;
           closeSession(threadId, "stdin write failed");
-          throw new Error("claude session stdin is not writable");
+          throw new Error(t("claude session stdin is not writable"));
         }
         // the MCP config was for the first spawn; nothing to clean here
         if (mcpConfigPath) {
@@ -916,7 +917,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         // process that exited between turns (idle close, contract change)
         // is just a session ending
         if (session.turn && !session.turn.settled) {
-          const message = `claude exited ${code} before result${session.stderr ? `: ${session.stderr.trim().slice(-300)}` : ""}`;
+          const stderrTail = session.stderr ? `: ${session.stderr.trim().slice(-300)}` : "";
+          // the classifier reads the English original; only the emitted copy is localized
+          const message = `claude exited ${code} before result${stderrTail}`;
           const verdict = classifyError({ exitCode: code, stderr: message });
           if (
             !retry.cancelled &&
@@ -995,7 +998,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           emit({
             ...base(threadId, currentTurnId()),
             type: "runtime.error",
-            message,
+            message: t("claude exited {code} before result", { code: String(code) }) + stderrTail,
           });
           settle(false, "exit_before_result");
         }
@@ -1043,7 +1046,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           resolve(err ? null : stdout.trim()),
         );
       });
-      if (!version) return { state: "unavailable", reason: `\`${config.cli}\` CLI not found` };
+      if (!version) return { state: "unavailable", reason: t("`{cli}` CLI not found", { cli: config.cli }) };
       const authenticated = await claudeSignedIn(config.cli, env);
       // claudeEnvironment strips ANTHROPIC_API_KEY, so turns run on the
       // CLI's own login (Pro/Max): the cost it reports is what the call

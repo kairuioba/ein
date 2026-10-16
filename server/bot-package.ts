@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
+import { t } from "../shared/i18n.ts";
 import { schemaIssue, type JsonValue } from "./schema.ts";
 import type { MausColor } from "./store.ts";
 import type { TeamManifestMember } from "./team-manifest.ts";
@@ -37,8 +38,8 @@ const key = requiredText(64).regex(/^[a-z0-9][a-z0-9_-]*$/, {
 });
 
 const packageSchema = z.object({
-  format: z.literal(BOT_PACKAGE_FORMAT, { error: "This is not an OpenMaus package" }),
-  version: z.literal(BOT_PACKAGE_VERSION, { error: "Package version is not supported" }),
+  format: z.literal(BOT_PACKAGE_FORMAT, { error: () => t("This is not an OpenMaus package") }),
+  version: z.literal(BOT_PACKAGE_VERSION, { error: () => t("Package version is not supported") }),
   package: z.object({
     id: requiredText(80).regex(/^[a-z0-9][a-z0-9-]*$/, { message: "must be a lowercase slug" }),
     release: requiredText(30).regex(/^\d+\.\d+\.\d+$/, { message: "must be semantic versioning" }),
@@ -129,22 +130,22 @@ export function isBotPackage(value: unknown): boolean {
 }
 
 function markdownDocument(markdown: string): ParsedBotPackage {
-  if (Buffer.byteLength(markdown) > 1_000_000) throw new Error("The bot playbook is too large");
+  if (Buffer.byteLength(markdown) > 1_000_000) throw new Error(t("The bot playbook is too large"));
   const frontmatter = markdown.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
-  if (!frontmatter) throw new Error("This Markdown is missing YAML frontmatter");
+  if (!frontmatter) throw new Error(t("This Markdown is missing YAML frontmatter"));
   let metadata: unknown;
   try {
     metadata = parseYaml(frontmatter[1]);
   } catch {
-    throw new Error("This Markdown has invalid YAML frontmatter");
+    throw new Error(t("This Markdown has invalid YAML frontmatter"));
   }
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
-    throw new Error("This Markdown is missing its BotMRR blueprint");
+    throw new Error(t("This Markdown is missing its BotMRR blueprint"));
   }
   const { botmrr, ...definition } = metadata as Record<string, unknown>;
-  if (botmrr !== BOTMRR_MARKDOWN_VERSION) throw new Error("BotMRR Markdown version is not supported");
+  if (botmrr !== BOTMRR_MARKDOWN_VERSION) throw new Error(t("BotMRR Markdown version is not supported"));
   for (const heading of ["Activation", "Mission", "Outcomes", "Connections", "Team", "Chief of Staff", "Completion rule"]) {
-    if (!markdown.includes(`## ${heading}`)) throw new Error(`This Markdown is missing its ${heading} section`);
+    if (!markdown.includes(`## ${heading}`)) throw new Error(t("This Markdown is missing its {heading} section", { heading }));
   }
   return {
     format: BOT_PACKAGE_FORMAT,
@@ -176,24 +177,24 @@ export function parseBotPackage(value: JsonValue | ParsedBotPackage): ParsedBotP
   unique((pkg.routines ?? []).map((routine) => routine.key), "routine");
 
   if (pkg.chiefOfStaff && !agents.has(pkg.chiefOfStaff)) {
-    throw new Error(`Unknown Chief of Staff: ${pkg.chiefOfStaff}`);
+    throw new Error(t("Unknown Chief of Staff: {key}", { key: pkg.chiefOfStaff }));
   }
   for (const agent of pkg.agents) {
     for (const playbook of agent.playbooks ?? []) {
-      if (!playbooks.has(playbook)) throw new Error(`Agent ${agent.key} references unknown playbook: ${playbook}`);
+      if (!playbooks.has(playbook)) throw new Error(t("Agent {agent} references unknown playbook: {playbook}", { agent: agent.key, playbook }));
     }
   }
   for (const room of pkg.rooms ?? []) {
     const members = unique(room.members, `member in room ${room.key}`);
     for (const member of members) {
-      if (!agents.has(member)) throw new Error(`Room ${room.key} references unknown agent: ${member}`);
+      if (!agents.has(member)) throw new Error(t("Room {room} references unknown agent: {agent}", { room: room.key, agent: member }));
     }
     if (room.defaultResponder.kind === "agent" && !members.has(room.defaultResponder.agent)) {
-      throw new Error(`Room ${room.key} has an unknown default responder`);
+      throw new Error(t("Room {room} has an unknown default responder", { room: room.key }));
     }
   }
   for (const routine of pkg.routines ?? []) {
-    if (!agents.has(routine.agent)) throw new Error(`Routine ${routine.key} references unknown agent: ${routine.agent}`);
+    if (!agents.has(routine.agent)) throw new Error(t("Routine {routine} references unknown agent: {agent}", { routine: routine.key, agent: routine.agent }));
   }
   return parsed.data;
 }

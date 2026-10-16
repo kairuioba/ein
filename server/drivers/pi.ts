@@ -50,6 +50,7 @@ import {
   mergeLocalInject,
 } from "./local-inject.ts";
 import { appendNative } from "./native.ts";
+import { t } from "../../shared/i18n.ts";
 
 const DRIVER_KIND = "piAgent";
 const PI_ARGS = ["--mode", "rpc", "--no-session"];
@@ -342,10 +343,10 @@ export interface PiConfig {
 
 function decodeConfig(raw: unknown): PiConfig {
   if (raw === null || raw === undefined) return { cli: "pi", fullAuto: false };
-  if (typeof raw !== "object") throw new Error("pi config must be an object");
+  if (typeof raw !== "object") throw new Error(t("pi config must be an object"));
   const obj = raw as { cli?: unknown; fullAuto?: unknown };
-  if (obj.cli !== undefined && typeof obj.cli !== "string") throw new Error("pi config `cli` must be a string");
-  if (obj.fullAuto !== undefined && typeof obj.fullAuto !== "boolean") throw new Error("pi config `fullAuto` must be a boolean");
+  if (obj.cli !== undefined && typeof obj.cli !== "string") throw new Error(t("pi config `cli` must be a string"));
+  if (obj.fullAuto !== undefined && typeof obj.fullAuto !== "boolean") throw new Error(t("pi config `fullAuto` must be a boolean"));
   return {
     cli: obj.cli && obj.cli.trim() ? obj.cli.trim() : "pi",
     fullAuto: obj.fullAuto === true,
@@ -449,13 +450,13 @@ export const PiDriver: ProviderDriver<PiConfig> = {
 
     const sendTurn = async (turn: SendTurnInput) => {
       const { threadId } = turn;
-      if (active.has(threadId)) throw new Error("a turn is already running on this thread");
+      if (active.has(threadId)) throw new Error(t("a turn is already running on this thread"));
       // Host control always routes through the permission card; full-auto must
       // never get unapproved hands on the user's machine (same guard as the
       // Claude and ACP drivers).
       const controlsHost = turn.integrations?.localComputer?.scope === "local-computer";
       if (controlsHost && config.fullAuto) {
-        throw new Error("local computer control requires the interactive approval broker");
+        throw new Error(t("local computer control requires the interactive approval broker"));
       }
       const turnId = newId();
       const pending = new Map<string, (decision: { behavior: "allow" | "deny" | "answer"; message?: string }) => void>();
@@ -678,7 +679,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
               emit({
                 ...base(threadId, turnId),
                 type: "runtime.error",
-                message: String(evt.message?.errorMessage ?? "pi turn failed").slice(0, 2_000),
+                message: String(evt.message?.errorMessage ?? t("pi turn failed")).slice(0, 2_000),
               });
               settle(false, "failed", usage);
               return;
@@ -804,7 +805,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           resolve(out.trim() || null);
         });
       });
-      if (!version) return { state: "unavailable", reason: `\`${config.cli}\` CLI not found` };
+      if (!version) return { state: "unavailable", reason: t("`{cli}` CLI not found", { cli: config.cli }) };
       // pi manages its own credentials (~/.pi/agent/auth.json); there is no
       // separate sign-in step the harness can probe, so treat it as authed.
       return { state: "available", version, authenticated: true };

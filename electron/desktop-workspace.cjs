@@ -1,4 +1,5 @@
 const { desktopViewerUrl, sameDesktopViewerOrigin } = require("./desktop-viewer.cjs");
+const { t } = require("./i18n.cjs");
 
 const MAX_WORKSPACE_VIEWS = 2;
 const CONTEXT_ID = /^[A-Za-z0-9:_-]{1,120}$/;
@@ -16,7 +17,7 @@ function isLoopbackHostname(hostname) {
 function desktopWorkspaceUrl(rawUrl, interactive = false) {
   const url = desktopViewerUrl(rawUrl);
   if (!isLoopbackHostname(url.hostname)) {
-    throw new Error("Local VM desktops must use a loopback address");
+    throw new Error(t("Local VM desktops must use a loopback address"));
   }
   const fragment = new URLSearchParams(url.hash.slice(1));
   fragment.set("view_only", interactive ? "false" : "true");
@@ -32,21 +33,21 @@ function desktopWorkspaceIdentity(url) {
 
 function desktopWorkspaceContextId(value) {
   if (Object.prototype.toString.call(value) !== "[object String]" || !CONTEXT_ID.test(value)) {
-    throw new Error("The desktop workspace context is invalid");
+    throw new Error(t("The desktop workspace context is invalid"));
   }
   return value;
 }
 
 function normalizeDesktopWorkspaceBounds(rawBounds, contentSize) {
   if (Object.prototype.toString.call(rawBounds) !== "[object Object]") {
-    throw new Error("Desktop workspace bounds are invalid");
+    throw new Error(t("Desktop workspace bounds are invalid"));
   }
   if (!Array.isArray(contentSize) || contentSize.length !== 2) {
-    throw new Error("The desktop workspace owner size is unavailable");
+    throw new Error(t("The desktop workspace owner size is unavailable"));
   }
   const values = [rawBounds.x, rawBounds.y, rawBounds.width, rawBounds.height];
   if (values.some((value) => !Number.isFinite(value))) {
-    throw new Error("Desktop workspace bounds are invalid");
+    throw new Error(t("Desktop workspace bounds are invalid"));
   }
 
   const ownerWidth = Math.max(1, Math.floor(contentSize[0]));
@@ -55,7 +56,7 @@ function normalizeDesktopWorkspaceBounds(rawBounds, contentSize) {
   let y = Math.round(rawBounds.y);
   let width = Math.round(rawBounds.width);
   let height = Math.round(rawBounds.height);
-  if (width < 1 || height < 1) throw new Error("Desktop workspace bounds are empty");
+  if (width < 1 || height < 1) throw new Error(t("Desktop workspace bounds are empty"));
 
   x = Math.max(0, Math.min(x, ownerWidth - 1));
   y = Math.max(0, Math.min(y, ownerHeight - 1));
@@ -65,8 +66,8 @@ function normalizeDesktopWorkspaceBounds(rawBounds, contentSize) {
 }
 
 function createDesktopWorkspaceManager({ owner, createView, notify, partitionPrefix }) {
-  if (!owner || owner.isDestroyed?.()) throw new Error("The OpenMausBot window is unavailable");
-  if (createView?.constructor !== Function) throw new Error("The desktop workspace viewer is unavailable");
+  if (!owner || owner.isDestroyed?.()) throw new Error(t("The OpenMausBot window is unavailable"));
+  if (createView?.constructor !== Function) throw new Error(t("The desktop workspace viewer is unavailable"));
   const emit = notify?.constructor === Function ? notify : () => {};
   const entries = new Map();
   let partitionCounter = 0;
@@ -144,7 +145,7 @@ function createDesktopWorkspaceManager({ owner, createView, notify, partitionPre
       // A failed demotion must never leave an old interactive noVNC document
       // receiving input. Remove the native view entirely and fail closed.
       removeEntry(entry, "error", "load-failed");
-      throw new Error("The Local VM desktop did not load");
+      throw new Error(t("The Local VM desktop did not load"));
     }
     if (entries.get(entry.contextId) === entry) emit(stateFor(entry, "ready"));
   };
@@ -152,18 +153,18 @@ function createDesktopWorkspaceManager({ owner, createView, notify, partitionPre
   return {
     async open(input) {
       if (Object.prototype.toString.call(input) !== "[object Object]") {
-        throw new Error("Desktop workspace input is invalid");
+        throw new Error(t("Desktop workspace input is invalid"));
       }
       const contextId = desktopWorkspaceContextId(input.contextId);
-      if (entries.has(contextId)) throw new Error("That desktop workspace slot is already open");
+      if (entries.has(contextId)) throw new Error(t("That desktop workspace slot is already open"));
       if (entries.size >= MAX_WORKSPACE_VIEWS) {
-        throw new Error("Only two Local VM desktops can be open together");
+        throw new Error(t("Only two Local VM desktops can be open together"));
       }
 
       const url = desktopWorkspaceUrl(input.url, false);
       const identity = desktopWorkspaceIdentity(url);
       if ([...entries.values()].some((entry) => entry.identity === identity)) {
-        throw new Error("That Local VM desktop is already open");
+        throw new Error(t("That Local VM desktop is already open"));
       }
       const bounds = normalizeDesktopWorkspaceBounds(input.bounds, owner.getContentSize());
       const partition = `${partitionPrefix}-${++partitionCounter}`;
@@ -192,7 +193,7 @@ function createDesktopWorkspaceManager({ owner, createView, notify, partitionPre
         await view.webContents.loadURL(url.toString());
       } catch {
         removeEntry(entry, "error", "load-failed");
-        throw new Error("The Local VM desktop did not load");
+        throw new Error(t("The Local VM desktop did not load"));
       }
       if (entries.get(contextId) === entry) {
         const readyState = stateFor(entry, "ready");
@@ -204,18 +205,18 @@ function createDesktopWorkspaceManager({ owner, createView, notify, partitionPre
 
     layout(items) {
       if (!Array.isArray(items) || items.length > MAX_WORKSPACE_VIEWS) {
-        throw new Error("Desktop workspace layout is invalid");
+        throw new Error(t("Desktop workspace layout is invalid"));
       }
       const seen = new Set();
       for (const item of items) {
         if (Object.prototype.toString.call(item) !== "[object Object]") {
-          throw new Error("Desktop workspace layout is invalid");
+          throw new Error(t("Desktop workspace layout is invalid"));
         }
         const contextId = desktopWorkspaceContextId(item.contextId);
-        if (seen.has(contextId)) throw new Error("Desktop workspace layout contains a duplicate slot");
+        if (seen.has(contextId)) throw new Error(t("Desktop workspace layout contains a duplicate slot"));
         seen.add(contextId);
         const entry = entries.get(contextId);
-        if (!entry) throw new Error("That desktop workspace slot is not open");
+        if (!entry) throw new Error(t("That desktop workspace slot is not open"));
         const bounds = normalizeDesktopWorkspaceBounds(item.bounds, owner.getContentSize());
         entry.view.setBounds(bounds);
         entry.view.setVisible(item.visible === true);
@@ -227,11 +228,11 @@ function createDesktopWorkspaceManager({ owner, createView, notify, partitionPre
       const contextId = rawContextId == null ? null : desktopWorkspaceContextId(rawContextId);
       const targetEntry = contextId === null ? null : entries.get(contextId);
       if (contextId !== null && !targetEntry) {
-        return Promise.reject(new Error("That desktop workspace slot is not open"));
+        return Promise.reject(new Error(t("That desktop workspace slot is not open")));
       }
       return serializeInteractiveChange(async () => {
         if (targetEntry && entries.get(contextId) !== targetEntry) {
-          throw new Error("That desktop workspace slot is not open");
+          throw new Error(t("That desktop workspace slot is not open"));
         }
         // Always finish every demotion before promoting. The queue is part of
         // this invariant: overlapping renderer IPC calls cannot observe a flag

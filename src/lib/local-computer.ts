@@ -1,4 +1,5 @@
 import type { Bot, InstanceInfo } from "@/state/store";
+import { t } from "@/lib/i18n";
 
 export function instanceSupportsLocalComputer(
   instances: InstanceInfo[],
@@ -34,29 +35,29 @@ export function localComputerDisabledReason({
   providerSupportsLocal: boolean;
 }): string | null {
   if (!providerSupportsLocal) {
-    return "The selected provider cannot request approvals for local computer actions.";
+    return t("The selected provider cannot request approvals for local computer actions.");
   }
   if (capabilities.localComputer.available) return null;
   if (capabilities.host.platform === "linux") {
     if (capabilities.localComputer.reasonCode === "linux-wayland-seat-safety-blocked") {
-      return "Local computer control is not available on Wayland yet. Sign out and choose Ubuntu on Xorg to use This computer.";
+      return t("Local computer control is not available on Wayland yet. Sign out and choose Ubuntu on Xorg to use This computer.");
     }
     if (capabilities.localComputer.reasonCode === "wayland-compositor-unsupported") {
-      return "Wayland local control is currently limited to GNOME. Xorg remains available on supported desktops.";
+      return t("Wayland local control is currently limited to GNOME. Xorg remains available on supported desktops.");
     }
     if (!capabilities.localComputer.enabled) {
-      return "Enable the local control beta and complete the Cua Driver checks first.";
+      return t("Enable the local control beta and complete the Cua Driver checks first.");
     }
-    return capabilities.localComputer.message ?? "Cua Driver is not ready for local control.";
+    return capabilities.localComputer.message ?? t("Cua Driver is not ready for local control.");
   }
   if (capabilities.host.label === "Browser") {
-    return "Local computer control requires the desktop app.";
+    return t("Local computer control requires the desktop app.");
   }
-  return "CUA Driver is not ready for local computer control.";
+  return t("CUA Driver is not ready for local computer control.");
 }
 
 export function linuxAutoDescription(): string {
-  return "Auto uses a cloud box when one is configured; otherwise computer use stays off.";
+  return t("Auto uses a cloud box when one is configured; otherwise computer use stays off.");
 }
 
 export function autoSelectsLocalComputer({

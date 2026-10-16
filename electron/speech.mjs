@@ -16,6 +16,7 @@ import {
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { app } from "electron";
+import { getLocale } from "./i18n.cjs";
 
 import {
   buildSpeechHelper,
@@ -64,6 +65,8 @@ export function startSpeech(win, options = {}) {
     ? Math.min(5_000, Math.max(250, Math.round(requested)))
     : 0;
   const args = endpointMs ? ["--endpoint-ms", String(endpointMs)] : [];
+  // the Chinese app recognizes Chinese first, whatever language the Mac is in
+  if (getLocale() === "zh-CN") args.push("--locale", "zh-CN");
 
   try {
     ensureBuilt();

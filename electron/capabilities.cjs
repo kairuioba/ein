@@ -2,6 +2,8 @@
 // renderer contract. Keep this file free of Electron imports so every branch
 // is deterministic and unit-testable.
 
+const { t } = require("./i18n.cjs");
+
 const DESKTOP_PLATFORMS = new Set(["darwin", "linux", "win32"]);
 
 function normalizedPlatform(platform) {
@@ -34,7 +36,7 @@ function linuxLocalControlSupport(platform, env) {
       available: false,
       session: "unknown",
       reasonCode: "unsupported-platform",
-      message: "Local control is not available on this platform.",
+      message: t("Local control is not available on this platform."),
     });
   }
   const session = linuxSession(platform, env);
@@ -44,15 +46,16 @@ function linuxLocalControlSupport(platform, env) {
       available: false,
       session,
       reasonCode: "linux-wayland-seat-safety-blocked",
-      message:
+      message: t(
         "Local control is not available on Wayland yet. Sign out and choose Ubuntu on Xorg to use This computer.",
+      ),
     });
   }
   return Object.freeze({
     available: false,
     session,
     reasonCode: "headless-session",
-    message: "Local control needs an active Ubuntu Xorg desktop session.",
+    message: t("Local control needs an active Ubuntu Xorg desktop session."),
   });
 }
 

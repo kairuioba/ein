@@ -4,6 +4,7 @@
 // rules can never drift apart.
 import type { CloudBackend } from "../../server/contracts.ts";
 import { cn } from "@/lib/cn";
+import { t } from "@/lib/i18n";
 
 export function CloudBackendPicker({
   value,
@@ -16,11 +17,11 @@ export function CloudBackendPicker({
 }) {
   return (
     <div className="mt-3 rounded-lg bg-inset p-3">
-      <div className="text-[12px] font-medium text-ink">Cloud backend</div>
+      <div className="text-[12px] font-medium text-ink">{t("Cloud backend")}</div>
       <div className="mt-0.5 text-[11.5px] text-ink-secondary">
         {value === "vps"
-          ? "Auto reuses a running VPS by default. Enable Start VPS automatically to let Auto create or wake its managed container, or choose Cloud to do it explicitly. Open the live desktop securely from the computer panel."
-          : "Box is the default hosted computer. Choose Self-hosted VPS to use your SSH-configured Linux Docker host."}
+          ? t("Auto reuses a running VPS by default. Enable Start VPS automatically to let Auto create or wake its managed container, or choose Cloud to do it explicitly. Open the live desktop securely from the computer panel.")
+          : t("Box is the default hosted computer. Choose Self-hosted VPS to use your SSH-configured Linux Docker host.")}
       </div>
       <div className="mt-2 flex overflow-hidden rounded-lg border border-hairline/40">
         {(["box", "vps"] as const).map((backend, i) => {
@@ -29,7 +30,7 @@ export function CloudBackendPicker({
             <button
               key={backend}
               disabled={disabled}
-              title={disabled ? "Self-hosted VPS requires Claude or an ACP engine" : undefined}
+              title={disabled ? t("Self-hosted VPS requires Claude or an ACP engine") : undefined}
               onClick={() => onChange(backend)}
               className={cn(
                 "flex-1 py-1.5 text-[12px]",
@@ -38,7 +39,7 @@ export function CloudBackendPicker({
                 value === backend ? "bg-raised text-ink" : "text-ink-secondary hover:bg-raised/60 hover:text-ink",
               )}
             >
-              {backend === "vps" ? "Self-hosted VPS" : "Box"}
+              {backend === "vps" ? t("Self-hosted VPS") : "Box"}
             </button>
           );
         })}

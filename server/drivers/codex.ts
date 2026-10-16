@@ -31,6 +31,7 @@ import { codexLocalProviderArgs } from "./local-inject.ts";
 import { augmentedPath } from "../env-path.ts";
 import { classifyError, computeBackoff, RETRY_MAX_ATTEMPTS } from "./retry.ts";
 import { appendNative } from "./native.ts";
+import { t } from "../../shared/i18n.ts";
 
 export { decodeCodexSelection, readCodexModelCatalog, STATIC_CODEX_MODELS } from "./codex-catalog.ts";
 
@@ -142,7 +143,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       // this turn so activity elsewhere cannot cancel or revive its retry.
       let stopRequested = false;
       const { threadId } = turn;
-      if (active.has(threadId)) throw new Error("a turn is already running on this thread");
+      if (active.has(threadId)) throw new Error(t("a turn is already running on this thread"));
       const turnId = newId();
       // a retry relaunches the whole app-server; the backoff is scaled down in
       // tests so a fake's transient failures don't stall real seconds
@@ -496,7 +497,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           emit({
             ...base(threadId, turnId),
             type: "runtime.error",
-            message: `codex exited ${code} before turn/completed${stderr ? `: ${stderr.trim().slice(-300)}` : ""}`,
+            message: t("codex exited {code} before turn/completed", { code: String(code) }) + (stderr ? `: ${stderr.trim().slice(-300)}` : ""),
           });
           settle(false, "exit_before_result");
         }
@@ -605,7 +606,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         resolve(err ? null : stdout.trim()),
       );
     });
-    if (!version) return { state: "unavailable", reason: `\`${config.cli}\` CLI not found` };
+    if (!version) return { state: "unavailable", reason: t("`{cli}` CLI not found", { cli: config.cli }) };
     const authenticated = await new Promise<boolean>((resolve) => {
       execCli(config.cli, ["login", "status"], { timeout: 8000, env }, (err, stdout, stderr) =>
         resolve(!err && /^logged in\b/im.test(`${stdout}\n${stderr ?? ""}`)),

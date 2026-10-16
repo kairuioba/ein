@@ -59,8 +59,15 @@ const IMPLEMENTATION = new Set(["shared/i18n.ts", "src/lib/i18n.tsx", "electron/
 /** Blank out comments (keeping offsets and line numbers) so documentation
  * examples are not mistaken for calls. String contents are left alone. */
 export function stripComments(text) {
+  return scanText(text).out;
+}
+
+/** stripComments() plus the [start, end) ranges of string and template text,
+ * where a `t(` is prose, not a call. */
+function scanText(text) {
   let out = "";
   let i = 0;
+  const literalRanges = [];
   // One entry per open `${` inside a template literal: the brace depth of the
   // expression, so its closing `}` returns to template text.
   const templates = [];
@@ -70,6 +77,8 @@ export function stripComments(text) {
   const blank = (from, to) => text.slice(from, to).replace(/[^\n]/g, " ");
   const scanTemplateText = () => {
     // at the first character after "`" or after the "}" closing a ${…}
+    const start = i;
+    const close = () => literalRanges.push([start, i]);
     while (i < text.length) {
       const char = text[i];
       if (char === "\\") {
@@ -78,12 +87,14 @@ export function stripComments(text) {
         continue;
       }
       if (char === "`") {
+        close();
         out += char;
         i += 1;
         lastSignificant = "`";
         return;
       }
       if (char === "$" && text[i + 1] === "{") {
+        close();
         out += "${";
         i += 2;
         templates.push(0);
@@ -111,10 +122,13 @@ export function stripComments(text) {
       i = stop;
       continue;
     }
+    // `}` and `<` are left out on purpose: in TSX a slash after them is
+    // almost always markup — `size={13} />`, `</b>`, `{done} / {total}` —
+    // and reading it as a regex would blank every t() call after it on the line.
     if (
       char === "/" &&
       (lastSignificant === "" ||
-        "(,=:[!&|?{};+-*%<>~^".includes(lastSignificant) ||
+        "(,=:[!&|?{;+-*%>~^".includes(lastSignificant) ||
         (lastSignificant === "a" && /^(return|typeof|case|in|of|new|delete|void|throw|else|do|await|yield)$/.test(lastWord)))
     ) {
       // regex literal: copy through the closing slash, honoring [classes]
@@ -137,6 +151,7 @@ export function stripComments(text) {
     if (char === '"' || char === "'") {
       const literal = readLiteral(text, i);
       const end = literal && !literal.dynamic ? literal.end : i + 1;
+      if (end > i + 1) literalRanges.push([i + 1, end - 1]);
       out += text.slice(i, end);
       i = end;
       lastSignificant = ")";
@@ -170,7 +185,7 @@ export function stripComments(text) {
       if (!/\s/.test(char)) lastSignificant = char;
     }
   }
-  return out;
+  return { out, literalRanges };
 }
 
 /** Collect literal sources: a Map of source → ["file:line", …] plus the
@@ -184,10 +199,14 @@ export function collectSources(root, files) {
   };
   for (const file of files) {
     if (IMPLEMENTATION.has(relative(root, file))) continue;
-    const text = stripComments(readFileSync(file, "utf8"));
+    const { out: text, literalRanges } = scanText(readFileSync(file, "utf8"));
     const pattern = /(?<![\w.$])(t|tn|tRich|msg)\(/g;
     let match;
+    let range = 0;
     while ((match = pattern.exec(text))) {
+      // a "t(" inside string or template text is prose, not a call
+      while (range < literalRanges.length && literalRanges[range][1] <= match.index) range += 1;
+      if (range < literalRanges.length && literalRanges[range][0] <= match.index) continue;
       const line = text.slice(0, match.index).split("\n").length;
       let cursor = skipSpace(text, match.index + match[0].length);
       if (match[1] === "tn") {

@@ -1,3 +1,5 @@
+import { t, tn } from "@/lib/i18n";
+
 export type RecordedSkillEvent = {
   id: string;
   type: "app" | "click" | "scroll" | "shortcut" | "typing" | "clipboard" | "download";
@@ -134,13 +136,13 @@ export function appendNativeEvent(
 
 export function eventLabel(event: RecordedSkillEvent): string {
   switch (event.type) {
-    case "app": return `Opened ${event.app || "an app"}`;
-    case "click": return event.name ? `Clicked "${event.name}"` : "Clicked a control";
-    case "scroll": return `Scrolled ${event.direction ?? "the page"}`;
-    case "shortcut": return `Pressed ${event.shortcut ?? "a shortcut"}`;
-    case "typing": return `Typed ${event.keyCount ?? 1} character${event.keyCount === 1 ? "" : "s"}`;
-    case "clipboard": return event.op === "cut" ? "Cut" : event.op === "paste" ? "Pasted" : "Copied";
-    case "download": return `Downloaded ${event.filename ?? "a file"}`;
+    case "app": return event.app ? t("Opened {app}", { app: event.app }) : t("Opened an app");
+    case "click": return event.name ? t('Clicked "{name}"', { name: event.name }) : t("Clicked a control");
+    case "scroll": return event.direction === "up" ? t("Scrolled up") : event.direction === "down" ? t("Scrolled down") : t("Scrolled the page");
+    case "shortcut": return event.shortcut == null ? t("Pressed a shortcut") : t("Pressed {shortcut}", { shortcut: event.shortcut });
+    case "typing": return tn(event.keyCount ?? 1, "Typed {count} character", "Typed {count} characters");
+    case "clipboard": return event.op === "cut" ? t("Cut") : event.op === "paste" ? t("Pasted") : t("Copied");
+    case "download": return event.filename == null ? t("Downloaded a file") : t("Downloaded {filename}", { filename: event.filename });
   }
 }
 

@@ -2,6 +2,7 @@
 // so the panel stays a thin renderer and the labels can be tested.
 import type { RuntimeEvent } from "../../server/contracts.ts";
 import type { InspectorEntry, NativeRecord } from "../../server/thread-events.ts";
+import { t } from "@/lib/i18n";
 export type { InspectorEntry, InspectorPage, NativeRecord } from "../../server/thread-events.ts";
 
 interface FoldPreview {
@@ -64,37 +65,50 @@ const previewText = (preview: FoldPreview) => `${preview.text}${preview.overflow
 export function summarizeRuntime(e: RuntimeEvent): { summary: string; tone: InspectorRow["tone"] } {
   switch (e.type) {
     case "session.started":
-      return { summary: `session ${e.sessionId ?? "(none)"}${e.model ? ` · ${e.model}` : ""}`, tone: "plain" };
+      return { summary: `${t("session {id}", { id: e.sessionId ?? t("(none)") })}${e.model ? ` · ${e.model}` : ""}`, tone: "plain" };
     case "session.exited":
-      return { summary: `session exited${e.reason ? ` · ${e.reason}` : ""}`, tone: "plain" };
+      return { summary: `${t("session exited")}${e.reason ? ` · ${e.reason}` : ""}`, tone: "plain" };
     case "turn.started":
-      return { summary: `turn started${e.turnId ? ` · ${e.turnId.slice(0, 8)}` : ""}`, tone: "boundary" };
+      return { summary: `${t("turn started")}${e.turnId ? ` · ${e.turnId.slice(0, 8)}` : ""}`, tone: "boundary" };
     case "turn.retrying":
-      return { summary: `retrying (${e.reason}) · attempt ${e.attempt} · ${Math.round(e.delayMs / 1000)}s`, tone: "plain" };
+      return {
+        summary: t("retrying ({reason}) · attempt {attempt} · {seconds}s", {
+          reason: e.reason,
+          attempt: e.attempt,
+          seconds: Math.round(e.delayMs / 1000),
+        }),
+        tone: "plain",
+      };
     case "turn.completed": {
-      const parts = [e.ok ? "turn ok" : "turn failed"];
+      const parts = [e.ok ? t("turn ok") : t("turn failed")];
       if (e.stopReason) parts.push(e.stopReason);
       if (typeof e.cost === "number") parts.push(`$${e.cost.toFixed(4)}`);
-      if (e.denials?.length) parts.push(`${e.denials.length} denied`);
+      if (e.denials?.length) parts.push(t("{count} denied", { count: e.denials.length }));
       return { summary: parts.join(" · "), tone: e.ok ? "boundary" : "error" };
     }
     case "item.started":
-      return { summary: `${e.itemType}${e.title ? `: ${clip(oneLine(e.title))}` : " started"}`, tone: "plain" };
+      return { summary: `${e.itemType}${e.title ? `: ${clip(oneLine(e.title))}` : ` ${t("started")}`}`, tone: "plain" };
     case "item.updated":
-      return { summary: `${e.itemType} updated${typeof e.tokens === "number" ? ` · ${e.tokens} tok` : ""}`, tone: "plain" };
+      return {
+        summary: `${e.itemType} ${t("updated")}${typeof e.tokens === "number" ? ` · ${t("{count} tok", { count: e.tokens })}` : ""}`,
+        tone: "plain",
+      };
     case "item.completed":
       if (e.itemType === "assistant_text") return { summary: `assistant: ${clip(oneLine(e.text))}`, tone: "plain" };
-      return { summary: `tool ${e.ok ? "ok" : "failed"}`, tone: e.ok ? "plain" : "error" };
+      return { summary: e.ok ? t("tool ok") : t("tool failed"), tone: e.ok ? "plain" : "error" };
     case "content.delta":
       return { summary: `${e.streamKind}: ${clip(oneLine(e.delta))}`, tone: "plain" };
     case "request.opened":
       return { summary: `${e.requestType}: ${e.tool} — ${clip(oneLine(e.summary))}`, tone: "plain" };
     case "request.resolved":
-      return { summary: `resolved ${e.behavior} · ${e.source}`, tone: "plain" };
+      return { summary: t("resolved {behavior} · {source}", { behavior: e.behavior, source: e.source }), tone: "plain" };
     case "thread.token-usage.updated":
-      return { summary: `tokens in ${e.input} · out ${e.output}`, tone: "plain" };
+      return { summary: t("tokens in {input} · out {output}", { input: e.input, output: e.output }), tone: "plain" };
     case "runtime.error":
-      return { summary: `${e.setup ? "setup: " : ""}${clip(oneLine(e.message))}`, tone: "error" };
+      return {
+        summary: e.setup ? t("setup: {message}", { message: clip(oneLine(e.message)) }) : clip(oneLine(e.message)),
+        tone: "error",
+      };
     default:
       return { summary: (e as { type: string }).type, tone: "plain" };
   }
@@ -134,7 +148,7 @@ export function toRows(entries: InspectorEntry[]): InspectorRow[] {
         key: `n${i}`,
         kind: "native",
         at: entry.at,
-        tag: entry.data.dir === "out" ? "→ out" : "← in",
+        tag: entry.data.dir === "out" ? t("→ out") : t("← in"),
         summary: `${entry.data.source} · ${summarizeNative(entry.data)}`,
         tone: "plain",
         data: entry.data,

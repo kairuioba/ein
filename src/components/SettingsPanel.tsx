@@ -16,6 +16,7 @@ import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
 import { VoiceSettings } from "./VoiceSettings";
 import { BOT_PROFILE_LIMITS } from "../../shared/bot-profile";
 import { Switch } from "./SettingsPrimitives";
+import { msg, t, tn, tRich } from "@/lib/i18n";
 
 function Field({
   label,
@@ -42,32 +43,32 @@ function BotUsageCard({ bot }: { bot: Bot }) {
   return (
     <div className="rounded-xl bg-card p-4">
       <div className="flex items-baseline justify-between">
-        <div className="text-[15px] font-medium text-ink">Usage</div>
+        <div className="text-[15px] font-medium text-ink">{t("Usage")}</div>
         <button
           onClick={() => dispatch({ type: "toggleAppSettings", open: true, section: "usage" })}
           className="text-[12px] text-ink-secondary hover:text-ink"
         >
-          All bots →
+          {t("All bots →")}
         </button>
       </div>
       <div className="mt-3 grid grid-cols-3 gap-3 text-[13px]">
         <div>
-          <div className="text-[11.5px] uppercase tracking-wide text-ink-secondary">Turns</div>
+          <div className="text-[11.5px] uppercase tracking-wide text-ink-secondary">{t("Turns")}</div>
           <div className="mt-0.5 tabular-nums text-ink">{usage.turns}</div>
         </div>
         <div>
-          <div className="text-[11.5px] uppercase tracking-wide text-ink-secondary">Tokens</div>
-          <div className="mt-0.5 tabular-nums text-ink" title={`${formatTokens(usage.input)} in · ${formatTokens(usage.output)} out`}>
+          <div className="text-[11.5px] uppercase tracking-wide text-ink-secondary">{t("Tokens")}</div>
+          <div className="mt-0.5 tabular-nums text-ink" title={`${t("{input} in", { input: formatTokens(usage.input) })} · ${t("{output} out", { output: formatTokens(usage.output) })}`}>
             {formatTokens(usage.input + usage.output)}
           </div>
         </div>
         <div>
-          <div className="text-[11.5px] uppercase tracking-wide text-ink-secondary">Cost</div>
+          <div className="text-[11.5px] uppercase tracking-wide text-ink-secondary">{t("Cost")}</div>
           <div className="mt-0.5 tabular-nums text-ink">{hasFiniteCost(usage.costUsd) ? formatUsd(usage.costUsd) : "—"}</div>
         </div>
       </div>
       <div className="mt-2 text-[12px] text-ink-secondary">
-        {hasFiniteCost(usage.costUsd) ? `Cost ${costCaption(instance?.snapshot.billing)}.` : "This engine doesn't report a price; tokens are counted."}
+        {hasFiniteCost(usage.costUsd) ? t("Cost {caption}.", { caption: costCaption(instance?.snapshot.billing) }) : t("This engine doesn't report a price; tokens are counted.")}
       </div>
     </div>
   );
@@ -110,7 +111,7 @@ function LearnedSkillsCard({ bot }: { bot: Bot }) {
       setStaged(result.staged ?? []);
       setError("");
     } catch (cause) {
-      if (!cancelled?.()) setError(cause instanceof Error ? cause.message : "Could not load learned skills.");
+      if (!cancelled?.()) setError(cause instanceof Error ? cause.message : t("Could not load learned skills."));
     } finally {
       if (!cancelled?.()) setLoading(false);
     }
@@ -135,7 +136,7 @@ function LearnedSkillsCard({ bot }: { bot: Bot }) {
         // integrity-checked bytes and require one explicit review step before
         // they can reach the bot's prompt or native skill discovery.
         const result = await api(`/api/bots/${bot.id}/skills/${encodeURIComponent(skill.name)}`) as { text?: string };
-        if (!result.text) throw new Error("The skill contents are unavailable; remove and import or learn it again.");
+        if (!result.text) throw new Error(t("The skill contents are unavailable; remove and import or learn it again."));
         setReviewing({ skill, text: result.text });
         return;
       }
@@ -145,7 +146,7 @@ function LearnedSkillsCard({ bot }: { bot: Bot }) {
       });
       await refresh();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not update this skill.");
+      setError(cause instanceof Error ? cause.message : t("Could not update this skill."));
     } finally {
       setWorking("");
     }
@@ -164,21 +165,21 @@ function LearnedSkillsCard({ bot }: { bot: Bot }) {
       setReviewing(null);
       await refresh();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not enable this skill.");
+      setError(cause instanceof Error ? cause.message : t("Could not enable this skill."));
     } finally {
       setWorking("");
     }
   };
 
   const remove = async (skill: ManagedSkill) => {
-    if (!window.confirm(`Remove the learned skill “${skill.name}”?`)) return;
+    if (!window.confirm(t("Remove the learned skill “{name}”?", { name: skill.name }))) return;
     setWorking(skill.name);
     setError("");
     try {
       await api(`/api/bots/${bot.id}/skills/${encodeURIComponent(skill.name)}`, { method: "DELETE" });
       await refresh();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not remove this skill.");
+      setError(cause instanceof Error ? cause.message : t("Could not remove this skill."));
     } finally {
       setWorking("");
     }
@@ -189,17 +190,17 @@ function LearnedSkillsCard({ bot }: { bot: Bot }) {
     <div className="rounded-xl bg-card p-4">
       <div className="flex items-center gap-2">
         <BookOpen size={16} className="text-ink-secondary" />
-        <div className="text-[15px] font-medium text-ink">Learned skills</div>
+        <div className="text-[15px] font-medium text-ink">{t("Learned skills")}</div>
       </div>
       <div className="mt-1 text-[12px] leading-relaxed text-ink-secondary">
         {featureEnabled
-          ? "Use /learn in chat to stage a new skill. Nothing becomes active until you review and enable it."
-          : "Skill authoring is off, but skills you already enabled stay under your control here."}
+          ? t("Use /learn in chat to stage a new skill. Nothing becomes active until you review and enable it.")
+          : t("Skill authoring is off, but skills you already enabled stay under your control here.")}
       </div>
       {loading ? (
-        <div className="mt-3 text-[12px] text-ink-secondary">Loading…</div>
+        <div className="mt-3 text-[12px] text-ink-secondary">{t("Loading…")}</div>
       ) : skills.length === 0 ? (
-        <div className="mt-3 rounded-lg bg-inset px-3 py-2 text-[12px] text-ink-secondary">No installed skills yet.</div>
+        <div className="mt-3 rounded-lg bg-inset px-3 py-2 text-[12px] text-ink-secondary">{t("No installed skills yet.")}</div>
       ) : (
         <div className="mt-3 divide-y divide-hairline/40 overflow-hidden rounded-lg border border-hairline/40">
           {skills.map((skill) => (
@@ -211,13 +212,13 @@ function LearnedSkillsCard({ bot }: { bot: Bot }) {
                 </div>
                 <Switch
                   checked={skill.enabled}
-                  aria-label={`${skill.enabled ? "Disable" : "Enable"} ${skill.name}`}
+                  aria-label={skill.enabled ? t("Disable {name}", { name: skill.name }) : t("Enable {name}", { name: skill.name })}
                   disabled={working === skill.name}
                   onClick={() => void toggle(skill)}
                 />
                 <button
-                  aria-label={`Remove ${skill.name}`}
-                  title="Remove skill"
+                  aria-label={t("Remove {name}", { name: skill.name })}
+                  title={t("Remove skill")}
                   disabled={working === skill.name}
                   onClick={() => void remove(skill)}
                   className="flex size-8 shrink-0 items-center justify-center rounded-md text-ink-secondary hover:bg-danger/10 hover:text-danger disabled:opacity-40"
@@ -225,7 +226,7 @@ function LearnedSkillsCard({ bot }: { bot: Bot }) {
                   <Trash2 size={15} />
                 </button>
               </div>
-              <div className="mt-1 truncate text-[10.5px] text-ink-secondary" title={skill.source}>Source: {skill.source}</div>
+              <div className="mt-1 truncate text-[10.5px] text-ink-secondary" title={skill.source}>{t("Source: {source}", { source: skill.source })}</div>
               {skill.warnings.length > 0 && (
                 <div className="mt-1 text-[10.5px] text-warning">{skill.warnings.join(" · ")}</div>
               )}
@@ -235,7 +236,7 @@ function LearnedSkillsCard({ bot }: { bot: Bot }) {
       )}
       {staged.length > 0 && (
         <div className="mt-2 text-[11.5px] text-warning">
-          {staged.length} proposal{staged.length === 1 ? " is" : "s are"} waiting for a decision in chat.
+          {tn(staged.length, "{count} proposal is waiting for a decision in chat.", "{count} proposals are waiting for a decision in chat.")}
         </div>
       )}
       {error && <div role="alert" className="mt-2 text-[12px] text-danger">{error}</div>}
@@ -248,10 +249,10 @@ function LearnedSkillsCard({ bot }: { bot: Bot }) {
         >
           <div className="flex max-h-[min(760px,90vh)] w-full max-w-2xl flex-col rounded-2xl bg-card p-5 shadow-2xl">
             <div id="skill-review-title" className="text-[16px] font-semibold text-ink">
-              Review {reviewing.skill.name} before enabling
+              {t("Review {name} before enabling", { name: reviewing.skill.name })}
             </div>
             <div className="mt-1 break-all text-[11.5px] text-ink-secondary">
-              Source: {reviewing.skill.source}
+              {t("Source: {source}", { source: reviewing.skill.source })}
             </div>
             {reviewing.skill.warnings.length > 0 && (
               <div className="mt-2 rounded-lg bg-warning/10 px-3 py-2 text-[11.5px] text-warning">
@@ -260,7 +261,7 @@ function LearnedSkillsCard({ bot }: { bot: Bot }) {
             )}
             <pre
               tabIndex={0}
-              aria-label={`Full SKILL.md for ${reviewing.skill.name}`}
+              aria-label={t("Full SKILL.md for {name}", { name: reviewing.skill.name })}
               className="mt-3 min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words rounded-xl bg-inset p-3 font-mono text-[12px] leading-relaxed text-ink"
             >
               {reviewing.text}
@@ -273,7 +274,7 @@ function LearnedSkillsCard({ bot }: { bot: Bot }) {
                 onClick={() => setReviewing(null)}
                 className="rounded-lg px-4 py-2 text-[13px] font-medium text-ink-secondary hover:bg-raised disabled:opacity-40"
               >
-                Cancel
+                {t("Cancel")}
               </button>
               <button
                 type="button"
@@ -281,7 +282,7 @@ function LearnedSkillsCard({ bot }: { bot: Bot }) {
                 onClick={() => void enableReviewed()}
                 className="rounded-lg bg-accent px-4 py-2 text-[13px] font-semibold text-white disabled:opacity-40"
               >
-                Enable reviewed skill
+                {t("Enable reviewed skill")}
               </button>
             </div>
           </div>
@@ -290,6 +291,16 @@ function LearnedSkillsCard({ bot }: { bot: Bot }) {
     </div>
   );
 }
+
+/** Effort button captions; the level values stay the engine's identifiers. */
+const EFFORT_LABELS: Partial<Record<string, string>> = {
+  none: msg("None"),
+  low: msg("Low"),
+  medium: msg("Medium"),
+  high: msg("High"),
+  xhigh: msg("X-High"),
+  max: msg("Max"),
+};
 
 const inputCls =
   "w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2.5 text-[15px] text-ink placeholder:text-ink-secondary focus:outline-none focus:border-hairline";
@@ -329,19 +340,20 @@ function WorkingFolder({ bot }: { bot: Bot }) {
 
   return (
     <div className="rounded-xl bg-card p-4">
-      <div className="text-[15px] font-medium text-ink">Working folder</div>
-      <div className="mt-0.5 text-[13px] text-ink-secondary">Where this bot runs its shell and file tools.</div>
+      <div className="text-[15px] font-medium text-ink">{t("Working folder")}</div>
+      <div className="mt-0.5 text-[13px] text-ink-secondary">{t("Where this bot runs its shell and file tools.")}</div>
       {canPick ? (
         <div className="mt-3 flex items-center gap-2">
           <div className="min-w-0 flex-1 truncate rounded-lg border border-hairline/40 bg-inset px-3 py-2 font-mono text-[12.5px] text-ink" title={bot.cwd}>
-            {bot.cwd ? shortPath(bot.cwd, home) : <span className="text-ink-secondary">Private bot workspace</span>}
+            {bot.cwd ? shortPath(bot.cwd, home) : <span className="text-ink-secondary">{t("Private bot workspace")}</span>}
           </div>
           <button onClick={() => void pick()} disabled={saving} className="flex shrink-0 items-center gap-1.5 rounded-lg bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50">
-            <FolderOpen size={14} /> Choose…
+            <FolderOpen size={14} />{" "}
+            {t("Choose…")}
           </button>
           {bot.cwd && (
             <button onClick={() => void save(null)} disabled={saving} className="shrink-0 rounded-lg px-2 py-2 text-[13px] text-ink-secondary hover:text-ink disabled:opacity-50">
-              Clear
+              {t("Clear")}
             </button>
           )}
         </div>
@@ -356,19 +368,25 @@ function WorkingFolder({ bot }: { bot: Bot }) {
         >
           <input
             className={cn(inputCls, "font-mono text-[12.5px]")}
-            placeholder="Private bot workspace — or an absolute path"
+            placeholder={t("Private bot workspace — or an absolute path")}
             value={draft ?? bot.cwd ?? ""}
             onChange={(e) => setDraft(e.target.value)}
           />
           <button type="submit" disabled={saving || draft === null} className="shrink-0 rounded-lg bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50">
-            Save
+            {t("Save")}
           </button>
         </form>
       )}
       {error && <div className="mt-2 text-[12px] text-danger">{error}</div>}
       {pinnedElsewhere && (
         <div className="mt-2 text-[12px] text-ink-secondary">
-          New tasks start here. This task is pinned to {pinned ? <span className="font-mono">{shortPath(pinned, home)}</span> : "the home folder"} — start a new task to use the new folder.
+          {pinned
+            ? tRich(
+                "New tasks start here. This task is pinned to <code>{path}</code> — start a new task to use the new folder.",
+                { code: (c) => <span className="font-mono">{c}</span> },
+                { path: shortPath(pinned, home) },
+              )
+            : t("New tasks start here. This task is pinned to the home folder — start a new task to use the new folder.")}
         </div>
       )}
     </div>
@@ -454,15 +472,15 @@ function MemoryCard({ bot }: { bot: Bot }) {
         }}
       >
         <div>
-          <div className="text-[15px] font-medium text-ink">Memory</div>
+          <div className="text-[15px] font-medium text-ink">{t("Memory")}</div>
           <div className="mt-0.5 text-[13px] text-ink-secondary">
-            Notes this bot keeps between tasks — plain files you can edit.
+            {t("Notes this bot keeps between tasks — plain files you can edit.")}
           </div>
         </div>
         <ChevronDown size={16} className={cn("shrink-0 text-ink-secondary transition-transform", open && "rotate-180")} />
       </button>
 
-      {open && loading && <div className="mt-3 text-[13px] text-ink-secondary">Loading…</div>}
+      {open && loading && <div className="mt-3 text-[13px] text-ink-secondary">{t("Loading…")}</div>}
 
       {open && !loading && topic && (
         <div className="mt-3">
@@ -472,7 +490,7 @@ function MemoryCard({ bot }: { bot: Bot }) {
               onClick={() => setTopic(null)}
               className="shrink-0 rounded-md px-2 py-1 text-[13px] text-ink-secondary hover:bg-control hover:text-ink"
             >
-              Back
+              {t("Back")}
             </button>
           </div>
           <pre className="mt-2 max-h-[240px] overflow-auto whitespace-pre-wrap rounded-lg border border-hairline/40 bg-inset p-3 font-mono text-[12.5px] leading-relaxed text-ink">
@@ -486,8 +504,8 @@ function MemoryCard({ bot }: { bot: Bot }) {
           <textarea
             className={cn(inputCls, "min-h-[160px] resize-y font-mono text-[12.5px] leading-relaxed")}
             value={text}
-            placeholder="Nothing remembered yet. The bot writes durable notes here — or add your own."
-            aria-label="Bot memory"
+            placeholder={t("Nothing remembered yet. The bot writes durable notes here — or add your own.")}
+            aria-label={t("Bot memory")}
             onChange={(e) => {
               setText(e.target.value);
               setDirty(true);
@@ -499,18 +517,18 @@ function MemoryCard({ bot }: { bot: Bot }) {
               disabled={saving || !dirty}
               className="rounded-lg bg-control px-3 py-1.5 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50"
             >
-              {saving ? "Saving…" : "Save"}
+              {saving ? t("Saving…") : t("Save")}
             </button>
             {truncated && (
               <span className="text-[11.5px] text-ink-secondary">
-                Over the budget — only the top of this file loads each turn.
+                {t("Over the budget — only the top of this file loads each turn.")}
               </span>
             )}
           </div>
           {topics.length > 0 && (
             <div className="mt-3">
               <div className="mb-1.5 text-[12px] font-medium uppercase tracking-[0.08em] text-ink-secondary">
-                Topic files
+                {t("Topic files")}
               </div>
               <div className="overflow-hidden rounded-lg border border-hairline/40">
                 {topics.map((entry) => (
@@ -583,7 +601,7 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
   const browserFeature = builtInBrowserEnabled(state.config);
   const browserAllowed = bot.browser !== false;
   const browserEnabled = browserFeature && browserAllowed;
-  const sectionName = bot.section?.trim() || "General";
+  const sectionName = bot.section?.trim() || t("General");
   const currentChief = state.bots.find(
     (candidate) =>
       candidate.chiefOfStaff &&
@@ -597,17 +615,17 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
       <div className="flex items-center justify-between px-4 py-3">
         <button
           onClick={() => dispatch({ type: "toggleSettings", open: false })}
-          aria-label="Collapse agent profile"
-          title="Collapse agent profile"
+          aria-label={t("Collapse agent profile")}
+          title={t("Collapse agent profile")}
           className="flex size-10 items-center justify-center rounded-md text-ink-secondary hover:bg-control hover:text-ink"
         >
           <ChevronLeft size={18} />
         </button>
-        <span className="text-[15px] font-semibold text-ink">Agent profile</span>
+        <span className="text-[15px] font-semibold text-ink">{t("Agent profile")}</span>
         <button
           onClick={() => dispatch({ type: "toggleSettings", open: false })}
-          aria-label="Close agent profile"
-          title="Close agent profile"
+          aria-label={t("Close agent profile")}
+          title={t("Close agent profile")}
           className="flex size-10 items-center justify-center rounded-md text-ink-secondary hover:bg-control hover:text-ink"
         >
           <X size={18} />
@@ -623,7 +641,7 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
             onPatch={patch}
           />
 
-          <Field label="Name">
+          <Field label={t("Name")}>
             <input
               className={inputCls}
               maxLength={BOT_PROFILE_LIMITS.name}
@@ -631,20 +649,20 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
               onChange={(e) => patch({ name: e.target.value })}
             />
           </Field>
-          <Field label="Title">
+          <Field label={t("Title")}>
             <input
               className={inputCls}
               maxLength={BOT_PROFILE_LIMITS.title}
-              placeholder="Describe what your agent does"
+              placeholder={t("Describe what your agent does")}
               value={bot.title}
               onChange={(e) => patch({ title: e.target.value })}
             />
           </Field>
-          <Field label="Description">
+          <Field label={t("Description")}>
             <textarea
               className={cn(inputCls, "min-h-[96px] resize-none")}
               maxLength={BOT_PROFILE_LIMITS.description}
-              placeholder="What this agent is for"
+              placeholder={t("What this agent is for")}
               value={bot.description}
               onChange={(e) => patch({ description: e.target.value })}
             />
@@ -662,77 +680,77 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
                 <Crown size={17} />
               </span>
               <div className="min-w-0 flex-1">
-                <div className="text-[15px] font-medium text-ink">Chief of Staff</div>
-                <div className="text-[11.5px] text-ink-secondary">One for {sectionName}</div>
+                <div className="text-[15px] font-medium text-ink">{t("Chief of Staff")}</div>
+                <div className="text-[11.5px] text-ink-secondary">{t("One for {section}", { section: sectionName })}</div>
               </div>
               <Switch
                 checked={Boolean(bot.chiefOfStaff)}
-                aria-label="Chief of Staff"
+                aria-label={t("Chief of Staff")}
                 disabled={!bot.chiefOfStaff && !canCoordinate}
                 onClick={() => patch({ chiefOfStaff: !bot.chiefOfStaff })}
-                title={!bot.chiefOfStaff && !canCoordinate ? "This engine cannot contact other bots" : undefined}
+                title={!bot.chiefOfStaff && !canCoordinate ? t("This engine cannot contact other bots") : undefined}
                 className="disabled:cursor-not-allowed"
               />
             </div>
             <div className="mt-3 text-[13px] leading-relaxed text-ink-secondary">
               {bot.chiefOfStaff && !canCoordinate
-                ? "This bot still holds the role, but its current engine cannot contact teammates. Choose a Claude or ACP engine to restore coordination."
+                ? t("This bot still holds the role, but its current engine cannot contact teammates. Choose a Claude or ACP engine to restore coordination.")
                 : bot.chiefOfStaff
-                  ? `This is the primary contact for ${sectionName}. It can create and coordinate specialists in this section, then combine their work into one answer.`
+                  ? t("This is the primary contact for {section}. It can create and coordinate specialists in this section, then combine their work into one answer.", { section: sectionName })
                 : !canCoordinate
-                  ? "Choose a Claude or ACP engine to let this bot coordinate teammates."
+                  ? t("Choose a Claude or ACP engine to let this bot coordinate teammates.")
                   : currentChief
-                    ? `Make this bot the ${sectionName} Chief and hand the role over from ${currentChief.name}.`
-                    : `Make this bot the primary contact for the ${sectionName} section.`}
+                    ? t("Make this bot the {section} Chief and hand the role over from {name}.", { section: sectionName, name: currentChief.name })
+                    : t("Make this bot the primary contact for the {section} section.", { section: sectionName })}
             </div>
           </div>
 
           <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
             <div>
               <div className="text-[15px] font-medium text-ink">
-                Ask me before contacting other bots
+                {t("Ask me before contacting other bots")}
               </div>
               <div className="mt-0.5 text-[13px] text-ink-secondary">
                 {bot.approvePeerComms
-                  ? "This bot will stop and ask before it reaches out to another bot."
-                  : "Let this bot talk to teammates on its own, without a confirmation step."}
+                  ? t("This bot will stop and ask before it reaches out to another bot.")
+                  : t("Let this bot talk to teammates on its own, without a confirmation step.")}
               </div>
             </div>
             <Switch
               checked={Boolean(bot.approvePeerComms)}
-              aria-label="Ask me before contacting other bots"
+              aria-label={t("Ask me before contacting other bots")}
               disabled={!bot.approvePeerComms && !canCoordinate}
               onClick={() => patch({ approvePeerComms: !bot.approvePeerComms })}
-              title={!bot.approvePeerComms && !canCoordinate ? "This engine cannot contact other bots" : undefined}
+              title={!bot.approvePeerComms && !canCoordinate ? t("This engine cannot contact other bots") : undefined}
               className="disabled:cursor-not-allowed"
             />
           </div>
 
           <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
             <div>
-              <div className="text-[15px] font-medium text-ink">Connected apps</div>
+              <div className="text-[15px] font-medium text-ink">{t("Connected apps")}</div>
               <div className="mt-0.5 text-[13px] text-ink-secondary">
                 {!connectedAppsConfigured
-                  ? "Connect apps in App Settings before giving this bot access."
+                  ? t("Connect apps in App Settings before giving this bot access.")
                   : !canUseConnectedApps
-                    ? "This bot's current engine cannot use connected apps."
+                    ? t("This bot's current engine cannot use connected apps.")
                     : connectedAppsEnabled
-                      ? "Let this bot use your connected Gmail, Calendar, Slack, and other apps."
-                      : "Keep your connected apps unavailable to this bot."}
+                      ? t("Let this bot use your connected Gmail, Calendar, Slack, and other apps.")
+                      : t("Keep your connected apps unavailable to this bot.")}
               </div>
             </div>
             <Switch
               checked={connectedAppsEnabled}
-              aria-label="Allow this bot to use connected apps"
+              aria-label={t("Allow this bot to use connected apps")}
               disabled={
                 !connectedAppsEnabled && (!connectedAppsConfigured || !canUseConnectedApps)
               }
               onClick={() => patch({ composio: !connectedAppsEnabled })}
               title={
                 !connectedAppsEnabled && !connectedAppsConfigured
-                  ? "Connect apps in App Settings first"
+                  ? t("Connect apps in App Settings first")
                   : !connectedAppsEnabled && !canUseConnectedApps
-                    ? "This engine cannot use connected apps"
+                    ? t("This engine cannot use connected apps")
                     : undefined
               }
               className="disabled:cursor-not-allowed"
@@ -741,24 +759,24 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
 
           <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
             <div>
-              <div className="text-[15px] font-medium text-ink">Browser</div>
+              <div className="text-[15px] font-medium text-ink">{t("Browser")}</div>
               <div className="mt-0.5 text-[13px] text-ink-secondary">
                 {!desktopBrowser
                   ? browserBlockedOnWindows
-                    ? "The built-in browser is temporarily unavailable on Windows while Electron's production sandbox support is being verified."
-                    : "The built-in browser needs the OpenMausBot desktop app."
+                    ? t("The built-in browser is temporarily unavailable on Windows while Electron's production sandbox support is being verified.")
+                    : t("The built-in browser needs the OpenMausBot desktop app.")
                   : !browserFeature
-                    ? "The built-in browser is switched off under App Settings → Experimental."
+                    ? t("The built-in browser is switched off under App Settings → Experimental.")
                     : !canUseBrowser
-                      ? "This bot's current engine cannot use the built-in browser."
+                      ? t("This bot's current engine cannot use the built-in browser.")
                       : browserEnabled
-                        ? "This bot has its own browser tab in the computer panel — its own logins, watchable and takeable at any time."
-                        : "Keep the built-in browser unavailable to this bot."}
+                        ? t("This bot has its own browser tab in the computer panel — its own logins, watchable and takeable at any time.")
+                        : t("Keep the built-in browser unavailable to this bot.")}
               </div>
             </div>
             <Switch
               checked={browserEnabled}
-              aria-label="Give this bot a built-in browser"
+              aria-label={t("Give this bot a built-in browser")}
               disabled={!browserEnabled && (!desktopBrowser || !browserFeature || !canUseBrowser)}
               onClick={() => patch({ browser: !browserAllowed })}
               className="disabled:cursor-not-allowed"
@@ -771,9 +789,9 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
               contained
               label={
                 <div>
-                  <div className="text-[15px] font-medium text-ink">Model</div>
+                  <div className="text-[15px] font-medium text-ink">{t("Model")}</div>
                   <div className="mt-0.5 text-[13px] text-ink-secondary">
-                    Which provider and model this bot runs on
+                    {t("Which provider and model this bot runs on")}
                   </div>
                 </div>
               }
@@ -782,14 +800,14 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
 
           {!!engine?.capabilities?.effortLevels?.length && (
             <div className="rounded-xl bg-card p-4">
-              <div className="text-[15px] font-medium text-ink">Effort</div>
+              <div className="text-[15px] font-medium text-ink">{t("Effort")}</div>
               {/* Says what the app does, not what the engine ends up at:
                   Codex applies a level to the whole thread and has no way to
                   take one back, so "currently: engine default" was a promise
                   we could not keep for a thread that had already been sent
                   one. Sending nothing is true on every engine. */}
               <div className="mt-0.5 text-[13px] text-ink-secondary">
-                How hard this bot thinks{bot.modelSelection.effort ? "" : " (Default: no level is sent)"}
+                {bot.modelSelection.effort ? t("How hard this bot thinks") : t("How hard this bot thinks (Default: no level is sent)")}
               </div>
               <div className="mt-3 flex overflow-hidden rounded-lg border border-hairline/40">
                 {([undefined, ...engine.capabilities.effortLevels] as const).map((level, i) => (
@@ -806,7 +824,7 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
                     )}
                   >
                     {/* the others capitalize cleanly; "xhigh" would read "Xhigh" */}
-                    {level === "xhigh" ? "X-High" : (level ?? "Default")}
+                    {level ? t(EFFORT_LABELS[level] ?? level) : t("Default")}
                   </button>
                 ))}
               </div>
@@ -814,16 +832,16 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
           )}
 
           <div className="rounded-xl bg-card p-4">
-            <div className="text-[15px] font-medium text-ink">Computer</div>
+            <div className="text-[15px] font-medium text-ink">{t("Computer")}</div>
             <div className="mt-0.5 text-[13px] text-ink-secondary">
-              Where this bot's computer runs{bot.computer ? "" : " (currently: auto)"}
+              {bot.computer ? t("Where this bot's computer runs") : t("Where this bot's computer runs (currently: auto)")}
             </div>
             <div className="mt-3 flex overflow-hidden rounded-lg border border-hairline/40">
               {([
-                ["cloud", "Cloud"],
-                ["vm", "Local VM"],
-                ["local", "This computer"],
-                ["off", "Off"],
+                ["cloud", t("Cloud")],
+                ["vm", t("Local VM")],
+                ["local", t("This computer")],
+                ["off", t("Off")],
               ] as const).map(([mode, label], i) => (
                 <button
                   key={mode}
@@ -857,14 +875,14 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
                 {!bot.computer && bot.cloudBackend === "vps" && (
                   <div className="mt-3 flex items-center justify-between gap-4 rounded-lg bg-inset px-3 py-2.5">
                     <div className="min-w-0">
-                      <div className="text-[13px] text-ink">Start VPS automatically</div>
+                      <div className="text-[13px] text-ink">{t("Start VPS automatically")}</div>
                       <div className="mt-0.5 text-[11.5px] text-ink-secondary">
-                        Allow Auto to create or wake this bot's managed container when needed.
+                        {t("Allow Auto to create or wake this bot's managed container when needed.")}
                       </div>
                     </div>
                     <Switch
                       checked={Boolean(bot.autoStartVps)}
-                      aria-label="Start VPS automatically"
+                      aria-label={t("Start VPS automatically")}
                       onClick={() => patch({ autoStartVps: !bot.autoStartVps })}
                     />
                   </div>
@@ -883,20 +901,20 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
 
           <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
             <div>
-              <div className="text-[15px] font-medium text-ink">Auto mode</div>
+              <div className="text-[15px] font-medium text-ink">{t("Auto mode")}</div>
               <div className="mt-0.5 text-[13px] text-ink-secondary">
                 {bot.computer === "local"
                   ? bot.autoApprove
-                    ? "Keeps going on this computer — you'll still be asked about anything destructive, and about questions it asks you."
-                    : "Approve each action on this computer yourself. Turn on to let this bot keep working without stopping to ask."
+                    ? t("Keeps going on this computer — you'll still be asked about anything destructive, and about questions it asks you.")
+                    : t("Approve each action on this computer yourself. Turn on to let this bot keep working without stopping to ask.")
                   : bot.autoApprove
-                  ? "Keeps going on its own — you'll still be asked about anything destructive, and about questions it asks you."
-                  : "Approve each action yourself. Turn on to let this bot keep working without stopping to ask."}
+                  ? t("Keeps going on its own — you'll still be asked about anything destructive, and about questions it asks you.")
+                  : t("Approve each action yourself. Turn on to let this bot keep working without stopping to ask.")}
               </div>
             </div>
             <Switch
               checked={Boolean(bot.autoApprove)}
-              aria-label="Auto mode"
+              aria-label={t("Auto mode")}
               onClick={() => {
                 if (!bot.autoApprove && bot.computer === "local") setLocalAutoWarning("auto");
                 else patch({ autoApprove: !bot.autoApprove });
@@ -905,18 +923,18 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
           </div>
 
           <div className="rounded-xl bg-card p-4">
-            <div className="text-[15px] font-medium text-ink">Review routine approvals</div>
+            <div className="text-[15px] font-medium text-ink">{t("Review routine approvals")}</div>
             <div className="mt-0.5 text-[13px] text-ink-secondary">
               {canAutoReview
-                ? "The same engine reviews ordinary approval cards. Existing safety rules, unattended turns, local-computer access, and questions still wait for you."
-                : "This engine cannot run an isolated review safely, so approval cards continue to wait for you."}
+                ? t("The same engine reviews ordinary approval cards. Existing safety rules, unattended turns, local-computer access, and questions still wait for you.")
+                : t("This engine cannot run an isolated review safely, so approval cards continue to wait for you.")}
             </div>
             <div className="mt-3 flex gap-1 rounded-lg bg-inset p-0.5">
               {(
                 [
-                  ["off", "Off", "Every undecided approval waits for you."],
-                  ["shadow", "Watch", "Record the review without answering the card."],
-                  ["enforce", "On", "Answer only reviews that return a strict approval."],
+                  ["off", t("Off"), t("Every undecided approval waits for you.")],
+                  ["shadow", t("Watch"), t("Record the review without answering the card.")],
+                  ["enforce", t("On"), t("Answer only reviews that return a strict approval.")],
                 ] as const
               ).map(([value, label, hint]) => {
                 const current = bot.autoReview === "shadow" || bot.autoReview === "enforce" ? bot.autoReview : "off";
@@ -924,7 +942,7 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
                 return (
                   <button
                     key={value}
-                    title={disabled ? "Not supported by this engine" : hint}
+                    title={disabled ? t("Not supported by this engine") : hint}
                     disabled={disabled}
                     onClick={() => patch({ autoReview: value })}
                     className={cn(
@@ -944,15 +962,15 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
           <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
             <div>
               <div className="text-[15px] font-medium text-ink">
-                Notifications
+                {t("Notifications")}
               </div>
               <div className="mt-0.5 text-[13px] text-ink-secondary">
-                Get notified when this agent finishes or needs input
+                {t("Get notified when this agent finishes or needs input")}
               </div>
             </div>
             <Switch
               checked={bot.notifications}
-              aria-label="Agent notifications"
+              aria-label={t("Agent notifications")}
               onClick={() => {
                 const enabled = !bot.notifications;
                 if (enabled) void requestNotificationPermission();

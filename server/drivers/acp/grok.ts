@@ -9,6 +9,7 @@ import { join } from "node:path";
 
 import type { ModelCatalog } from "../../contracts.ts";
 import { decodeInjectId, hostApiKey, localHost, mergeLocalInject } from "../local-inject.ts";
+import { t } from "../../../shared/i18n.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 
 export const STATIC_GROK_MODELS: ModelCatalog = {
@@ -192,7 +193,9 @@ const support: AcpSupport = {
   effortLevels: ["low", "medium", "high"],
   defaultCli: "grok",
   nativeSource: "grok.acp",
-  loginNote: "Grok CLI is not signed in — run `grok login` in a terminal",
+  get loginNote() {
+    return t("Grok CLI is not signed in — run `grok login` in a terminal");
+  },
 
   // No Windows one-liner: the installer is a POSIX shell script, and offering
   // `curl … | bash` there would be advice that cannot run. Windows falls back
@@ -235,8 +238,10 @@ const support: AcpSupport = {
       await request("session/set_model", { sessionId, modelId: turn.model });
     } catch (e) {
       throw new Error(
-        `Grok rejected model "${turn.model}" via session/set_model: ${(e as Error).message}. ` +
-          `Check that grok is current (1.0.6+ supports it) and that this slug exists in ~/.grok/config.toml.`,
+        t(
+          'Grok rejected model "{model}" via session/set_model: {error}. Check that grok is current (1.0.6+ supports it) and that this slug exists in ~/.grok/config.toml.',
+          { model: turn.model, error: String((e as Error).message) },
+        ),
       );
     }
   },

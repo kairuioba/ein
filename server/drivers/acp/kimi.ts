@@ -12,6 +12,7 @@ import { join } from "node:path";
 
 import type { ModelCatalog } from "../../contracts.ts";
 import { decodeInjectId, hostApiKey, LOCAL_HOSTS, localHost, mergeLocalInject } from "../local-inject.ts";
+import { t } from "../../../shared/i18n.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 
 const STATIC_KIMI_MODELS: ModelCatalog = {
@@ -505,7 +506,9 @@ const support: AcpSupport = {
   resolveModels: (env) => mergeLocalInject(readKimiModelCatalog(env), env),
   defaultCli: "kimi",
   nativeSource: "kimi.acp",
-  loginNote: "Kimi Code CLI is not signed in — run `kimi login` in a terminal",
+  get loginNote() {
+    return t("Kimi Code CLI is not signed in — run `kimi login` in a terminal");
+  },
 
   // Official installers put the binary on PATH without requiring an existing
   // Node install. Keep the commands platform-specific so Windows never gets a

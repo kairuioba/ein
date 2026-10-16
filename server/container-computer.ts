@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 
+import { t } from "../shared/i18n.ts";
 import { augmentedPath } from "./env-path.ts";
 import { DATA_DIR } from "./config.ts";
 import { SPAWNED_PROXIES } from "./proxy-paths.ts";
@@ -313,7 +314,7 @@ function emptyStatus(platform: NodeJS.Platform, target: LocalVmTarget): Containe
     desktop_error: null,
     create_supported: true,
     ready: false,
-    problem: "Install a supported container runtime first",
+    problem: t("Install a supported container runtime first"),
     image_ref: IMAGE,
     image_id: null,
     base_image_ref: BASE_IMAGE,
@@ -328,21 +329,21 @@ function emptyStatus(platform: NodeJS.Platform, target: LocalVmTarget): Containe
 }
 
 function statusProblem(status: ContainerComputerStatus): string | null {
-  if (!status.runtime) return "Install a supported container runtime first";
-  if (!status.daemonUp) return `Start ${status.runtime} first`;
-  if (!status.image) return `Prepare the Cua desktop image with Driver ${CUA_DRIVER_VERSION}`;
+  if (!status.runtime) return t("Install a supported container runtime first");
+  if (!status.daemonUp) return t("Start {runtime} first", { runtime: status.runtime });
+  if (!status.image) return t("Prepare the Cua desktop image with Driver {version}", { version: CUA_DRIVER_VERSION });
   if (status.container === "missing" && !status.create_supported) {
-    return "Per-bot Local VMs require Docker or Podman because Apple container requires a fixed host port";
+    return t("Per-bot Local VMs require Docker or Podman because Apple container requires a fixed host port");
   }
-  if (status.container === "missing") return "Create the Local VM";
-  if (!status.imageMatches) return "The existing Local VM uses an older desktop or Cua Driver; recreate it";
-  if (!status.managed) return "The existing container was not created by OpenMausBot; recreate it";
-  if (status.network === "unsafe") return "The existing Local VM exposes its viewer publicly; recreate it";
-  if (status.security === "unsafe") return "The existing Local VM is missing safety limits; recreate it";
-  if (status.persistence === "unsafe") return "The existing Local VM is missing its durable workspace; recreate it";
-  if (status.container === "stopped") return "This desktop image cannot safely resume; recreate the Local VM";
-  if (status.desktop_error) return `The Local VM desktop failed to start: ${status.desktop_error}`;
-  if (!status.desktopReady) return "The Local VM started, but Cua Driver is not ready yet";
+  if (status.container === "missing") return t("Create the Local VM");
+  if (!status.imageMatches) return t("The existing Local VM uses an older desktop or Cua Driver; recreate it");
+  if (!status.managed) return t("The existing container was not created by OpenMausBot; recreate it");
+  if (status.network === "unsafe") return t("The existing Local VM exposes its viewer publicly; recreate it");
+  if (status.security === "unsafe") return t("The existing Local VM is missing safety limits; recreate it");
+  if (status.persistence === "unsafe") return t("The existing Local VM is missing its durable workspace; recreate it");
+  if (status.container === "stopped") return t("This desktop image cannot safely resume; recreate the Local VM");
+  if (status.desktop_error) return t("The Local VM desktop failed to start: {error}", { error: status.desktop_error });
+  if (!status.desktopReady) return t("The Local VM started, but Cua Driver is not ready yet");
   return null;
 }
 
@@ -567,7 +568,7 @@ export async function containerComputerStatus(
         !Array.isArray(report.checks) ||
         (report.overall !== "ok" && report.overall !== "degraded")
       ) {
-        throw new Error(`Cua health report is ${report.overall ?? "invalid"}`);
+        throw new Error(t("Cua health report is {status}", { status: report.overall ?? "invalid" }));
       }
       const readinessShot = "/tmp/openmausbot-readiness.png";
       await runner(
@@ -589,7 +590,7 @@ export async function containerComputerStatus(
         20_000,
       );
       if (!wholeScreenshot(Buffer.from(captured.stdout.trim(), "base64")).ok) {
-        throw new Error("Cua Driver returned an incomplete readiness screenshot");
+        throw new Error(t("Cua Driver returned an incomplete readiness screenshot"));
       }
       status.desktopReady = true;
     } catch (error) {
@@ -815,7 +816,7 @@ export function containerRunArgs(
   target: LocalVmTarget = SHARED_LOCAL_VM_TARGET,
 ): string[] {
   if (runtime === "container" && target.key !== SHARED_LOCAL_VM_TARGET.key) {
-    throw new Error("Per-bot Local VMs require Docker or Podman because Apple container requires a fixed host port");
+    throw new Error(t("Per-bot Local VMs require Docker or Podman because Apple container requires a fixed host port"));
   }
   const common = ["run", "-d", "--name", target.containerName];
   common.push(
@@ -919,25 +920,25 @@ export async function containerComputerAction(
   if (runner === sh && platform === process.platform) screenshotStatusCache.delete(target.key);
   const before = await containerComputerStatus(runner, platform, target);
   const runtime = before.runtime;
-  if (!runtime) throw Object.assign(new Error(before.problem ?? "No container runtime is installed"), { status: 409 });
-  if (!before.daemonUp) throw Object.assign(new Error(before.problem ?? `${runtime} is not running`), { status: 409 });
+  if (!runtime) throw Object.assign(new Error(before.problem ?? t("No container runtime is installed")), { status: 409 });
+  if (!before.daemonUp) throw Object.assign(new Error(before.problem ?? t("{runtime} is not running", { runtime })), { status: 409 });
 
   if (action === "run" && before.container !== "missing") {
-    throw Object.assign(new Error("A Local VM already exists; remove it before creating a replacement"), { status: 409 });
+    throw Object.assign(new Error(t("A Local VM already exists; remove it before creating a replacement")), { status: 409 });
   }
   if (action === "run" && !before.image) {
-    throw Object.assign(new Error("Prepare the Cua desktop image before creating the Local VM"), { status: 409 });
+    throw Object.assign(new Error(t("Prepare the Cua desktop image before creating the Local VM")), { status: 409 });
   }
   if (action === "run" && !before.create_supported) {
-    throw Object.assign(new Error(before.problem ?? "This runtime cannot create a per-bot Local VM"), { status: 409 });
+    throw Object.assign(new Error(before.problem ?? t("This runtime cannot create a per-bot Local VM")), { status: 409 });
   }
   if (action === "start") {
-    throw Object.assign(new Error("This desktop image cannot safely resume; remove and recreate the Local VM"), {
+    throw Object.assign(new Error(t("This desktop image cannot safely resume; remove and recreate the Local VM")), {
       status: 409,
     });
   }
   if (action === "stop" && before.container !== "running") {
-    throw Object.assign(new Error("The Local VM is not running"), { status: 409 });
+    throw Object.assign(new Error(t("The Local VM is not running")), { status: 409 });
   }
   if (action === "remove" && before.container === "missing") return before;
 
@@ -1005,7 +1006,7 @@ export async function containerComputerScreenshot(
       : await containerComputerStatus(runner, platform, target);
   if (!status.ready || !status.runtime) {
     if (cacheable) screenshotStatusCache.delete(target.key);
-    throw Object.assign(new Error(status.problem ?? "The Local VM is not ready"), { status: 409 });
+    throw Object.assign(new Error(status.problem ?? t("The Local VM is not ready")), { status: 409 });
   }
   if (cacheable) screenshotStatusCache.set(target.key, { status, expiresAt: now + SCREENSHOT_STATUS_TTL_MS });
   try {
@@ -1031,7 +1032,7 @@ export async function containerComputerScreenshot(
     const data = stdout.trim();
     const checked = wholeScreenshot(Buffer.from(data, "base64"));
     if (!checked.ok) {
-      throw Object.assign(new Error("Cua Driver returned an incomplete screenshot"), { status: 502 });
+      throw Object.assign(new Error(t("Cua Driver returned an incomplete screenshot")), { status: 502 });
     }
     return `data:${checked.mime};base64,${data}`;
   } catch (error) {

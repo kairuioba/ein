@@ -192,6 +192,7 @@ posixOnly("VPS turn routing e2e (fake ACP fleet + fake docker over SSH)", () => 
     );
 
     const env: NodeJS.ProcessEnv = {
+      OMB_LOCALE: "en", // the assertions read the English source strings
       HOME: home,
       USERPROFILE: home,
       OMB_PORT: String(PORT),

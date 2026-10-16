@@ -2,6 +2,7 @@
 // adds the shared transient-failure retry policy.
 import type { ProviderDriver } from "../contracts.ts";
 import { createOpenAIChatRuntime } from "./openai-chat.ts";
+import { t } from "../../shared/i18n.ts";
 
 const DRIVER_KIND = "grok";
 const DEFAULT_URL = "https://api.x.ai/v1";
@@ -45,8 +46,15 @@ export const GrokDriver: ProviderDriver<GrokConfig> = {
       models: () => MODELS,
       requestBody: (model, messages, stream) => ({ model, messages, stream }),
       httpErrorLabel: "xAI",
-      missingKeyError: `no xAI key — set ${config.apiKeyEnv} or config.json xai.key`,
-      unavailableReason: `no xAI API key — add {"xai":{"key":"xai-…"}} to ~/.openmausbot/config.json or set ${config.apiKeyEnv}`,
+      get missingKeyError() {
+        return t("no xAI key — set {env} or config.json xai.key", { env: config.apiKeyEnv });
+      },
+      get unavailableReason() {
+        return t("no xAI API key — add {snippet} to ~/.openmausbot/config.json or set {env}", {
+          snippet: '{"xai":{"key":"xai-…"}}',
+          env: config.apiKeyEnv,
+        });
+      },
       timeoutMs: 120_000,
       retryScale: Number(process.env.FAKE_GROK_RETRY_SCALE ?? "1"),
       generateModel: () => "grok-3-mini",

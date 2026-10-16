@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 import { z } from "zod";
+import { t } from "../shared/i18n.ts";
 import { writeFileAtomic } from "./atomic.ts";
 
 const BOT_ID = /^[A-Za-z0-9_-]{1,120}$/;
@@ -104,16 +105,20 @@ export async function finalizeBrowserCleanupMutation<T>(options: {
 
 function unavailableJournalError(error: Error): Error & { status: number } {
   return Object.assign(new Error(
-    "The browser cleanup journal could not be read safely. Browser profile reuse and deletion are blocked "
-    + `until the journal is repaired (${error.message}).`,
+    t(
+      "The browser cleanup journal could not be read safely. Browser profile reuse and deletion are blocked until the journal is repaired ({reason}).",
+      { reason: error.message },
+    ),
   ), { status: 503, cause: error });
 }
 
 export function requireBrowserCleanupAcknowledged(ok: boolean, target: string): void {
   if (ok) return;
   const error = Object.assign(new Error(
-    `${target} was removed, but OpenMausBot could not confirm its local browser data was erased. `
-    + "Restart the desktop app before reusing it; cleanup will retry automatically.",
+    t(
+      "{target} was removed, but OpenMausBot could not confirm its local browser data was erased. Restart the desktop app before reusing it; cleanup will retry automatically.",
+      { target },
+    ),
   ), { status: 503 });
   throw error;
 }
@@ -199,7 +204,7 @@ export class BrowserCleanupCoordinator {
     if (!validTarget(kind, id, partitionId)) throw new Error(`invalid browser ${kind} cleanup target`);
     const existing = [...this.#pending.values()].find((request) => request.kind === kind && request.id === id);
     if (existing) return existing;
-    if (this.#pending.size >= MAX_PENDING) throw new Error("too many pending browser data cleanups");
+    if (this.#pending.size >= MAX_PENDING) throw new Error(t("too many pending browser data cleanups"));
     const request: BrowserCleanupRequest = kind === "bot"
       ? { requestId: randomUUID(), kind, id, phase: "prepared" }
       : { requestId: randomUUID(), kind, id, partitionId, phase: "prepared" };

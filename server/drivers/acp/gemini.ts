@@ -29,6 +29,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { t } from "../../../shared/i18n.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 
 // Prefer an explicit key method, then personal OAuth, then Vertex — but fall
@@ -85,8 +86,11 @@ const support: AcpSupport = {
   },
   defaultCli: "gemini",
   nativeSource: "gemini.acp",
-  loginNote:
-    "Gemini CLI needs a GEMINI_API_KEY, a Vertex AI setup, or an enterprise Code Assist login — consumer Google logins stopped working on 2026-06-18 (use the Antigravity engine for those accounts)",
+  get loginNote() {
+    return t(
+      "Gemini CLI needs a GEMINI_API_KEY, a Vertex AI setup, or an enterprise Code Assist login — consumer Google logins stopped working on 2026-06-18 (use the Antigravity engine for those accounts)",
+    );
+  },
 
   // --acp is the stable Gemini CLI surface. --experimental-acp remains an
   // alias for older releases, but using it now emits a deprecation warning.

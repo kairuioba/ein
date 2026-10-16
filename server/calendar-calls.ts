@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import { writeFileAtomic } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
+import { t } from "../shared/i18n.ts";
 import { nextOccurrence } from "./routines.ts";
 
 export type CalendarCallSchedule =
@@ -118,25 +119,25 @@ function cloneCall(call: CalendarCall): CalendarCall {
 
 function cleanSchedule(value: CalendarCallSchedule): CalendarCallSchedule {
   const parsed = scheduleSchema.safeParse(value);
-  if (!parsed.success) throw new Error("Choose a valid call schedule");
+  if (!parsed.success) throw new Error(t("Choose a valid call schedule"));
   if (parsed.data.type === "once") return { type: "once", at: parsed.data.at };
   const weekdays = [...new Set(parsed.data.weekdays)].sort((a, b) => a - b);
-  if (!weekdays.length) throw new Error("Choose at least one day");
+  if (!weekdays.length) throw new Error(t("Choose at least one day"));
   return { type: "daily", time: parsed.data.time, weekdays };
 }
 
 function cleanAttachments(value: CalendarCallAttachment[] | undefined): CalendarCallAttachment[] {
   if (value == null) return [];
   if (!Array.isArray(value) || value.length > MAX_ATTACHMENTS) {
-    throw new Error(`Add no more than ${MAX_ATTACHMENTS} attachments`);
+    throw new Error(t("Add no more than {max} attachments", { max: MAX_ATTACHMENTS }));
   }
   const ids = new Set<string>();
   return value.map((candidate) => {
     const parsed = attachmentSchema.safeParse(candidate);
     if (!parsed.success || parsed.data.name.includes("\0") || parsed.data.path.includes("\0")) {
-      throw new Error("Choose a valid attachment");
+      throw new Error(t("Choose a valid attachment"));
     }
-    if (ids.has(parsed.data.id)) throw new Error("Each attachment must be unique");
+    if (ids.has(parsed.data.id)) throw new Error(t("Each attachment must be unique"));
     ids.add(parsed.data.id);
     return { ...parsed.data };
   });
@@ -148,17 +149,17 @@ function cleanInput(
 ): Omit<CalendarCall, "id" | "roomId" | "nextRunAt" | "createdAt" | "updatedAt"> {
   const name = String(input.name ?? "").trim().slice(0, 120);
   const description = String(input.description ?? "").trim().slice(0, 20_000);
-  if (!name) throw new Error("Give the call a title");
+  if (!name) throw new Error(t("Give the call a title"));
 
-  if (!Array.isArray(input.botIds)) throw new Error("Add at least one bot");
+  if (!Array.isArray(input.botIds)) throw new Error(t("Add at least one bot"));
   const botIds = [...new Set(input.botIds.map((id) => String(id ?? "").trim()).filter(Boolean))];
-  if (!botIds.length) throw new Error("Add at least one bot");
-  if (botIds.length > MAX_BOTS) throw new Error(`Add no more than ${MAX_BOTS} bots`);
-  if (botIds.some((botId) => !botExists(botId))) throw new Error("One or more bots no longer exist");
+  if (!botIds.length) throw new Error(t("Add at least one bot"));
+  if (botIds.length > MAX_BOTS) throw new Error(t("Add no more than {max} bots", { max: MAX_BOTS }));
+  if (botIds.some((botId) => !botExists(botId))) throw new Error(t("One or more bots no longer exist"));
 
   const duration = input.durationMinutes ?? 30;
   if (!Number.isInteger(duration) || duration < 15 || duration > 240) {
-    throw new Error("Call duration must be between 15 and 240 minutes");
+    throw new Error(t("Call duration must be between 15 and 240 minutes"));
   }
 
   return {
@@ -237,7 +238,7 @@ export class CalendarCallManager {
 
   update(id: string, patch: CalendarCallPatch): CalendarCall {
     const index = this.calls.findIndex((call) => call.id === id);
-    if (index < 0) throw new Error("Call not found");
+    if (index < 0) throw new Error(t("Call not found"));
     const previous = this.calls[index]!;
     const clean = cleanInput({
       name: patch.name ?? previous.name,
@@ -264,7 +265,7 @@ export class CalendarCallManager {
 
   linkRoom(id: string, roomId: string): CalendarCall {
     const call = this.calls.find((candidate) => candidate.id === id);
-    if (!call) throw new Error("Call not found");
+    if (!call) throw new Error(t("Call not found"));
     if (call.roomId === roomId) return cloneCall(call);
     this.commit(() => {
       call.roomId = roomId;

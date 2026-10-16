@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ComponentProps } from "react";
 import { Check, Copy } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { t } from "@/lib/i18n";
 
 export function Switch({
   checked,
@@ -77,7 +78,7 @@ export function CommandLine({ command }: { command: string }) {
       </code>
       <button
         onClick={() => void copy()}
-        aria-label="Copy command"
+        aria-label={t("Copy command")}
         className="shrink-0 rounded p-1 text-ink-secondary hover:bg-raised hover:text-ink"
       >
         {copied ? <Check size={13} className="text-success" /> : <Copy size={13} />}

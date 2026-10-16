@@ -1,5 +1,6 @@
 import { parseBotPackage, type BotPackageDefinition, type BotPackagePlaybook, type ParsedBotPackage } from "./bot-package.ts";
 import type { Routine } from "./routines.ts";
+import { t } from "../shared/i18n.ts";
 import type { BotRecord, GroupRecord, InstalledPlaybook } from "./store.ts";
 
 function portableKey(value: string, fallback: string, used: Set<string>): string {
@@ -32,7 +33,7 @@ export function createBotPackageExport(input: {
   routines: Routine[];
 }): ParsedBotPackage {
   const bots = input.bots.filter((bot) => !bot.hidden);
-  if (!bots.length) throw new Error("Create a bot before exporting your package");
+  if (!bots.length) throw new Error(t("Create a bot before exporting your package"));
 
   const packageKeys = new Set<string>();
   const idToKey = new Map<string, string>();

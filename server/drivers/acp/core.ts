@@ -18,6 +18,7 @@ import { homedir } from "node:os";
 import { PROVIDER_CREDENTIAL_ENV, WORKSPACE_CREDENTIAL_ENV } from "../../config.ts";
 import { decodeInjectId } from "../local-inject.ts";
 import { describeSpawnFailure, execCli, killCliTree, spawnCli } from "../../procs.ts";
+import { msg, t } from "../../../shared/i18n.ts";
 
 /**
  * A `host::model` pick talks to a loopback server with its own key.
@@ -173,7 +174,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
   const SOURCE = support.nativeSource;
   const decodeConfig = decodeAcpConfig(support.defaultCli);
   const DENY_TIMEOUT_NOTE =
-    "OpenMausBot: nobody answered this permission request in time. Skip this action and finish what you can without it.";
+    msg("OpenMausBot: nobody answered this permission request in time. Skip this action and finish what you can without it.");
 
   return {
     driverKind: DRIVER_KIND,
@@ -288,10 +289,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
 
       const sendTurn = async (turn: SendTurnInput) => {
         const { threadId } = turn;
-        if (active.has(threadId)) throw new Error("a turn is already running on this thread");
+        if (active.has(threadId)) throw new Error(t("a turn is already running on this thread"));
         const controlsHost = turn.integrations?.localComputer?.scope === "local-computer";
         if (controlsHost && config.fullAuto) {
-          throw new Error("local computer control requires interactive provider approvals");
+          throw new Error(t("local computer control requires interactive provider approvals"));
         }
         const turnId = newId();
         const cwd = turn.cwd ?? config.workspace ?? homedir();
@@ -343,7 +344,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             if (timeoutMs) {
               timer = setTimeout(() => {
                 rpcPending.delete(id);
-                reject(new Error(`${method} timed out`));
+                reject(new Error(t("{method} timed out", { method })));
               }, timeoutMs);
               timer.unref?.();
             }
@@ -393,7 +394,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             emit({
               ...base(threadId, turnId),
               type: "runtime.error",
-              message: `${DRIVER_KIND} offered no "${want}" permission option — cancelling the request instead of guessing`,
+              message: t('{engine} offered no "{option}" permission option — cancelling the request instead of guessing', { engine: DRIVER_KIND, option: want }),
             });
 
           const toolCall = params.toolCall ?? {};
@@ -431,7 +432,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             });
           };
           const timer = setTimeout(() => {
-            emit({ ...base(threadId, turnId), type: "runtime.error", message: DENY_TIMEOUT_NOTE });
+            emit({ ...base(threadId, turnId), type: "runtime.error", message: t(DENY_TIMEOUT_NOTE) });
             finish("deny", "timeout");
           }, 15 * 60_000);
           timer.unref?.();
@@ -549,7 +550,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             emit({
               ...base(threadId, turnId),
               type: "runtime.error",
-              message: `${DRIVER_KIND} exited ${code} before the prompt result${stderr ? `: ${stderr.trim().slice(-300)}` : ""}`,
+              message: t("{engine} exited {code} before the prompt result", { engine: DRIVER_KIND, code: String(code) }) + (stderr ? `: ${stderr.trim().slice(-300)}` : ""),
             });
             settle(false, "exit_before_result");
           }
@@ -604,7 +605,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             if (!sessionId) {
               sessionResult = await request("session/new", { cwd, mcpServers }, NEW_SESSION_TIMEOUT);
               sessionId = typeof sessionResult?.sessionId === "string" ? sessionResult.sessionId : null;
-              if (!sessionId) throw new Error("session/new returned no sessionId");
+              if (!sessionId) throw new Error(t("session/new returned no sessionId"));
             }
             let selectedModel: string | null = null;
             let sessionStarted = false;
@@ -638,7 +639,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                   // one that errors: it burns a paid turn on the wrong thing
                   if (selectedModel !== cliTurn.model) {
                     throw new Error(
-                      `${DRIVER_KIND} did not switch to ${cliTurn.model} (still ${selectedModel ?? "unknown"})`,
+                      t("{engine} did not switch to {model} (still {current})", { engine: DRIVER_KIND, model: cliTurn.model, current: selectedModel ?? t("unknown") }),
                     );
                   }
                 }
@@ -696,7 +697,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 ? result.error
                 : typeof result?.message === "string" && result.message
                   ? result.message
-                  : `Model turn failed: ${reason ?? "unknown error"}`;
+                  : t("Model turn failed: {reason}", { reason: reason ?? t("unknown error") });
               emit({
                 ...base(threadId, turnId),
                 type: "runtime.error",
@@ -734,7 +735,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             resolve(err ? null : stdout.trim()),
           );
         });
-        if (!version) return { state: "unavailable", reason: `\`${config.cli}\` CLI not found` };
+        if (!version) return { state: "unavailable", reason: t("`{cli}` CLI not found", { cli: config.cli }) };
         return { state: "available", version, authenticated: await support.isAuthenticated(env, config) };
       };
 

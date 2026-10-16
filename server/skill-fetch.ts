@@ -9,6 +9,8 @@
 // requested (v1 imports are markdown-only by policy).
 import { z } from "zod";
 
+import { t } from "../shared/i18n.ts";
+
 const MAX_FILES = 30;
 const MAX_FILE_BYTES = 256 * 1024;
 const API = "https://api.github.com";
@@ -29,7 +31,7 @@ interface Target {
  * straight to a SKILL.md. Anything else is refused, loudly. */
 export function parseSkillSource(input: string): Target | { rawUrl: string } | { error: string } {
   const text = input.trim();
-  if (!text) return { error: "paste a GitHub repository, folder, or SKILL.md URL" };
+  if (!text) return { error: t("paste a GitHub repository, folder, or SKILL.md URL") };
   if (/^https?:\/\/raw\.githubusercontent\.com\/.+\/SKILL\.md$/i.test(text)) return { rawUrl: text };
   const blob = text.match(/^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/blob\/([^/]+)\/(.+SKILL\.md)$/i);
   if (blob) {
@@ -41,7 +43,7 @@ export function parseSkillSource(input: string): Target | { rawUrl: string } | {
   }
   const shorthand = text.match(/^([\w.-]+)\/([\w.-]+)$/);
   if (shorthand) return { owner: shorthand[1]!, repo: shorthand[2]!, path: "" };
-  return { error: "that does not look like a GitHub repository, folder, or SKILL.md URL" };
+  return { error: t("that does not look like a GitHub repository, folder, or SKILL.md URL") };
 }
 
 const CONTENT_ENTRY = z.object({
@@ -73,9 +75,9 @@ async function fetchListing(url: string, fetcher: typeof fetch): Promise<Content
 
 async function fetchText(url: string, fetcher: typeof fetch): Promise<string> {
   const response = await fetcher(url, { headers: { "user-agent": "OpenMausBot-skills" } });
-  if (!response.ok) throw new Error(`download failed (${response.status})`);
+  if (!response.ok) throw new Error(t("download failed ({status})", { status: response.status }));
   const text = await response.text();
-  if (Buffer.byteLength(text, "utf8") > MAX_FILE_BYTES) throw new Error("file is larger than the 256KB import cap");
+  if (Buffer.byteLength(text, "utf8") > MAX_FILE_BYTES) throw new Error(t("file is larger than the 256KB import cap"));
   return text;
 }
 
@@ -132,7 +134,7 @@ export async function fetchSkillDir(target: Target, dir: string, fetcher: typeof
     .filter((entry) => entry.type === "file" && /\.md$/i.test(entry.name) && entry.download_url)
     .slice(0, MAX_FILES);
   if (!markdown.some((entry) => entry.name === "SKILL.md")) {
-    throw new Error(`no SKILL.md in ${dir || "the repository root"}`);
+    throw new Error(dir ? t("no SKILL.md in {dir}", { dir }) : t("no SKILL.md in the repository root"));
   }
   const files = await Promise.all(
     markdown.map(async (entry) => ({
@@ -156,7 +158,7 @@ export async function fetchSkillFromSource(
       return { skills: [{ source: parsed.rawUrl, files: [{ path: "SKILL.md", content }] }] };
     }
     const dirs = await discoverSkillDirs(parsed, fetcher);
-    if (!dirs.length) return { error: "no SKILL.md found there — paste a skill folder or a repo with a skills/ directory" };
+    if (!dirs.length) return { error: t("no SKILL.md found there — paste a skill folder or a repo with a skills/ directory") };
     const skills = await Promise.all(dirs.map((dir) => fetchSkillDir(parsed, dir, fetcher)));
     return { skills };
   } catch (error) {

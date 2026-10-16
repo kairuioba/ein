@@ -20,6 +20,7 @@
  * Made with Blob Studio.
  */
 import React, { useEffect, useId, useMemo, useRef } from 'react'
+import { t } from '@/lib/i18n'
 
 /* ------------------------------------------------------------------- shape */
 
@@ -1591,7 +1592,7 @@ export const CursorAvatar = React.forwardRef<CursorAvatarHandle, CursorAvatarPro
     paintRef.current = paint
 
     const dimension = size.constructor === Number ? `${size}px` : size
-    const label = title === undefined ? `${silhouette.name} mascot` : title
+    const label = title === undefined ? t('{name} mascot', { name: silhouette.name }) : title
     const body = silhouette.body.replace(/\{\{GRADIENT\}\}/g, `url(#${uid}-grad)`)
 
     return (

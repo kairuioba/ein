@@ -15,6 +15,7 @@
 // `alwaysAllow`, so the two sides never disagree about what was granted.
 
 import { newId } from "./contracts.ts";
+import { t } from "../shared/i18n.ts";
 import { peerAllowKey, type PeerAction } from "./peer-approval-key.ts";
 import type { BotRecord, Message, Store } from "./store.ts";
 
@@ -84,7 +85,9 @@ function pushApprovalCard(
     role: "bot",
     kind: "options",
     card: {
-      title: `@${from.name} wants to ${action === "ask_bot" ? "contact" : "delegate to"} @${target.name}`,
+      title: action === "ask_bot"
+        ? t("@{from} wants to contact @{target}", { from: from.name, target: target.name })
+        : t("@{from} wants to delegate to @{target}", { from: from.name, target: target.name }),
       subtitle,
       options: ["Allow", "Deny", "Always allow"],
       requestId,

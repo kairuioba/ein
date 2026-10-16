@@ -2,6 +2,7 @@ const { spawn, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { t } = require("./i18n.cjs");
 
 const CERTIFIED_DRIVER_VERSION = "0.19.3";
 const CERTIFIED_MANIFEST_SCHEMA = "1";
@@ -128,20 +129,20 @@ function runCuaCommand(binary, args, {
       stderr = collect(stderr, chunk);
     });
     child.once("error", (error) =>
-      finish(reject, commandFailure("spawn-failed", `Could not start Cua Driver: ${error.message}`)),
+      finish(reject, commandFailure("spawn-failed", t("Could not start Cua Driver: {error}", { error: error.message }))),
     );
     child.once("close", (exitCode, signal) => {
       if (timedOut) {
         finish(
           reject,
-          commandFailure("command-timeout", "Cua Driver did not respond in time.", { timeoutMs }),
+          commandFailure("command-timeout", t("Cua Driver did not respond in time."), { timeoutMs }),
         );
         return;
       }
       if (overflowed) {
         finish(
           reject,
-          commandFailure("output-too-large", "Cua Driver returned too much diagnostic output."),
+          commandFailure("output-too-large", t("Cua Driver returned too much diagnostic output.")),
         );
         return;
       }
@@ -336,8 +337,8 @@ function createPermissionCheck(identity, lookupPrivateGroup) {
     return unavailable(
       "unsafe-driver-permissions",
       worldWritable
-        ? `Cua Driver path is world-writable: ${component}`
-        : `Cua Driver path is group-writable and its group could not be proven private: ${component}`,
+        ? t("Cua Driver path is world-writable: {path}", { path: component })
+        : t("Cua Driver path is group-writable and its group could not be proven private: {path}", { path: component }),
       {
         affectedPaths: [component],
         ...(groupProof?.reason ? { permissionReason: groupProof.reason } : {}),
@@ -365,7 +366,7 @@ function validatePathComponents(target, currentUid, permissionCheck) {
     if (!safeOwner(stat, currentUid)) {
       return unavailable(
         "unsafe-driver-owner",
-        `Cua Driver path component is owned by an unexpected user: ${component}`,
+        t("Cua Driver path component is owned by an unexpected user: {path}", { path: component }),
         { affectedPaths: [component] },
       );
     }
@@ -386,7 +387,7 @@ function validateDriverCandidate(candidate, {
   const identity = driverIdentity({ currentUid, currentGid, currentUsername });
   const permissionCheck = createPermissionCheck(identity, lookupPrivateGroup);
   if (!path.isAbsolute(candidate)) {
-    return unavailable("driver-path-not-absolute", "Cua Driver path must be absolute.", {
+    return unavailable("driver-path-not-absolute", t("Cua Driver path must be absolute."), {
       candidate,
     });
   }
@@ -404,7 +405,7 @@ function validateDriverCandidate(candidate, {
     targetStat = fs.statSync(canonicalPath, { bigint: true });
     fileIdentity = driverFileIdentityFromStat(targetStat);
   } catch (error) {
-    return unavailable("driver-not-found", `Cua Driver was not found at ${candidate}.`, {
+    return unavailable("driver-not-found", t("Cua Driver was not found at {path}.", { path: candidate }), {
       candidate,
       cause: error?.code,
     });
@@ -413,18 +414,18 @@ function validateDriverCandidate(candidate, {
   if (!safeOwner(linkStat, identity.uid) || !safeOwner(targetStat, identity.uid)) {
     return unavailable(
       "unsafe-driver-owner",
-      "Cua Driver must be owned by the current user or root.",
+      t("Cua Driver must be owned by the current user or root."),
       { candidate, canonicalPath, affectedPaths: [canonicalPath] },
     );
   }
   if (!targetStat.isFile()) {
-    return unavailable("driver-not-file", "Cua Driver must resolve to a regular file.", {
+    return unavailable("driver-not-file", t("Cua Driver must resolve to a regular file."), {
       candidate,
       canonicalPath,
     });
   }
   if ((Number(targetStat.mode) & 0o111) === 0) {
-    return unavailable("driver-not-executable", "Cua Driver is not executable.", {
+    return unavailable("driver-not-executable", t("Cua Driver is not executable."), {
       candidate,
       canonicalPath,
     });
@@ -439,7 +440,7 @@ function validateDriverCandidate(candidate, {
     if (canonicalError) return { ...canonicalError, candidate, canonicalPath };
     fs.accessSync(canonicalPath, fs.constants.X_OK);
   } catch (error) {
-    return unavailable("driver-not-executable", "Cua Driver cannot be executed.", {
+    return unavailable("driver-not-executable", t("Cua Driver cannot be executed."), {
       candidate,
       canonicalPath,
       cause: error?.code,
@@ -449,13 +450,13 @@ function validateDriverCandidate(candidate, {
   try {
     const finalIdentity = captureDriverFileIdentity(canonicalPath);
     if (!sameDriverFileIdentity(fileIdentity, finalIdentity)) {
-      return unavailable("driver-changed", "Cua Driver changed while it was being validated.", {
+      return unavailable("driver-changed", t("Cua Driver changed while it was being validated."), {
         candidate,
         canonicalPath,
       });
     }
   } catch (error) {
-    return unavailable("driver-not-found", "Cua Driver changed while it was being validated.", {
+    return unavailable("driver-not-found", t("Cua Driver changed while it was being validated."), {
       candidate,
       canonicalPath,
       cause: error?.code,
@@ -509,7 +510,7 @@ function discoverLinuxCuaDriver({
     firstUnsafe ??
     unavailable(
       "driver-not-found",
-      "Cua Driver was not found. Install it, then try again.",
+      t("Cua Driver was not found. Install it, then try again."),
     )
   );
 }
@@ -519,10 +520,10 @@ function parseJsonObject(value, label) {
   try {
     parsed = JSON.parse(value);
   } catch {
-    throw commandFailure("invalid-json", `${label} returned invalid JSON.`);
+    throw commandFailure("invalid-json", t("{label} returned invalid JSON.", { label }));
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw commandFailure("invalid-json", `${label} returned an invalid JSON object.`);
+    throw commandFailure("invalid-json", t("{label} returned an invalid JSON object.", { label }));
   }
   return parsed;
 }
@@ -536,13 +537,13 @@ function validateManifest(manifest, binaryPath) {
   if (manifest.schema_version !== CERTIFIED_MANIFEST_SCHEMA) {
     throw commandFailure(
       "unsupported-manifest",
-      `Cua Driver manifest schema ${String(manifest.schema_version)} is not supported.`,
+      t("Cua Driver manifest schema {schema} is not supported.", { schema: String(manifest.schema_version) }),
     );
   }
   if (manifest.binary_version !== CERTIFIED_DRIVER_VERSION) {
     throw commandFailure(
       "unsupported-driver-version",
-      `Cua Driver ${String(manifest.binary_version)} is not supported; install ${CERTIFIED_DRIVER_VERSION}.`,
+      t("Cua Driver {version} is not supported; install {certified}.", { version: String(manifest.binary_version), certified: CERTIFIED_DRIVER_VERSION }),
     );
   }
   const invocation = manifest.mcp_invocation;
@@ -553,23 +554,23 @@ function validateManifest(manifest, binaryPath) {
     invocation.args.length !== 1 ||
     invocation.args[0] !== "mcp"
   ) {
-    throw commandFailure("unsupported-manifest", "Cua Driver returned an unsupported MCP contract.");
+    throw commandFailure("unsupported-manifest", t("Cua Driver returned an unsupported MCP contract."));
   }
   let invocationPath;
   try {
     invocationPath = fs.realpathSync(invocation.command);
   } catch {
-    throw commandFailure("unsupported-manifest", "Cua Driver MCP command could not be verified.");
+    throw commandFailure("unsupported-manifest", t("Cua Driver MCP command could not be verified."));
   }
   if (invocationPath !== binaryPath) {
-    throw commandFailure("unsupported-manifest", "Cua Driver MCP command does not match the verified binary.");
+    throw commandFailure("unsupported-manifest", t("Cua Driver MCP command does not match the verified binary."));
   }
   return { command: binaryPath, args: ["mcp"] };
 }
 
 function validateDoctor(report, { session = "x11" } = {}) {
   if (typeof report.ok !== "boolean" || !Array.isArray(report.probes)) {
-    throw commandFailure("invalid-doctor-report", "Cua Driver returned an invalid doctor report.");
+    throw commandFailure("invalid-doctor-report", t("Cua Driver returned an invalid doctor report."));
   }
   const probes = report.probes.map((probe) => {
     if (
@@ -578,7 +579,7 @@ function validateDoctor(report, { session = "x11" } = {}) {
       !["ok", "warn", "err"].includes(probe.status) ||
       typeof probe.message !== "string"
     ) {
-      throw commandFailure("invalid-doctor-report", "Cua Driver returned an invalid doctor probe.");
+      throw commandFailure("invalid-doctor-report", t("Cua Driver returned an invalid doctor probe."));
     }
     return {
       label: probe.label,
@@ -592,26 +593,26 @@ function validateDoctor(report, { session = "x11" } = {}) {
   const x11 = byLabel.get("X11 connection");
   const atSpi = byLabel.get("AT-SPI");
   if (!report.ok || probes.some((probe) => probe.status === "err")) {
-    throw commandFailure("doctor-failed", "Cua Driver diagnostics reported an error.", { probes });
+    throw commandFailure("doctor-failed", t("Cua Driver diagnostics reported an error."), { probes });
   }
   if (session === "wayland") {
     if (display?.status !== "ok" || !display.message.startsWith("Wayland")) {
       throw commandFailure(
         "wayland-session-unavailable",
-        "Cua Driver did not confirm an active Wayland display.",
+        t("Cua Driver did not confirm an active Wayland display."),
         { probes },
       );
     }
   } else {
     if (display?.status !== "ok" || !display.message.startsWith("X11 ")) {
-      throw commandFailure("x11-unavailable", "Cua Driver did not confirm an Xorg display.", { probes });
+      throw commandFailure("x11-unavailable", t("Cua Driver did not confirm an Xorg display."), { probes });
     }
     if (!x11 || x11.status === "err") {
-      throw commandFailure("x11-unavailable", "Cua Driver could not verify the Xorg session.", { probes });
+      throw commandFailure("x11-unavailable", t("Cua Driver could not verify the Xorg session."), { probes });
     }
   }
   if (atSpi?.status !== "ok") {
-    throw commandFailure("at-spi-unavailable", "Cua Driver could not reach the AT-SPI accessibility bus.", {
+    throw commandFailure("at-spi-unavailable", t("Cua Driver could not reach the AT-SPI accessibility bus."), {
       probes,
     });
   }
@@ -638,12 +639,12 @@ async function inspectLinuxCuaDriver({
         ? "x11"
         : "unknown";
   if (platform !== "linux") {
-    return unavailable("unsupported-platform", "Linux local control is only available on Ubuntu.");
+    return unavailable("unsupported-platform", t("Linux local control is only available on Ubuntu."));
   }
   if (arch !== "x64") {
     return unavailable(
       "unsupported-architecture",
-      "Bundled Linux local control is currently available only on x64 Ubuntu.",
+      t("Bundled Linux local control is currently available only on x64 Ubuntu."),
     );
   }
   if (session === "wayland") {
@@ -653,23 +654,23 @@ async function inspectLinuxCuaDriver({
     if (!desktops.includes("gnome")) {
       return unavailable(
         "wayland-compositor-unsupported",
-        "Wayland local control is currently limited to GNOME.",
+        t("Wayland local control is currently limited to GNOME."),
       );
     }
     if (!env.WAYLAND_DISPLAY || !env.DBUS_SESSION_BUS_ADDRESS) {
       return unavailable(
         "wayland-session-unavailable",
-        "Local control requires an active GNOME Wayland desktop session.",
+        t("Local control requires an active GNOME Wayland desktop session."),
       );
     }
   } else if (session !== "x11") {
     return unavailable(
       "desktop-session-required",
-      "Local control requires an interactive GNOME desktop session.",
+      t("Local control requires an interactive GNOME desktop session."),
     );
   }
   if (session === "x11" && !env.DISPLAY) {
-    return unavailable("display-unavailable", "Local control requires an active Xorg display.");
+    return unavailable("display-unavailable", t("Local control requires an active Xorg display."));
   }
 
   const discovered = discoverLinuxCuaDriver({
@@ -693,14 +694,14 @@ async function inspectLinuxCuaDriver({
     if (versionResult.exitCode !== 0 || driverVersion !== CERTIFIED_DRIVER_VERSION) {
       return unavailable(
         "unsupported-driver-version",
-        `Cua Driver ${driverVersion ?? "unknown"} is not supported; install ${CERTIFIED_DRIVER_VERSION}.`,
+        t("Cua Driver {version} is not supported; install {certified}.", { version: driverVersion ?? "unknown", certified: CERTIFIED_DRIVER_VERSION }),
         { path: discovered.path, source: discovered.source, driverVersion },
       );
     }
 
     const manifestResult = await run(discovered.path, ["manifest"], { env: commandEnv });
     if (manifestResult.exitCode !== 0) {
-      return unavailable("manifest-failed", "Cua Driver manifest validation failed.", {
+      return unavailable("manifest-failed", t("Cua Driver manifest validation failed."), {
         path: discovered.path,
         source: discovered.source,
       });
@@ -711,7 +712,7 @@ async function inspectLinuxCuaDriver({
     const doctorResult = await run(discovered.path, ["doctor", "--json"], { env: commandEnv });
     const doctorReport = parseJsonObject(doctorResult.stdout, "Cua Driver doctor");
     if (doctorResult.exitCode !== 0 && doctorReport.ok !== false) {
-      return unavailable("doctor-failed", "Cua Driver diagnostics failed.", {
+      return unavailable("doctor-failed", t("Cua Driver diagnostics failed."), {
         path: discovered.path,
         source: discovered.source,
       });

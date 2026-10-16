@@ -315,6 +315,7 @@ beforeAll(async () => {
   child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
     cwd: ROOT,
     env: {
+      OMB_LOCALE: "en", // the assertions read the English source strings
       ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
       ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
       HOME: home,
@@ -3236,6 +3237,7 @@ describe("harness HTTP API", () => {
     `)}`;
     let isolatedStderr = "";
     const isolatedEnv: NodeJS.ProcessEnv = {
+      OMB_LOCALE: "en", // the assertions read the English source strings
       HOME: isolatedHome,
       USERPROFILE: isolatedHome,
       OMB_PORT: String(isolatedPort),
@@ -3443,6 +3445,7 @@ describe("harness HTTP API", () => {
     const isolatedChild = spawn(process.execPath, ["--import", desktopPrelude, join(SERVER_DIR, "index.ts")], {
       cwd: ROOT,
       env: {
+        OMB_LOCALE: "en", // the assertions read the English source strings
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
         ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
         HOME: isolatedHome,
@@ -3565,6 +3568,7 @@ describe("harness HTTP API", () => {
     const isolatedChild = spawn(process.execPath, ["--import", desktopPrelude, join(SERVER_DIR, "index.ts")], {
       cwd: ROOT,
       env: {
+        OMB_LOCALE: "en", // the assertions read the English source strings
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
         ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
         HOME: isolatedHome,

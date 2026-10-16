@@ -18,6 +18,7 @@ import { writeFileAtomic } from "./atomic.ts";
 import { getOrCreateChannel, mirrorExchange, type CommsBus } from "./comms-visibility.ts";
 import { DATA_DIR } from "./config.ts";
 import { newId } from "./contracts.ts";
+import { t, tn } from "../shared/i18n.ts";
 import { requestPeerApproval, type ApprovalBus } from "./peer-approval.ts";
 import { sectionKey, type BotRecord, type GroupRecord } from "./store.ts";
 
@@ -274,7 +275,9 @@ export function queueDelegation(
   list.push({ ...item, id, attempts: 0 });
   pendingDelegations.set(sourceThreadId, list);
   savePending();
-  const label = `Delegated to @${target.name}${item.reason ? `: ${item.reason}` : ""}`;
+  const label = item.reason
+    ? t("Delegated to @{name}: {reason}", { name: target.name, reason: item.reason })
+    : t("Delegated to @{name}", { name: target.name });
   bus.store.appendMessage(sourceThreadId, {
     role: "bot",
     kind: "activity",
@@ -335,7 +338,7 @@ export function drainDelegations(
           bus.store.appendMessage(threadId, {
             role: "bot",
             kind: "activity",
-            tool: { name: `error: delegation failed — ${why.slice(0, 120)}`, ok: false },
+            tool: { name: `error: ${t("delegation failed — {why}", { why: why.slice(0, 120) })}`, ok: false },
           });
         } catch (reportError) {
           console.error("delegation failed and could not be reported", reportError);
@@ -393,7 +396,14 @@ export function discardDelegations(bus: CommsBus, threadId: string): void {
   bus.store.appendMessage(threadId, {
     role: "bot",
     kind: "activity",
-    tool: { name: `${list.length} queued delegation${list.length > 1 ? "s" : ""} dropped — the turn did not finish`, ok: false },
+    tool: {
+      name: tn(
+        list.length,
+        "{count} queued delegation dropped — the turn did not finish",
+        "{count} queued delegations dropped — the turn did not finish",
+      ),
+      ok: false,
+    },
   });
 }
 
@@ -426,7 +436,7 @@ async function processOne(
     bus.store.appendMessage(sourceThreadId, {
       role: "bot",
       kind: "activity",
-      tool: { name: `error: delegation to ${item.toBotId} failed — no such bot`, ok: false },
+      tool: { name: `error: ${t("delegation to {botId} failed — no such bot", { botId: item.toBotId })}`, ok: false },
     });
     return "settled";
   }
@@ -442,7 +452,13 @@ async function processOne(
       bus.store.appendMessage(sourceThreadId, {
         role: "bot",
         kind: "activity",
-        tool: { name: `Delegation to @${target.name} waiting — they're busy (retry ${item.attempts}/${MAX_BUSY_ATTEMPTS} when they finish)` },
+        tool: {
+          name: t("Delegation to @{name} waiting — they're busy (retry {attempt}/{max} when they finish)", {
+            name: target.name,
+            attempt: item.attempts,
+            max: MAX_BUSY_ATTEMPTS,
+          }),
+        },
       });
       return "requeued";
     }
@@ -457,7 +473,13 @@ async function processOne(
     bus.store.appendMessage(sourceThreadId, {
       role: "bot",
       kind: "activity",
-      tool: { name: `Delegation to @${target.name} canceled — still busy after ${MAX_BUSY_ATTEMPTS} retries`, ok: false },
+      tool: {
+        name: t("Delegation to @{name} canceled — still busy after {max} retries", {
+          name: target.name,
+          max: MAX_BUSY_ATTEMPTS,
+        }),
+        ok: false,
+      },
     });
     return "settled";
   }
@@ -486,7 +508,7 @@ async function processOne(
       bus.store.appendMessage(sourceThreadId, {
         role: "bot",
         kind: "activity",
-        tool: { name: `Delegation to @${target.name} denied by user`, ok: false },
+        tool: { name: t("Delegation to @{name} denied by user", { name: target.name }), ok: false },
       });
       return "settled";
     }
@@ -509,7 +531,13 @@ async function processOne(
         bus.store.appendMessage(sourceThreadId, {
           role: "bot",
           kind: "activity",
-          tool: { name: `Delegation to @${current.name} waiting — they're busy (retry ${item.attempts}/${MAX_BUSY_ATTEMPTS} when they finish)` },
+          tool: {
+            name: t("Delegation to @{name} waiting — they're busy (retry {attempt}/{max} when they finish)", {
+              name: current.name,
+              attempt: item.attempts,
+              max: MAX_BUSY_ATTEMPTS,
+            }),
+          },
         });
         return "requeued";
       }
@@ -524,7 +552,13 @@ async function processOne(
       bus.store.appendMessage(sourceThreadId, {
         role: "bot",
         kind: "activity",
-        tool: { name: `Delegation to @${current.name} canceled — still busy after ${MAX_BUSY_ATTEMPTS} retries`, ok: false },
+        tool: {
+          name: t("Delegation to @{name} canceled — still busy after {max} retries", {
+            name: current.name,
+            max: MAX_BUSY_ATTEMPTS,
+          }),
+          ok: false,
+        },
       });
       return "settled";
     }
@@ -563,7 +597,10 @@ function dropIfSectionsChanged(
   bus.store.appendMessage(sourceThreadId, {
     role: "bot",
     kind: "activity",
-    tool: { name: `Delegation to @${target.name} canceled — bots now belong to different sections`, ok: false },
+    tool: {
+      name: t("Delegation to @{name} canceled — bots now belong to different sections", { name: target.name }),
+      ok: false,
+    },
   });
   return true;
 }

@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 
 import { newId } from "./contracts.ts";
+import { intlLocale, msg, t } from "../shared/i18n.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { parseJson, schemaIssue, type JsonObject, type JsonValue } from "./schema.ts";
 import {
@@ -32,18 +33,26 @@ const WEEKDAY_NUMBER = {
   saturday: 6,
 } as const;
 
-const WEEKDAY_LABEL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const WEEKDAY_LABEL = [
+  msg("Sunday"),
+  msg("Monday"),
+  msg("Tuesday"),
+  msg("Wednesday"),
+  msg("Thursday"),
+  msg("Friday"),
+  msg("Saturday"),
+];
 const RFC3339_WITH_OFFSET =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:Z|[+-](\d{2}):(\d{2}))$/i;
 const TIME = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 const ROUTINE_ID = /^[A-Za-z0-9_-]{1,128}$/;
 const ACTION_COPY = {
-  create: { title: "Schedule", detail: "Create routine" },
-  update: { title: "Update", detail: "Update routine" },
-  pause: { title: "Pause", detail: "Pause routine" },
-  resume: { title: "Resume", detail: "Resume routine" },
-  run_now: { title: "Run now", detail: "Run routine now" },
-  delete: { title: "Delete", detail: "Delete routine" },
+  create: { title: "Schedule", detail: msg("Create routine") },
+  update: { title: "Update", detail: msg("Update routine") },
+  pause: { title: "Pause", detail: msg("Pause routine") },
+  resume: { title: "Resume", detail: msg("Resume routine") },
+  run_now: { title: "Run now", detail: msg("Run routine now") },
+  delete: { title: "Delete", detail: msg("Delete routine") },
 } as const satisfies Record<RoutineRequestOperation["action"], { title: string; detail: string }>;
 const ROUTINE_REQUEST_FINGERPRINT_VERSION = 1 as const;
 const jsonObjectSchema = z.record(z.string(), z.custom<JsonValue>());
@@ -399,9 +408,9 @@ function nextForOperation(operation: RoutineRequestOperation, manager: RoutineMa
   return nextOccurrence(schedule, now);
 }
 
-function formatInstant(at: number, timeZone: string): string {
+function formatInstant(at: number, timeZone: string, locale = "en-US"): string {
   try {
-    return new Intl.DateTimeFormat("en-US", {
+    return new Intl.DateTimeFormat(locale, {
       timeZone,
       dateStyle: "medium",
       timeStyle: "short",
@@ -411,10 +420,32 @@ function formatInstant(at: number, timeZone: string): string {
   }
 }
 
-function scheduleText(schedule: RoutineRequestSchedule, timeZone: string): string {
-  if (schedule.type === "once") return `${formatInstant(schedule.at, timeZone)} (${timeZone})`;
-  const days = schedule.weekdays.map((day) => WEEKDAY_LABEL[day]).join(", ");
-  return `${days} at ${schedule.time} (${timeZone})`;
+/** English for the response the proposing agent reads; `localized` for the
+ * copy the person reads on the confirmation card. */
+function scheduleText(schedule: RoutineRequestSchedule, timeZone: string, localized = false): string {
+  if (!localized) {
+    if (schedule.type === "once") return `${formatInstant(schedule.at, timeZone)} (${timeZone})`;
+    const days = schedule.weekdays.map((day) => WEEKDAY_LABEL[day]).join(", ");
+    return `${days} at ${schedule.time} (${timeZone})`;
+  }
+  if (schedule.type === "once") return `${formatInstant(schedule.at, timeZone, intlLocale())} (${timeZone})`;
+  const days = schedule.weekdays
+    .map((day) => t(WEEKDAY_LABEL[day]!))
+    .join(intlLocale() === "zh-CN" ? "、" : ", ");
+  return t("{days} at {time} ({timeZone})", { days, time: schedule.time, timeZone });
+}
+
+function cardTitle(action: RoutineRequestOperation["action"], name: string, forBotName: string | undefined): string {
+  if (action === "create") {
+    return forBotName
+      ? t("Schedule “{name}” for @{bot}?", { name, bot: forBotName })
+      : t("Schedule “{name}”?", { name });
+  }
+  if (action === "update") return t("Update “{name}”?", { name });
+  if (action === "pause") return t("Pause “{name}”?", { name });
+  if (action === "resume") return t("Resume “{name}”?", { name });
+  if (action === "run_now") return t("Run now “{name}”?", { name });
+  return t("Delete “{name}”?", { name });
 }
 
 function effectiveDefinition(operation: RoutineRequestOperation, manager: RoutineManager): RoutineRequestDefinition | null {
@@ -442,33 +473,40 @@ function cardCopy(
   const actionLabel = actionCopy.title;
   const name = redactSecretsInText(definition?.name ?? "routine");
   const forBot = operation.action === "create" ? operation.forBot : undefined;
-  const forSuffix = forBot ? ` for @${redactSecretsInText(forBot.name)}` : "";
-  const title = `${actionLabel} “${name}”${forSuffix}?`;
+  const forBotName = forBot ? redactSecretsInText(forBot.name) : undefined;
+  const forSuffix = forBotName ? ` for @${forBotName}` : "";
+  // The summary goes back to the proposing agent and stays in English; the
+  // title and detail are what the person reads on the card.
+  const agentTitle = `${actionLabel} “${name}”${forSuffix}?`;
+  const title = cardTitle(operation.action, name, forBotName);
+  const actionLine = t("Action: {action}", { action: t(actionCopy.detail) });
   if (!definition) {
     return {
       title,
-      summary: title,
-      detail: `Action: ${actionCopy.detail}\nName: ${name}`,
+      summary: agentTitle,
+      detail: `${actionLine}\n${t("Name: {name}", { name })}`,
       nextRunAt: null,
       tool: "manage_routine",
     };
   }
   const nextRunAt = nextForOperation(operation, manager, now);
   const when = operation.action === "run_now" ? "Now" : scheduleText(definition.schedule, timeZone);
+  const shownWhen = operation.action === "run_now" ? t("Now") : scheduleText(definition.schedule, timeZone, true);
   const destination = definition.runOn === "cloud" ? "Cloud VM" : "This OpenMausBot setup";
+  const shownDestination = definition.runOn === "cloud" ? t("Cloud VM") : t("This OpenMausBot setup");
   const current = operation.action === "create"
     ? null
     : manager.listRoutines().find((routine) => routine.id === operation.routineId) ?? null;
   const remainsPaused = operation.action === "update" && current?.enabled === false;
   const nextDescription = nextRunAt !== null
-    ? formatInstant(nextRunAt, timeZone)
+    ? formatInstant(nextRunAt, timeZone, intlLocale())
     : remainsPaused
-      ? "None — this routine remains paused"
+      ? t("None — this routine remains paused")
       : operation.action === "pause"
-        ? "None — this routine will be paused"
+        ? t("None — this routine will be paused")
         : operation.action === "delete"
-          ? "None — this routine will be deleted"
-          : "None";
+          ? t("None — this routine will be deleted")
+          : t("None");
   const status = remainsPaused ? " · Remains paused" : "";
   // Existing routines may predate nested-card redaction. The approval still
   // shows every instruction, but credential-shaped values never travel back
@@ -478,15 +516,15 @@ function cardCopy(
     title,
     summary: `${actionLabel} “${name}”${forSuffix} · ${when} · ${destination} · ${definition.durationMinutes} min${status}`,
     detail: [
-      `Action: ${actionCopy.detail}`,
-      `Name: ${name}`,
-      ...(forBot ? [`For: @${redactSecretsInText(forBot.name)} — each run uses that bot's engine and permissions`] : []),
-      `Schedule: ${when}`,
-      `Next run: ${nextDescription}`,
-      `Runs on: ${destination}`,
-      `Maximum duration: ${definition.durationMinutes} minutes`,
+      actionLine,
+      t("Name: {name}", { name }),
+      ...(forBotName ? [t("For: @{bot} — each run uses that bot's engine and permissions", { bot: forBotName })] : []),
+      t("Schedule: {when}", { when: shownWhen }),
+      t("Next run: {next}", { next: nextDescription }),
+      t("Runs on: {destination}", { destination: shownDestination }),
+      t("Maximum duration: {minutes} minutes", { minutes: definition.durationMinutes }),
       "",
-      "Instructions:",
+      t("Instructions:"),
       visibleInstructions,
     ].join("\n"),
     nextRunAt,
@@ -553,10 +591,10 @@ function verifyManageSnapshot(
   botId: string,
 ): Routine {
   const current = ownedRoutine(manager, operation.routineId, botId);
-  if (!current) throw new RoutineRequestError("That routine no longer exists", 404);
+  if (!current) throw new RoutineRequestError(msg("That routine no longer exists"), 404);
   if (current.updatedAt !== operation.expectedUpdatedAt) {
     throw new RoutineRequestError(
-      "That routine changed after this confirmation card was prepared. Ask the bot to review it and propose the action again.",
+      msg("That routine changed after this confirmation card was prepared. Ask the bot to review it and propose the action again."),
       409,
     );
   }
@@ -585,13 +623,13 @@ function revalidateOperation(operation: RoutineRequestOperation, manager: Routin
       ? operation.changes.schedule
       : undefined;
   if (schedule?.type === "once" && schedule.at <= now) {
-    throw new RoutineRequestError("That one-time schedule is now in the past. Ask the bot to propose a new time.", 409);
+    throw new RoutineRequestError(msg("That one-time schedule is now in the past. Ask the bot to propose a new time."), 409);
   }
   if (operation.action === "resume") {
-    if (!current) throw new RoutineRequestError("That routine no longer exists", 404);
+    if (!current) throw new RoutineRequestError(msg("That routine no longer exists"), 404);
     if (nextOccurrence(current.schedule, now) === null) {
       throw new RoutineRequestError(
-        "That one-time routine's scheduled time has passed. Update it to a new future time before resuming.",
+        msg("That one-time routine's scheduled time has passed. Update it to a new future time before resuming."),
         409,
       );
     }
@@ -718,7 +756,7 @@ export class RoutineRequestService {
       return {
         claimed: true,
         state: "invalid",
-        error: "Routine confirmations must be confirmed or cancelled",
+        error: t("Routine confirmations must be confirmed or cancelled"),
         status: 400,
       };
     }
@@ -748,7 +786,12 @@ export class RoutineRequestService {
         this.store.patchMessage(args.threadId, message.id, { card: { ...card, answered: "deny", held: undefined } });
         return { claimed: true, state: "denied" };
       }
-      return { claimed: true, state: "invalid", error: "This routine request id does not match its confirmation card", status: 400 };
+      return {
+        claimed: true,
+        state: "invalid",
+        error: t("This routine request id does not match its confirmation card"),
+        status: 400,
+      };
     }
     if (payload.botId !== args.botId || payload.threadId !== args.threadId) {
       const recovered = this.settleCommittedReceipt(args, message.id, card);
@@ -757,7 +800,12 @@ export class RoutineRequestService {
         this.store.patchMessage(args.threadId, message.id, { card: { ...card, answered: "deny", held: undefined } });
         return { claimed: true, state: "denied" };
       }
-      return { claimed: true, state: "invalid", error: "This routine request belongs to another conversation", status: 403 };
+      return {
+        claimed: true,
+        state: "invalid",
+        error: t("This routine request belongs to another conversation"),
+        status: 403,
+      };
     }
     if (card.answered) {
       this.forgetSettledReceipt(payload, message.id);
@@ -776,7 +824,7 @@ export class RoutineRequestService {
           receipt.fingerprintVersion !== ROUTINE_REQUEST_FINGERPRINT_VERSION ||
           receipt.fingerprint !== fingerprint
         ) {
-          throw new RoutineRequestError("This routine request does not match its durable commit receipt", 409);
+          throw new RoutineRequestError(msg("This routine request does not match its durable commit receipt"), 409);
         }
         return this.settleApplied(
           args.threadId,
@@ -800,7 +848,9 @@ export class RoutineRequestService {
       return this.settleApplied(args.threadId, message.id, card, payload, resultId);
     } catch (error) {
       const status = error instanceof RoutineRequestError ? error.status : 400;
-      const detail = error instanceof Error ? error.message : String(error);
+      // Shown on the card and in the app; sources are declared with msg()
+      // where they are thrown, so known refusals read in the app's language.
+      const detail = t(error instanceof Error ? error.message : String(error));
       this.store.patchMessage(args.threadId, message.id, {
         card: { ...card, held: redactSecretsInText(detail).slice(0, 500) },
       });
@@ -829,7 +879,7 @@ export class RoutineRequestService {
     const settled = this.store.patchMessage(threadId, messageId, {
       card: { ...card, answered: "allow", held: undefined, routineRequest: applied },
     });
-    if (!settled) throw new RoutineRequestError("This routine confirmation card is no longer available", 409);
+    if (!settled) throw new RoutineRequestError(msg("This routine confirmation card is no longer available"), 409);
     this.forgetSettledReceipt(payload, messageId);
     return { claimed: true, state: "applied", action: payload.operation.action, resultId };
   }
@@ -849,7 +899,7 @@ export class RoutineRequestService {
       return {
         claimed: true,
         state: "invalid",
-        error: "This committed routine request belongs to another conversation",
+        error: t("This committed routine request belongs to another conversation"),
         status: 403,
       };
     }
@@ -860,7 +910,7 @@ export class RoutineRequestService {
       return {
         claimed: true,
         state: "invalid",
-        error: "This routine confirmation card is no longer available",
+        error: t("This routine confirmation card is no longer available"),
         status: 409,
       };
     }
@@ -907,7 +957,7 @@ export class RoutineRequestService {
           fingerprintVersion: ROUTINE_REQUEST_FINGERPRINT_VERSION,
           fingerprint,
         });
-        if (!updated) throw new RoutineRequestError("That routine no longer exists", 404);
+        if (!updated) throw new RoutineRequestError(msg("That routine no longer exists"), 404);
         return updated.id;
       }
       case "pause":
@@ -922,7 +972,7 @@ export class RoutineRequestService {
           fingerprintVersion: ROUTINE_REQUEST_FINGERPRINT_VERSION,
           fingerprint,
         });
-        if (!updated) throw new RoutineRequestError("That routine no longer exists", 404);
+        if (!updated) throw new RoutineRequestError(msg("That routine no longer exists"), 404);
         return updated.id;
       }
       case "run_now": {
@@ -936,7 +986,7 @@ export class RoutineRequestService {
           fingerprintVersion: ROUTINE_REQUEST_FINGERPRINT_VERSION,
           fingerprint,
         });
-        if (!run) throw new RoutineRequestError("That routine no longer exists", 404);
+        if (!run) throw new RoutineRequestError(msg("That routine no longer exists"), 404);
         return run.id;
       }
       case "delete":
@@ -950,11 +1000,11 @@ export class RoutineRequestService {
           fingerprintVersion: ROUTINE_REQUEST_FINGERPRINT_VERSION,
           fingerprint,
         })) {
-          throw new RoutineRequestError("That routine no longer exists", 404);
+          throw new RoutineRequestError(msg("That routine no longer exists"), 404);
         }
         return operation.routineId;
       default:
-        throw new RoutineRequestError("Unsupported persisted routine action");
+        throw new RoutineRequestError(msg("Unsupported persisted routine action"));
     }
   }
 }

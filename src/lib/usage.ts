@@ -1,6 +1,7 @@
 // Turning banked token/cost figures into something a header chip can show.
 // Pure, so the numbers can be tested without the components.
 import type { Bot, TaskUsage } from "@/state/store";
+import { t, tn } from "@/lib/i18n";
 
 export const EMPTY_USAGE: TaskUsage = { input: 0, output: 0, costUsd: null, turns: 0 };
 
@@ -40,7 +41,7 @@ const trim = (x: number) => (x >= 100 ? Math.round(x).toString() : x.toFixed(1).
 export function formatTaskTokens(total: number): string | null {
   if (!Number.isFinite(total) || total < 1) return null;
   const n = Math.trunc(total);
-  if (n < 1000) return n === 1 ? "1 token" : `${n} tokens`;
+  if (n < 1000) return tn(n, "{count} token", "{count} tokens");
   const kTenths = Math.round(n / 100);
   if (kTenths < 10_000) return `${formatTenths(kTenths)}k`;
   return `${formatTenths(Math.round(n / 100_000))}M`;
@@ -74,22 +75,25 @@ export function cachedInput(u: TaskUsage): number {
  * "was that really 100k?" question gets answered. */
 export function usageDetail(u: TaskUsage): string {
   const cached = cachedInput(u);
-  const input = cached > 0 ? `${formatTokens(u.input)} in (${formatTokens(cached)} cached)` : `${formatTokens(u.input)} in`;
-  return `${input} · ${formatTokens(u.output)} out`;
+  const input =
+    cached > 0
+      ? t("{input} in ({cached} cached)", { input: formatTokens(u.input), cached: formatTokens(cached) })
+      : t("{input} in", { input: formatTokens(u.input) });
+  return `${input} · ${t("{output} out", { output: formatTokens(u.output) })}`;
 }
 
 /** The chip text: tokens, and cost when known. Empty string when nothing
  * has been spent — a fresh task shows no chip. */
 export function usageChip(u: TaskUsage): string {
   if (u.turns === 0 && u.input + u.output === 0) return "";
-  const parts = [`${formatTokens(u.input + u.output)} tok`];
+  const parts = [t("{tokens} tok", { tokens: formatTokens(u.input + u.output) })];
   if (hasFiniteCost(u.costUsd)) parts.push(formatUsd(u.costUsd));
   return parts.join(" · ");
 }
 
 /** How to caption a cost figure given how the engine is billed. */
 export function costCaption(billing: "metered" | "subscription" | undefined): string {
-  if (billing === "subscription") return "equivalent — on your subscription, not billed";
-  if (billing === "metered") return "billed to your API key";
-  return "as reported by the engine";
+  if (billing === "subscription") return t("equivalent — on your subscription, not billed");
+  if (billing === "metered") return t("billed to your API key");
+  return t("as reported by the engine");
 }

@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { t } from "./i18n.cjs";
 
 const execFileAsync = promisify(execFile);
 const STATUS_TTL_MS = 750;
@@ -151,19 +152,19 @@ export function createAndroidDeviceController(options = {}) {
   };
 
   const readyDevice = async (serial) => {
-    if (typeof serial !== "string" || !serial) throw new Error("An Android device is required");
+    if (typeof serial !== "string" || !serial) throw new Error(t("An Android device is required"));
     const current = await status({ fresh: true });
     const device = current.devices.find((candidate) => candidate.serial === serial);
-    if (!device) throw new Error("That USB Android device is no longer connected");
+    if (!device) throw new Error(t("That USB Android device is no longer connected"));
     if (device.state !== "device") {
       throw new Error(
         device.state === "unauthorized"
-          ? "Unlock the Android phone and allow USB debugging"
-          : `The Android device is ${device.state}`,
+          ? t("Unlock the Android phone and allow USB debugging")
+          : t("The Android device is {state}", { state: device.state }),
       );
     }
     const binary = resolveBinary();
-    if (!binary) throw new Error("Android platform tools are unavailable");
+    if (!binary) throw new Error(t("Android platform tools are unavailable"));
     return { binary, device };
   };
 
@@ -175,21 +176,21 @@ export function createAndroidDeviceController(options = {}) {
     });
     const png = Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout);
     if (png.length < 1_024 || !png.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)) {
-      throw new Error("The Android device returned an invalid screen capture");
+      throw new Error(t("The Android device returned an invalid screen capture"));
     }
     return { serial, dataUrl: `data:image/png;base64,${png.toString("base64")}` };
   };
 
   const input = async (serial, payload) => {
     const { binary } = await readyDevice(serial);
-    if (!payload || typeof payload !== "object") throw new Error("Invalid Android input");
+    if (!payload || typeof payload !== "object") throw new Error(t("Invalid Android input"));
     const width = safeDimension(payload.width);
     const height = safeDimension(payload.height);
     const point = (x, y) => {
       const unitX = safeUnit(x);
       const unitY = safeUnit(y);
       if (unitX === null || unitY === null || width === null || height === null) {
-        throw new Error("Invalid Android coordinates");
+        throw new Error(t("Invalid Android coordinates"));
       }
       return [Math.round(unitX * width), Math.round(unitY * height)];
     };
@@ -215,7 +216,7 @@ export function createAndroidDeviceController(options = {}) {
       ];
     } else if (payload.type === "key") {
       const keycode = KEYCODES.get(String(payload.key ?? "").toLowerCase());
-      if (!keycode) throw new Error("Unsupported Android key");
+      if (!keycode) throw new Error(t("Unsupported Android key"));
       command = ["input", "keyevent", keycode];
     } else if (payload.type === "text") {
       if (
@@ -224,18 +225,18 @@ export function createAndroidDeviceController(options = {}) {
         payload.text.length > 64 ||
         !/^[A-Za-z0-9 _.,@-]+$/.test(payload.text)
       ) {
-        throw new Error("Android text currently supports letters, numbers, spaces, and basic punctuation");
+        throw new Error(t("Android text currently supports letters, numbers, spaces, and basic punctuation"));
       }
       command = ["input", "text", payload.text.replaceAll(" ", "%s")];
     } else {
-      throw new Error("Unsupported Android input");
+      throw new Error(t("Unsupported Android input"));
     }
     await invoke(binary, ["-s", serial, "shell", ...command]);
   };
 
   const registerIpc = (ipcMain) => {
     const protect = (handler) => async (event, ...args) => {
-      if (!trustedMainFrame(event)) throw new Error("Android device access is limited to the main app");
+      if (!trustedMainFrame(event)) throw new Error(t("Android device access is limited to the main app"));
       return handler(...args);
     };
     ipcMain.handle("android-device:status", protect(() => status({ fresh: true })));

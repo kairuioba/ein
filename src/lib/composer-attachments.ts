@@ -1,6 +1,9 @@
 // What is attached to the next message: text too long for the input or a
 // file dropped onto the window. Chips fold back into a normal prompt on
 // send, so every driver receives the same message shape.
+// Relative .ts path: server/index.ts loads this module directly under Node.
+import { t } from "../../shared/i18n.ts";
+
 export type PasteAttachment = {
   kind: "paste";
   id: string;
@@ -100,7 +103,7 @@ export function isImageFile(file: { type: string; size: number }): boolean {
  * with the path; the prompt references that path so every CLI can open it. */
 export async function imageAttachmentFromFile(file: File): Promise<ImageAttachment | null> {
   if (!isImageFile(file)) return null;
-  if (file.size > IMAGE_MAX_BYTES) throw Object.assign(new Error(`${file.name} exceeds 10 MB`), { status: 413 });
+  if (file.size > IMAGE_MAX_BYTES) throw Object.assign(new Error(t("{name} exceeds 10 MB", { name: file.name })), { status: 413 });
   const bytes = new Uint8Array(await file.arrayBuffer());
   const response = await fetch("/api/attachments", {
     method: "POST",
@@ -109,10 +112,10 @@ export async function imageAttachmentFromFile(file: File): Promise<ImageAttachme
   });
   if (!response.ok) {
     const detail = (await response.json().catch(() => ({ error: response.statusText }))) as { error?: string };
-    throw Object.assign(new Error(detail.error ?? "upload failed"), { status: response.status });
+    throw Object.assign(new Error(detail.error ?? t("upload failed")), { status: response.status });
   }
   const saved = (await response.json()) as { path: string; mime: string; bytes: number };
-  return { kind: "image", id: newId(), path: saved.path, name: file.name || "pasted image", size: saved.bytes, mime: saved.mime };
+  return { kind: "image", id: newId(), path: saved.path, name: file.name || t("pasted image"), size: saved.bytes, mime: saved.mime };
 }
 
 export function pasteAttachment(text: string): PasteAttachment {
@@ -183,7 +186,7 @@ export function byteLength(text: string): number {
 
 /** "12 lines, 3.4 KB" — what the chip says under the preview. */
 export function pasteSummary(a: { lines: number; size: number }): string {
-  return `${a.lines} lines, ${formatSize(a.size)}`;
+  return t("{count} lines, {size}", { count: a.lines, size: formatSize(a.size) });
 }
 
 export function formatSize(bytes: number): string {
@@ -262,7 +265,7 @@ function transcriptFileName(path: string, suppliedName?: string): string {
   }).join("").replace(/\s+/g, " ").trim();
   const safe = clean(attachmentBasename(decoded));
   const fallback = clean(attachmentBasename(path));
-  return Array.from(safe || fallback || "Attached file").slice(0, 180).join("");
+  return Array.from(safe || fallback || t("Attached file")).slice(0, 180).join("");
 }
 
 /** Split a stored user message into its display text and attachments for
@@ -337,7 +340,7 @@ export async function intakeFiles<T extends DroppedFile & { type: string }>(
         const attachment = await uploadImage(file);
         if (attachment) attachments.push(attachment);
       } catch (err) {
-        imageErrors.push(`${file.name}: ${err instanceof Error ? err.message : "upload failed"}`);
+        imageErrors.push(`${file.name}: ${err instanceof Error ? err.message : t("upload failed")}`);
       }
       continue;
     }
@@ -346,7 +349,9 @@ export async function intakeFiles<T extends DroppedFile & { type: string }>(
     rejectedNames.push(...result.rejectedNames);
   }
   const pathless = rejectedNames.length
-    ? `${rejectedNames.join(", ")} — that file has no path on disk. Save it first, then attach it from Finder.`
+    ? t("{names} — that file has no path on disk. Save it first, then attach it from Finder.", {
+        names: rejectedNames.join(", "),
+      })
     : null;
   const failed = imageErrors.length ? imageErrors.join("; ") : null;
   return {

@@ -22,6 +22,7 @@ import { SkillRecorderPage } from "@/components/SkillRecorderPage";
 import { TeamMapPage } from "@/components/TeamMapPage";
 import { heldComputerControlBotIds } from "@/lib/computer-control";
 import { skillRecorderEnabled } from "@/lib/feature-flags";
+import { t, tRich } from "@/lib/i18n";
 
 function Shell() {
   const { state, dispatch } = useStore();
@@ -87,6 +88,17 @@ function Shell() {
   useEffect(() => {
     window.ogb?.setUnreadCount?.(unreadCount);
   }, [unreadCount]);
+
+  // Menu-bar items that live in the page (electron/app-menu.mjs).
+  useEffect(
+    () =>
+      window.ogb?.onMenuCommand?.((name) => {
+        if (name === "new-bot") dispatch({ type: "newBot" });
+        else if (name === "open-settings") dispatch({ type: "toggleAppSettings", open: true });
+        else if (name === "open-workbench") dispatch({ type: "showTeamMap" });
+      }),
+    [dispatch],
+  );
 
   // Re-assert every authoritative positive hold in the process that owns the
   // native browser. This covers initial hydration, SSE updates from another
@@ -214,7 +226,7 @@ function Shell() {
       {!calendarFocus && <button
         type="button"
         ref={menuButtonRef}
-        aria-label="Open bot list"
+        aria-label={t("Open bot list")}
         aria-expanded={drawerOpen}
         onClick={() => setDrawerOpen(true)}
         className="absolute left-3 top-3 z-30 rounded-md p-1.5 text-ink-secondary hover:bg-raised hover:text-ink md:hidden"
@@ -260,11 +272,13 @@ function Shell() {
         <main className="flex h-full min-w-0 flex-1 flex-col items-center justify-center gap-3 bg-app text-ink-secondary">
           <Loader2 size={20} className="animate-spin" />
           <div className="text-[14px]">
-            {state.connected ? "No bots yet" : "Connecting to the bot server…"}
+            {state.connected ? t("No bots yet") : t("Connecting to the bot server…")}
           </div>
           {!state.connected && (
             <div className="text-[12px]">
-              Start it with <code className="rounded bg-raised px-1.5 py-0.5">pnpm dev:server</code>
+              {tRich("Start it with <code>pnpm dev:server</code>", {
+                code: (children) => <code className="rounded bg-raised px-1.5 py-0.5">{children}</code>,
+              })}
             </div>
           )}
         </main>

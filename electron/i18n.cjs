@@ -43,7 +43,8 @@ function interpolate(text, params) {
 }
 
 function t(source, params) {
-  const localized = current === "en" ? source : (dictionary[source] ?? source);
+  // own keys only: "constructor" or "toString" must not resolve to Object.prototype
+  const localized = current !== "en" && Object.hasOwn(dictionary, source) ? dictionary[source] : source;
   return params ? interpolate(localized, params) : localized;
 }
 

@@ -9,19 +9,20 @@ import {
 } from "lucide-react";
 
 import { cn } from "@/lib/cn";
+import { msg, t } from "@/lib/i18n";
 import type { RoutineRunCardData } from "../../shared/routine-run";
 import type { Message } from "@/state/store";
 
 const DETAIL_LIMIT = 280;
 
 const COPY = {
-  queued: { label: "Queued", tone: "text-ink-secondary", border: "border-hairline/45" },
-  running: { label: "Running", tone: "text-accent", border: "border-accent/30" },
-  waiting: { label: "Needs your input", tone: "text-warning", border: "border-warning/35" },
-  completed: { label: "Completed", tone: "text-success", border: "border-success/30" },
-  failed: { label: "Failed", tone: "text-danger", border: "border-danger/35" },
-  cancelled: { label: "Cancelled", tone: "text-ink-secondary", border: "border-hairline/45" },
-  missed: { label: "Missed", tone: "text-danger", border: "border-danger/35" },
+  queued: { label: msg("Queued"), tone: "text-ink-secondary", border: "border-hairline/45" },
+  running: { label: msg("Running"), tone: "text-accent", border: "border-accent/30" },
+  waiting: { label: msg("Needs your input"), tone: "text-warning", border: "border-warning/35" },
+  completed: { label: msg("Completed"), tone: "text-success", border: "border-success/30" },
+  failed: { label: msg("Failed"), tone: "text-danger", border: "border-danger/35" },
+  cancelled: { label: msg("Cancelled"), tone: "text-ink-secondary", border: "border-hairline/45" },
+  missed: { label: msg("Missed"), tone: "text-danger", border: "border-danger/35" },
 } satisfies Record<
   RoutineRunCardData["status"],
   { label: string; tone: string; border: string }
@@ -89,11 +90,11 @@ export function RoutineRunCard({
       ? (run.error ?? run.summary)
       : (run.summary ?? run.error),
   );
-  const actionLabel = run.status === "waiting" ? "Review" : "Open run";
+  const actionLabel = run.status === "waiting" ? t("Review") : t("Open run");
 
   return (
     <section
-      aria-label={`${run.routineName} routine run: ${copy.label}`}
+      aria-label={t("{name} routine run: {status}", { name: run.routineName, status: t(copy.label) })}
       className={cn(
         "w-full max-w-[680px] rounded-2xl border bg-card px-3.5 py-3 shadow-sm",
         copy.border,
@@ -107,7 +108,7 @@ export function RoutineRunCard({
           <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
             <h3 className="truncate text-[13.5px] font-semibold text-ink">{run.routineName}</h3>
             <span aria-live="polite" className={cn("text-[11.5px] font-medium", copy.tone)}>
-              {copy.label}
+              {t(copy.label)}
             </span>
           </div>
           {detail && <p className="mt-1 line-clamp-2 text-[12.5px] leading-relaxed text-ink-secondary">{detail}</p>}
@@ -116,7 +117,7 @@ export function RoutineRunCard({
           <button
             type="button"
             onClick={onOpen}
-            aria-label={`${actionLabel} for ${run.routineName}`}
+            aria-label={t("{action} for {name}", { action: actionLabel, name: run.routineName })}
             className={cn(
               "flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11.5px] font-medium transition-colors",
               run.status === "waiting"

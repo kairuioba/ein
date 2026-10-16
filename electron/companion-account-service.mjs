@@ -8,6 +8,7 @@ import {
   withManagedCompanionTunnelAccess,
   withoutManagedCompanionTunnelAccess,
 } from "./managed-companion-tunnel.mjs";
+import { msg, t } from "./i18n.cjs";
 
 export const DEFAULT_COMPANION_CONTROL_PLANE_URL = "https://accounts.openmausbot.com";
 
@@ -124,33 +125,42 @@ function withAuthenticatedAccount(
   return next;
 }
 
+// English on purpose: thrown copies are matched by text in the renderer
+// (src/lib/phone-setup.ts PUBLIC_ACCOUNT_MESSAGES). Translated only where they
+// become displayed account state (see `localize` below).
 const FRIENDLY_MESSAGES = Object.freeze({
-  invalid_email: "Enter a valid email address.",
-  invalid_request: "The secure connection request was not accepted. Check the details and try again.",
-  invalid_otp: "That code is not valid. Check the email and try again.",
-  otp_expired: "That code expired. Email yourself a new one.",
-  unauthorized: "Your sign-in expired. Email yourself a new code to reconnect.",
-  forbidden: "The secure connection request was not allowed. Try signing in again.",
-  signed_out: "Your sign-in expired. Email yourself a new code to reconnect.",
-  network_unavailable: "OpenMausBot could not reach its secure connection service. Check your internet and try again.",
-  rate_limited: "Too many attempts were made. Wait a little, then try again.",
-  credential_rotation_rate_limited: "This computer was reconnected too often. Wait a little, then try again.",
-  installation_limit_reached: "This account has reached its computer limit. Remove an old computer and try again.",
-  installation_exists: "This computer is already connected. Try again to recover it.",
-  endpoint_busy: "The secure connection is still being prepared. Try again in a moment.",
-  endpoint_unavailable: "The secure connection service could not finish setup. Local pairing still works; try again shortly.",
-  endpoint_cleanup_pending: "The secure connection is still being removed. Try signing out again shortly.",
-  control_plane_unavailable: "Secure access is not available right now. Local pairing still works.",
-  internal_error: "The secure connection service had a problem. Local pairing still works; try again.",
-  invalid_response: "The secure connection service returned an unexpected response. Try again.",
-  request_failed: "The secure connection request could not be completed. Local pairing still works; try again.",
+  invalid_email: msg("Enter a valid email address."),
+  invalid_request: msg("The secure connection request was not accepted. Check the details and try again."),
+  invalid_otp: msg("That code is not valid. Check the email and try again."),
+  otp_expired: msg("That code expired. Email yourself a new one."),
+  unauthorized: msg("Your sign-in expired. Email yourself a new code to reconnect."),
+  forbidden: msg("The secure connection request was not allowed. Try signing in again."),
+  signed_out: msg("Your sign-in expired. Email yourself a new code to reconnect."),
+  network_unavailable: msg("OpenMausBot could not reach its secure connection service. Check your internet and try again."),
+  rate_limited: msg("Too many attempts were made. Wait a little, then try again."),
+  credential_rotation_rate_limited: msg("This computer was reconnected too often. Wait a little, then try again."),
+  installation_limit_reached: msg("This account has reached its computer limit. Remove an old computer and try again."),
+  installation_exists: msg("This computer is already connected. Try again to recover it."),
+  endpoint_busy: msg("The secure connection is still being prepared. Try again in a moment."),
+  endpoint_unavailable: msg("The secure connection service could not finish setup. Local pairing still works; try again shortly."),
+  endpoint_cleanup_pending: msg("The secure connection is still being removed. Try signing out again shortly."),
+  control_plane_unavailable: msg("Secure access is not available right now. Local pairing still works."),
+  internal_error: msg("The secure connection service had a problem. Local pairing still works; try again."),
+  invalid_response: msg("The secure connection service returned an unexpected response. Try again."),
+  request_failed: msg("The secure connection request could not be completed. Local pairing still works; try again."),
 });
 
-export function friendlyCompanionAccountError(error) {
+export function friendlyCompanionAccountError(error, { localize = false } = {}) {
   const code = error instanceof ControlPlaneError ? error.code : "";
   const message = FRIENDLY_MESSAGES[code] ?? FRIENDLY_MESSAGES.request_failed;
-  const reference = error instanceof ControlPlaneError && error.requestId
-    ? ` Reference: ${error.requestId}.`
+  const requestId = error instanceof ControlPlaneError && error.requestId ? error.requestId : "";
+  if (localize) {
+    return requestId
+      ? t("{message} Reference: {requestId}.", { message: t(message), requestId })
+      : t(message);
+  }
+  const reference = requestId
+    ? ` Reference: ${requestId}.`
     : "";
   return `${message}${reference}`;
 }
@@ -250,7 +260,7 @@ export function createCompanionAccountService({
       return publicState({
         available: false,
         status: "signed-out",
-        message: FRIENDLY_MESSAGES.control_plane_unavailable,
+        message: t(FRIENDLY_MESSAGES.control_plane_unavailable),
       });
     }
     const document = credentials();
@@ -263,7 +273,7 @@ export function createCompanionAccountService({
         status: account ? "error" : "signed-out",
         email: account?.email,
         endpoint: persistedAccess?.endpoint,
-        message: FRIENDLY_MESSAGES.control_plane_unavailable,
+        message: t(FRIENDLY_MESSAGES.control_plane_unavailable),
       });
     }
     if (
@@ -284,7 +294,7 @@ export function createCompanionAccountService({
         available,
         status: "error",
         email: account.email,
-        message: "This computer still needs a secure address. Try again; local pairing continues to work.",
+        message: t("This computer still needs a secure address. Try again; local pairing continues to work."),
       });
     }
     const connection = managedConnectionState?.() ?? {};
@@ -295,7 +305,7 @@ export function createCompanionAccountService({
           status: "connecting",
           email: account.email,
           endpoint: access.endpoint,
-          message: "The secure connection is starting. Local pairing remains available.",
+          message: t("The secure connection is starting. Local pairing remains available."),
         });
       }
       if (["unavailable", "error"].includes(connection.status)) {
@@ -304,7 +314,7 @@ export function createCompanionAccountService({
           status: "error",
           email: account.email,
           endpoint: access.endpoint,
-          message: "The secure connection needs attention. Local pairing still works.",
+          message: t("The secure connection needs attention. Local pairing still works."),
         });
       }
     }
@@ -449,7 +459,7 @@ export function createCompanionAccountService({
         status: "error",
         email: user.email,
         endpoint: endpoint.endpoint.url,
-        message: "The address is ready, but this app could not start its secure connection. Local pairing still works.",
+        message: t("The address is ready, but this app could not start its secure connection. Local pairing still works."),
       };
     }
     return settledState();
@@ -467,7 +477,7 @@ export function createCompanionAccountService({
           ? "signed-out"
           : "error",
       email,
-      message,
+      message: friendlyCompanionAccountError(error, { localize: true }),
     };
     return message;
   };

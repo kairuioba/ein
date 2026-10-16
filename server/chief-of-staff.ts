@@ -26,11 +26,21 @@ const sectionKey = (section?: string): string => section?.trim() || "";
 /** Dynamic system context for a section's Chief of Staff.
  * It names the current team on every turn, while list_bots remains the
  * authoritative tool for IDs and live availability at delegation time. */
+export interface ChiefDispatchOptions {
+  /** submit_plan is mounted for this Chief. */
+  enabled: boolean;
+  /** The dispatcher may create specialists when nobody fits. */
+  autoCreate: boolean;
+  maxSubtasks: number;
+}
+
 export function chiefOfStaffSystemPrompt(
   chiefId: string,
   bots: ChiefTeamMember[],
   canDelegate: boolean,
   trustedOpenMausStatus = "",
+  dispatch?: ChiefDispatchOptions,
+  languageInstruction = "",
 ): string {
   const chief = bots.find((bot) => bot.id === chiefId);
   const chiefSection = sectionKey(chief?.section);
@@ -63,13 +73,27 @@ export function chiefOfStaffSystemPrompt(
       ].join(" ")
     : "Your current engine cannot contact teammates. Be honest about that limitation and ask the user to choose a delegation-compatible engine before promising coordinated work.";
 
+  const planning = canDelegate && dispatch?.enabled
+    ? [
+        "AUTOMATIC DISPATCH: whenever a request contains two or more distinct pieces of work, or would benefit from different specialists, do not do it all yourself and do not send several delegate_bot calls — call submit_plan ONCE with the whole plan.",
+        "Break the goal into concrete subtasks with a self-contained brief each (the specialist cannot see this conversation), the role it needs, its needs and difficulty (these pick the model), and depends_on for any subtask that needs another's result.",
+        dispatch.autoCreate
+          ? "OpenMausBot assigns each subtask to the best-fitting teammate and creates a specialist with a recommended model when nobody fits, so describe roles precisely instead of creating bots yourself."
+          : "Creating specialists is turned off: name an assignee from list_bots for any subtask your current team cannot obviously cover.",
+        `Keep a plan to at most ${dispatch.maxSubtasks} subtasks. Handle a small, single-step request yourself without a plan.`,
+        "After submit_plan succeeds, summarize the plan for the user in a few lines and end your turn. The subtasks run in the background; when they finish you will receive their results and must reply with one consolidated deliverable.",
+      ].join(" ")
+    : "";
+
   return [
     `You are the Chief of Staff for the ${sectionName} section. You are the user's primary contact for this section's team of bots.`,
     "Own the outcome: understand the request, decide what to handle yourself, coordinate the right specialists when useful, and return one concise consolidated answer.",
     "Do not delegate trivial work merely to appear busy. Never invent a teammate's progress or result. Normal permission and approval rules still apply.",
     delegation,
+    planning,
     `Current ${sectionName} section team:`,
     roster,
     trustedOpenMausStatus,
+    languageInstruction,
   ].filter(Boolean).join("\n");
 }

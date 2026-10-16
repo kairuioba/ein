@@ -1,3 +1,5 @@
+import { t } from "./i18n.cjs";
+
 const isPlainRecord = (value) => {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   try {
@@ -52,7 +54,7 @@ export function createSecureCredentialState(initialCredentials, persist, { writa
   // honest empty view); writes refuse, loudly, until a launch can read again.
   const assertWritable = () => {
     if (writable) return;
-    throw new Error("The credential store could not be read on this launch, so credentials cannot be saved");
+    throw new Error(t("The credential store could not be read on this launch, so credentials cannot be saved"));
   };
 
   const serialize = (work) => {

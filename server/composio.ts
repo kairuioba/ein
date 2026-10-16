@@ -4,6 +4,7 @@ import { saveConfig, type AppConfig } from "./config.ts";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { SPAWNED_PROXIES } from "./proxy-paths.ts";
+import { msg, t } from "../shared/i18n.ts";
 
 const DEFAULT_BACKEND_ORIGIN = "https://backend.composio.dev";
 
@@ -292,10 +293,10 @@ function inputError(message: string, status = 400) {
 export function normalizeAccountAlias(value: string | null | undefined): string | undefined {
   if (value === undefined || value === null || value === "") return undefined;
   const parsed = z.string().safeParse(value);
-  if (!parsed.success) throw inputError("Account alias must be text");
+  if (!parsed.success) throw inputError(t("Account alias must be text"));
   const alias = parsed.data.trim();
   if (!printableAliasSchema.safeParse(alias).success) {
-    throw inputError("Account alias must be 1-64 printable characters");
+    throw inputError(t("Account alias must be 1-64 printable characters"));
   }
   return alias;
 }
@@ -367,8 +368,8 @@ export async function prepareProjectSession(
   knownAuthConfigs?: AuthConfigMap,
 ): Promise<{ apiKey: string; userId: string; sessionId: string }> {
   const trimmed = apiKey.trim();
-  if (!trimmed) throw new Error("Enter a Composio project API key");
-  if (!trimmed.startsWith("ak_")) throw new Error("Composio project API keys start with ak_");
+  if (!trimmed) throw new Error(t("Enter a Composio project API key"));
+  if (!trimmed.startsWith("ak_")) throw new Error(t("Composio project API keys start with ak_"));
 
   // The project's own auth configs must be named at creation — a Session
   // cannot be edited later — so they are read before deciding whether the
@@ -414,7 +415,7 @@ export async function prepareProjectSession(
     body: JSON.stringify(sessionRequest),
     signal: AbortSignal.timeout(30_000),
   });
-  if (!res.ok) throw new Error(await responseError(res, `Composio rejected this key (HTTP ${res.status})`));
+  if (!res.ok) throw new Error(await responseError(res, t("Composio rejected this key (HTTP {status})", { status: res.status })));
   const session = parseSessionResponse(sessionResponseSchema.parse(await res.json()));
   // If Composio does not echo the configs back, a later check would ask for
   // the same creation again — remember this attempt so it happens once.
@@ -684,7 +685,7 @@ export async function connectedServices(cfg: AppConfig): Promise<Record<string, 
       }]),
     );
   }
-  if (!cfg.composio?.apiKey) throw new Error("Connected apps are unavailable");
+  if (!cfg.composio?.apiKey) throw new Error(t("Connected apps are unavailable"));
   const session = await ensureProjectSession(cfg);
   const userId = session.config?.user_id ?? cfg.composio.userId;
   if (!userId) throw new Error("Composio Session returned no user ID");
@@ -826,13 +827,19 @@ export async function authorizeService(cfg: AppConfig, slug: string, requestedAl
   const serviceAccounts = accounts.filter((account) => account.toolkit?.slug?.toLowerCase() === slug.toLowerCase());
   const usableAccounts = serviceAccounts.filter((account) => /^(active|initiated|initializing|pending)$/i.test(account.status ?? ""));
   if (usableAccounts.length >= MULTI_ACCOUNT_CONFIG.max_accounts_per_toolkit) {
-    throw inputError(`${slug} already has the maximum of ${MULTI_ACCOUNT_CONFIG.max_accounts_per_toolkit} accounts`, 409);
+    throw inputError(
+      t("{app} already has the maximum of {max} accounts", {
+        app: slug,
+        max: MULTI_ACCOUNT_CONFIG.max_accounts_per_toolkit,
+      }),
+      409,
+    );
   }
   if (usableAccounts.length > 0 && !alias) {
-    throw inputError("Add an account alias so the existing connection is not replaced");
+    throw inputError(t("Add an account alias so the existing connection is not replaced"));
   }
   if (alias && serviceAccounts.some((account) => account.alias?.trim().toLowerCase() === alias.toLowerCase())) {
-    throw inputError(`Account alias "${alias}" is already in use for ${slug}`, 409);
+    throw inputError(t('Account alias "{alias}" is already in use for {app}', { alias, app: slug }), 409);
   }
   const linkRequest: AccountLinkRequest = { toolkit: slug };
   if (alias) linkRequest.alias = alias;
@@ -858,8 +865,10 @@ export async function authorizeService(cfg: AppConfig, slug: string, requestedAl
     const covered = Object.keys(authConfigs).some((key) => key.toLowerCase() === slugLower);
     if (!covered) {
       throw inputError(
-        `${slug} has no Composio-managed sign-in. In your Composio project, create an auth config for "${slug}" `
-          + "(Auth Configs → Create) with your own app credentials, then click Connect again.",
+        t(
+          '{app} has no Composio-managed sign-in. In your Composio project, create an auth config for "{app}" (Auth Configs → Create) with your own app credentials, then click Connect again.',
+          { app: slug },
+        ),
       );
     }
     const fresh = await recreateProjectSession(cfg, userId, authConfigs);
@@ -886,31 +895,36 @@ export interface ToolkitCard {
 // long marketplace tail. Logos resolve client-side:
 // logo → favicon(domain) → monogram.
 const CURATED: ToolkitCard[] = [
-  { slug: "slack", label: "Slack", blurb: "Post updates and read channels", domain: "slack.com", logo: null },
-  { slug: "github", label: "GitHub", blurb: "Issues, pull requests, and code", domain: "github.com", logo: null },
-  { slug: "gmail", label: "Gmail", blurb: "Read and send email", domain: "gmail.com", logo: null },
-  { slug: "googlecalendar", label: "Google Calendar", blurb: "Read and create events", domain: "calendar.google.com", logo: null },
-  { slug: "googlesheets", label: "Google Sheets", blurb: "Read and update spreadsheets", domain: "sheets.google.com", logo: null },
-  { slug: "googledocs", label: "Google Docs", blurb: "Read and write documents", domain: "docs.google.com", logo: null },
-  { slug: "googledrive", label: "Google Drive", blurb: "Browse and manage files", domain: "drive.google.com", logo: null },
-  { slug: "notion", label: "Notion", blurb: "Pages and databases", domain: "notion.so", logo: null },
-  { slug: "linear", label: "Linear", blurb: "Issues and project tracking", domain: "linear.app", logo: null },
-  { slug: "sentry", label: "Sentry", blurb: "Errors and alerts", domain: "sentry.io", logo: null },
-  { slug: "posthog", label: "PostHog", blurb: "Analytics, feature flags, experiments", domain: "posthog.com", logo: null },
-  { slug: "discord", label: "Discord", blurb: "Messages and channels", domain: "discord.com", logo: null },
-  { slug: "x", label: "X (Twitter)", blurb: "Post and read on X", domain: "x.com", logo: null },
-  { slug: "reddit", label: "Reddit", blurb: "Browse and post", domain: "reddit.com", logo: null },
-  { slug: "zapier", label: "Zapier", blurb: "Connect 9,000+ apps", domain: "zapier.com", logo: null },
-  { slug: "hubspot", label: "HubSpot", blurb: "CRM search & updates", domain: "hubspot.com", logo: null },
-  { slug: "salesforce", label: "Salesforce", blurb: "CRM records and reports", domain: "salesforce.com", logo: null },
-  { slug: "jira", label: "Jira", blurb: "Issues and sprints", domain: "atlassian.com", logo: null },
-  { slug: "asana", label: "Asana", blurb: "Tasks and projects", domain: "asana.com", logo: null },
-  { slug: "trello", label: "Trello", blurb: "Boards and cards", domain: "trello.com", logo: null },
-  { slug: "dropbox", label: "Dropbox", blurb: "Files and folders", domain: "dropbox.com", logo: null },
-  { slug: "airtable", label: "Airtable", blurb: "Bases and records", domain: "airtable.com", logo: null },
-  { slug: "figma", label: "Figma", blurb: "Files and comments", domain: "figma.com", logo: null },
-  { slug: "stripe", label: "Stripe", blurb: "Payments and customers", domain: "stripe.com", logo: null },
+  { slug: "slack", label: "Slack", blurb: msg("Post updates and read channels"), domain: "slack.com", logo: null },
+  { slug: "github", label: "GitHub", blurb: msg("Issues, pull requests, and code"), domain: "github.com", logo: null },
+  { slug: "gmail", label: "Gmail", blurb: msg("Read and send email"), domain: "gmail.com", logo: null },
+  { slug: "googlecalendar", label: "Google Calendar", blurb: msg("Read and create events"), domain: "calendar.google.com", logo: null },
+  { slug: "googlesheets", label: "Google Sheets", blurb: msg("Read and update spreadsheets"), domain: "sheets.google.com", logo: null },
+  { slug: "googledocs", label: "Google Docs", blurb: msg("Read and write documents"), domain: "docs.google.com", logo: null },
+  { slug: "googledrive", label: "Google Drive", blurb: msg("Browse and manage files"), domain: "drive.google.com", logo: null },
+  { slug: "notion", label: "Notion", blurb: msg("Pages and databases"), domain: "notion.so", logo: null },
+  { slug: "linear", label: "Linear", blurb: msg("Issues and project tracking"), domain: "linear.app", logo: null },
+  { slug: "sentry", label: "Sentry", blurb: msg("Errors and alerts"), domain: "sentry.io", logo: null },
+  { slug: "posthog", label: "PostHog", blurb: msg("Analytics, feature flags, experiments"), domain: "posthog.com", logo: null },
+  { slug: "discord", label: "Discord", blurb: msg("Messages and channels"), domain: "discord.com", logo: null },
+  { slug: "x", label: "X (Twitter)", blurb: msg("Post and read on X"), domain: "x.com", logo: null },
+  { slug: "reddit", label: "Reddit", blurb: msg("Browse and post"), domain: "reddit.com", logo: null },
+  { slug: "zapier", label: "Zapier", blurb: msg("Connect 9,000+ apps"), domain: "zapier.com", logo: null },
+  { slug: "hubspot", label: "HubSpot", blurb: msg("CRM search & updates"), domain: "hubspot.com", logo: null },
+  { slug: "salesforce", label: "Salesforce", blurb: msg("CRM records and reports"), domain: "salesforce.com", logo: null },
+  { slug: "jira", label: "Jira", blurb: msg("Issues and sprints"), domain: "atlassian.com", logo: null },
+  { slug: "asana", label: "Asana", blurb: msg("Tasks and projects"), domain: "asana.com", logo: null },
+  { slug: "trello", label: "Trello", blurb: msg("Boards and cards"), domain: "trello.com", logo: null },
+  { slug: "dropbox", label: "Dropbox", blurb: msg("Files and folders"), domain: "dropbox.com", logo: null },
+  { slug: "airtable", label: "Airtable", blurb: msg("Bases and records"), domain: "airtable.com", logo: null },
+  { slug: "figma", label: "Figma", blurb: msg("Files and comments"), domain: "figma.com", logo: null },
+  { slug: "stripe", label: "Stripe", blurb: msg("Payments and customers"), domain: "stripe.com", logo: null },
 ];
+
+/** Curated blurbs are declared with msg() and read in the app's language. */
+function localizedCard(card: ToolkitCard): ToolkitCard {
+  return { ...card, blurb: t(card.blurb) };
+}
 
 let toolkitCache: { at: number; cards: ToolkitCard[] } | null = null;
 
@@ -951,18 +965,19 @@ export async function listToolkits(cfg: AppConfig): Promise<{ cards: ToolkitCard
       /* fall through to curated */
     }
   }
-  return { cards: CURATED, source: "curated" };
+  return { cards: CURATED.map(localizedCard), source: "curated" };
 }
 
 export async function toolkitCard(cfg: AppConfig, slug: string): Promise<ToolkitCard> {
   const normalized = slug.toLowerCase();
   const { cards } = await listToolkits(cfg);
+  const curated = CURATED.find((card) => card.slug === normalized);
   return cards.find((card) => card.slug.toLowerCase() === normalized)
-    ?? CURATED.find((card) => card.slug === normalized)
+    ?? (curated ? localizedCard(curated) : undefined)
     ?? {
       slug: normalized,
       label: normalized.replace(/[-_]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase()),
-      blurb: "Connect this app so your bot can continue",
+      blurb: t("Connect this app so your bot can continue"),
       logo: null,
       domain: null,
     };

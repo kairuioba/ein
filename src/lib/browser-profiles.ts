@@ -1,3 +1,5 @@
+import { tn } from "@/lib/i18n";
+
 interface BrowserProfileUser {
   name: string;
   browserProfile?: string | null;
@@ -34,7 +36,10 @@ export function browserProfileDeletionBlockReason(
   const running = bots.filter((bot) => bot.browserProfile === profileId && bot.busy);
   if (!running.length) return null;
   const names = running.map((bot) => bot.name).join(", ");
-  return running.length === 1
-    ? `${names} is still running. Stop that bot before deleting this browser profile.`
-    : `${names} are still running. Stop those bots before deleting this browser profile.`;
+  return tn(
+    running.length,
+    "{names} is still running. Stop that bot before deleting this browser profile.",
+    "{names} are still running. Stop those bots before deleting this browser profile.",
+    { names },
+  );
 }

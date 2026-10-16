@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { t } from "@/lib/i18n";
+
 export type AssemblyAITurn = {
   order: number;
   text: string;
@@ -82,14 +84,14 @@ export async function startAssemblyAITranscription({
   });
   const socket = new WebSocket(`${STREAMING_ENDPOINT}?${query}`);
   const connected = new Promise<void>((resolve, reject) => {
-    const timer = window.setTimeout(() => reject(new Error("AssemblyAI took too long to connect.")), 10_000);
+    const timer = window.setTimeout(() => reject(new Error(t("AssemblyAI took too long to connect."))), 10_000);
     socket.addEventListener("open", () => {
       window.clearTimeout(timer);
       resolve();
     }, { once: true });
     socket.addEventListener("error", () => {
       window.clearTimeout(timer);
-      reject(new Error("Could not open the AssemblyAI transcription stream."));
+      reject(new Error(t("Could not open the AssemblyAI transcription stream.")));
     }, { once: true });
   });
   try {
@@ -122,7 +124,7 @@ export async function startAssemblyAITranscription({
     }
   });
   socket.addEventListener("close", () => {
-    if (!stopping && !terminated) onError("Cloud transcription disconnected; the original audio is still being saved.");
+    if (!stopping && !terminated) onError(t("Cloud transcription disconnected; the original audio is still being saved."));
   });
 
   let audioContext: AudioContext | null = null;

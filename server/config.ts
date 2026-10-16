@@ -8,6 +8,7 @@ import { z } from "zod";
 
 import { writeFileAtomic } from "./atomic.ts";
 import type { InstanceConfigMap } from "./contracts.ts";
+import { t } from "../shared/i18n.ts";
 import { parseJson, schemaIssue, type JsonObject, type JsonValue } from "./schema.ts";
 
 const optionalText = z.string().optional();
@@ -31,19 +32,21 @@ export function isValidSshAlias(value: unknown): value is string {
 export function normalizeVpsConfig(raw: unknown): { sshAlias?: string } {
   if (raw === undefined || raw === null) return {};
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    throw new Error("vps must be an object containing an SSH config alias");
+    throw new Error(t("vps must be an object containing an SSH config alias"));
   }
   const alias = (raw as Record<string, unknown>).sshAlias;
   if (alias === undefined || alias === "") return {};
   if (!isValidSshAlias(alias)) {
-    throw new Error("vps.sshAlias must be a simple SSH config alias (letters, numbers, dot, dash, or underscore)");
+    throw new Error(t("vps.sshAlias must be a simple SSH config alias (letters, numbers, dot, dash, or underscore)"));
   }
   return { sshAlias: alias };
 }
 
 const vpsConfigSchema = z.object({
   sshAlias: z.string().refine((value) => value === "" || isValidSshAlias(value), {
-    message: "must be a simple SSH config alias",
+    // A function so the Settings error is translated when it is raised,
+    // not when this module loads.
+    error: () => t("must be a simple SSH config alias"),
   }).optional(),
 });
 const roomConfigSchema = z.object({
@@ -207,7 +210,7 @@ const browserProfilesSchema = z.array(browserProfileSchema).max(20).superRefine(
     ctx.addIssue({
       code: "custom",
       path: [index, "id"],
-      message: `browser profile id ${profile.id} is duplicated`,
+      message: t("browser profile id {id} is duplicated", { id: profile.id }),
     });
   });
 });
@@ -255,6 +258,26 @@ const appConfigSchema = z.object({
   localVm: localVmConfigSchema.optional(),
   features: featureConfigSchema.optional(),
   browserProfiles: browserProfilesSchema.optional(),
+  /** UI and harness language; absent = Simplified Chinese (see shared/i18n.ts). */
+  locale: z.enum(["zh-CN", "en"]).optional(),
+  /** Dispatch hub settings (server/dispatch.ts); every field optional. */
+  dispatch: z
+    .object({
+      enabled: z.boolean().optional(),
+      autoCreate: z.boolean().optional(),
+      policy: z.enum(["quality", "balanced", "economy"]).optional(),
+      maxConcurrent: z.number().int().min(1).max(8).optional(),
+      maxSubtasks: z.number().int().min(1).max(20).optional(),
+      maxNewBots: z.number().int().min(0).max(10).optional(),
+      autoSynthesize: z.boolean().optional(),
+      requireApproval: z.boolean().optional(),
+      maxAttempts: z.number().int().min(1).max(3).optional(),
+    })
+    .optional(),
+  /** WorkBuddy (codebuddy CLI): optional API key and edition. */
+  workbuddy: z
+    .object({ apiKey: optionalText, environment: z.enum(["international", "internal", "ioa"]).optional() })
+    .optional(),
   instances: instanceConfigMapSchema.optional(),
 });
 const storedAppConfigSchema = appConfigSchema.extend({
@@ -282,6 +305,9 @@ export interface AppConfig {
   features?: { skillRecorder?: boolean; showToolCalls?: boolean; browser?: boolean };
   /** Named browser sessions any bot can be pointed at. */
   browserProfiles?: BrowserProfile[];
+  locale?: "zh-CN" | "en";
+  dispatch?: Partial<import("../shared/dispatch-types.ts").DispatchSettings>;
+  workbuddy?: { apiKey?: string; environment?: "international" | "internal" | "ioa" };
   instances?: InstanceConfigMap;
 }
 export type BrowserProfile = z.output<typeof browserProfileSchema> & {
@@ -310,12 +336,14 @@ export function browserProfileRoutingConflict(
     const foldedPartition = partitionId.toLowerCase();
     const existingPartitionOwner = partitionOwner.get(foldedPartition);
     if (existingPartitionOwner !== undefined && existingPartitionOwner !== index) {
-      return `browser profiles cannot share the durable session “${partitionId}”`;
+      return t("browser profiles cannot share the durable session “{session}”", { session: partitionId });
     }
     partitionOwner.set(foldedPartition, index);
     const otherLogicalOwner = logicalOwner.get(foldedPartition);
     if (otherLogicalOwner !== undefined && otherLogicalOwner !== index) {
-      return `browser profile id “${profiles[otherLogicalOwner]!.id}” is already used by another durable session`;
+      return t("browser profile id “{id}” is already used by another durable session", {
+        id: profiles[otherLogicalOwner]!.id,
+      });
     }
   }
   return null;
@@ -341,7 +369,9 @@ export function browserProfileReplacementConflict(
     !currentIds.has(profile.id)
     && removedPartitions.has(browserProfilePartitionId(profile).toLowerCase()));
   return reused
-    ? `browser profile “${reused.name}” cannot reuse a session that is being erased; delete it first, then add the new profile`
+    ? t("browser profile “{name}” cannot reuse a session that is being erased; delete it first, then add the new profile", {
+        name: reused.name,
+      })
     : null;
 }
 
@@ -469,6 +499,10 @@ export function loadConfig(): AppConfig {
   if (process.env.OMB_TTS_KEY !== undefined) cfg.tts.key = process.env.OMB_TTS_KEY;
   cfg.imageGen = { ...cfg.imageGen };
   if (process.env.OMB_OPENAI_IMAGE_KEY !== undefined) cfg.imageGen.key = process.env.OMB_OPENAI_IMAGE_KEY;
+  if (cfg.workbuddy || process.env.OMB_WORKBUDDY_API_KEY !== undefined) {
+    cfg.workbuddy = { ...cfg.workbuddy };
+    if (process.env.OMB_WORKBUDDY_API_KEY !== undefined) cfg.workbuddy.apiKey = process.env.OMB_WORKBUDDY_API_KEY;
+  }
   return cfg;
 }
 
@@ -488,6 +522,7 @@ export function syncCredentialEnv(patch: Partial<AppConfig>): void {
     [patch.opencodeGo?.apiKey, "OPENCODE_API_KEY"],
     [patch.tts?.key, "OMB_TTS_KEY"],
     [patch.imageGen?.key, "OMB_OPENAI_IMAGE_KEY"],
+    [patch.workbuddy?.apiKey, "OMB_WORKBUDDY_API_KEY"],
   ];
   for (const [value, name] of secrets) {
     if (value === undefined) continue;
@@ -521,6 +556,7 @@ export const WORKSPACE_CREDENTIAL_ENV = [
   "OPENCODE_API_KEY",
   "OMB_TTS_KEY",
   "OMB_OPENAI_IMAGE_KEY",
+  "OMB_WORKBUDDY_API_KEY",
   "COMPOSIO_API_KEY",
   "OMB_COMPOSIO_BROKER_TOKEN",
   // Harness-private filesystem hints are not credentials themselves, but
@@ -552,6 +588,7 @@ export const PROVIDER_CREDENTIAL_ENV = [
   "XAI_API_KEY",
   "CURSOR_API_KEY",
   "CURSOR_AUTH_TOKEN",
+  "CODEBUDDY_API_KEY",
 ] as const;
 
 /** Merge a partial config into ~/.openmausbot/config.json (secrets never
@@ -571,7 +608,7 @@ export function saveConfig(patch: Partial<AppConfig>): void {
   // back after we have successfully recognized the legacy list.
   const storedProfiles = storedBrowserProfilesSchema.safeParse(disk.browserProfiles);
   if (storedProfiles.success) disk.browserProfiles = storedProfiles.data;
-  for (const key of ["xai", "openaiCompat", "composio", "box", "opencodeGo", "tts", "imageGen", "profile", "rooms", "localVm", "features"] as const) {
+  for (const key of ["xai", "openaiCompat", "composio", "box", "opencodeGo", "tts", "imageGen", "profile", "rooms", "localVm", "features", "dispatch", "workbuddy"] as const) {
     const section = checkedPatch[key];
     if (!section) continue;
     const current = jsonObjectSchema.safeParse(disk[key]);
@@ -580,6 +617,7 @@ export function saveConfig(patch: Partial<AppConfig>): void {
     disk[key] = merged;
   }
   if (checkedPatch.vps !== undefined) disk.vps = normalizeVpsConfig(checkedPatch.vps);
+  if (checkedPatch.locale !== undefined) disk.locale = checkedPatch.locale;
   // the whole list is the unit of change: an add or a delete arrives as the
   // new list, never as a per-item merge
   if (checkedPatch.browserProfiles !== undefined) {
@@ -681,6 +719,13 @@ function injectedEnvironment(cfg: AppConfig, driver: string): Map<string, string
     environment.set("OPENAI_COMPAT_URL", cfg.openaiCompat.url);
   if (driver === "boxAgent" && cfg.box?.token) environment.set("BOX_TOKEN", cfg.box.token);
   if (driver === "opencodeGo" && cfg.opencodeGo?.apiKey) environment.set("OPENCODE_API_KEY", cfg.opencodeGo.apiKey);
+  if (driver === "workbuddyAgent") {
+    if (cfg.workbuddy?.apiKey) environment.set("CODEBUDDY_API_KEY", cfg.workbuddy.apiKey);
+    // the CLI reads its edition from this variable; international is the unset default
+    if (cfg.workbuddy?.environment === "internal" || cfg.workbuddy?.environment === "ioa") {
+      environment.set("CODEBUDDY_INTERNET_ENVIRONMENT", cfg.workbuddy.environment);
+    }
+  }
   return environment;
 }
 
@@ -717,6 +762,7 @@ export function instanceConfigs(cfg: AppConfig): InstanceConfigMap {
     qwen: { driver: "qwenAgent" },
     hermes: { driver: "hermesAgent" },
     pi: { driver: "piAgent" },
+    workbuddy: { driver: "workbuddyAgent" },
   };
   const CUSTOM_ONLY = {
     qwen: { driver: "qwenAgent" },
@@ -729,6 +775,7 @@ export function instanceConfigs(cfg: AppConfig): InstanceConfigMap {
   const PRODUCT_FLEET_ADDITIONS = {
     cursor: { driver: "cursorAgent" },
     openaiCompat: { driver: "openai-compat" },
+    workbuddy: { driver: "workbuddyAgent" },
     ...CUSTOM_ONLY,
   } as const;
   const configured = cfg.instances && Object.keys(cfg.instances).length ? cfg.instances : null;

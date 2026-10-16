@@ -10,6 +10,7 @@
 //   - stop→archived ~5s, resume→idle ~8s; disk persists, tmux does not.
 //   - X11 desktop with Chrome + Ghostty; passwordless sudo; node 24.
 //   - the dedicated IP rotates across archive/resume — never persist it.
+import { t } from "../shared/i18n.ts";
 import type { AppConfig } from "./config.ts";
 import { ensureRemoteCuaCommand, remoteComputerBootstrapCommand } from "./remote-computer.ts";
 
@@ -143,13 +144,13 @@ export async function verifyToken(token: string): Promise<{ ok: true } | { ok: f
       return {
         ok: false,
         message: token.startsWith("box_")
-          ? "ascii.dev rejected that token — it may have been revoked or expired. Copy a fresh one from your ascii.dev account."
-          : "That doesn't look like a box API key: they start with box_. Copy the API key from your ascii.dev account (an account or session token won't work here).",
+          ? t("ascii.dev rejected that token — it may have been revoked or expired. Copy a fresh one from your ascii.dev account.")
+          : t("That doesn't look like a box API key: they start with box_. Copy the API key from your ascii.dev account (an account or session token won't work here)."),
       };
     }
-    return { ok: false, message: `ascii.dev returned ${res.status} for that token — try again in a moment.` };
+    return { ok: false, message: t("ascii.dev returned {status} for that token — try again in a moment.", { status: res.status }) };
   } catch {
-    return { ok: false, message: "Couldn't reach ascii.dev to check that token — check your connection and retry." };
+    return { ok: false, message: t("Couldn't reach ascii.dev to check that token — check your connection and retry.") };
   }
 }
 
@@ -162,15 +163,15 @@ export function boxErrorMessage(status: number, what: string, body?: any): strin
   const link = typeof body?.error?.details?.billingUrl === "string" ? body.error.details.billingUrl : "";
   if (status === 402) {
     // e.g. "Start the $20/month Box plan to create sandboxes."
-    return [theirs || "ascii.dev needs a paid Box plan before it will create a computer.", link].filter(Boolean).join(" ");
+    return [theirs || t("ascii.dev needs a paid Box plan before it will create a computer."), link].filter(Boolean).join(" ");
   }
   if (status === 401 || status === 403) {
-    return "your box token was rejected by ascii.dev — open App Settings and paste a current token (it starts with box_)";
+    return t("your box token was rejected by ascii.dev — open App Settings and paste a current token (it starts with box_)");
   }
   if (status === 429) {
-    return theirs || "ascii.dev is rate-limiting this account — wait a minute and try again";
+    return theirs || t("ascii.dev is rate-limiting this account — wait a minute and try again");
   }
-  return theirs ? `${what} failed: ${theirs}` : `${what} failed (${status})`;
+  return theirs ? t("{what} failed: {reason}", { what, reason: theirs }) : t("{what} failed ({status})", { what, status });
 }
 
 /** ascii.dev trial accounts reject the normal eight-hour auto-stop with a
@@ -219,7 +220,7 @@ export async function boxStatus(cfg: AppConfig, botId: string) {
  */
 export async function provisionBox(cfg: AppConfig, botId: string, botName: string) {
   if (!boxConfigured(cfg)) {
-    throw new Error('box provider not enabled — add {"box":{"token":"…"}} to ~/.openmausbot/config.json');
+    throw new Error(t('box provider not enabled — add {"box":{"token":"…"}} to ~/.openmausbot/config.json'));
   }
   const vmName = await boxNameFor(botId);
   let box = await findBox(cfg, botId);
@@ -231,7 +232,7 @@ export async function provisionBox(cfg: AppConfig, botId: string, botName: strin
       // retry when ascii.dev reports their shorter TTL ceiling.
       const createRes = await createBox(cfg);
       if (!createRes.ok || !createRes.body?.box?.id) {
-        throw new Error(boxErrorMessage(createRes.status, "box create", createRes.body));
+        throw new Error(boxErrorMessage(createRes.status, t("box create"), createRes.body));
       }
       box = createRes.body.box;
       created = true;
@@ -239,10 +240,10 @@ export async function provisionBox(cfg: AppConfig, botId: string, botName: strin
         method: "PATCH",
         body: JSON.stringify({ name: vmName }),
       });
-      if (!rename.ok) throw new Error(boxErrorMessage(rename.status, "box naming", rename.body));
+      if (!rename.ok) throw new Error(boxErrorMessage(rename.status, t("box naming"), rename.body));
     }
     const ready = await waitReady(cfg, box.id);
-    if (!ready) throw new Error("box did not become ready within 90s — retry in a minute");
+    if (!ready) throw new Error(t("box did not become ready within 90s — retry in a minute"));
 
     // Install the exact Cua Driver executable in the background, keep its
     // daemon private to the VM, and retain X11 tooling as a degraded fallback.
@@ -254,12 +255,12 @@ export async function provisionBox(cfg: AppConfig, botId: string, botName: strin
       await new Promise((r) => setTimeout(r, 3000));
     }
     if (!boot?.ok) {
-      const detail = boot?.stderr?.slice(0, 200) || (boot?.exitCode != null ? `exit ${boot.exitCode}` : "no response");
-      throw new Error(`box setup failed: ${detail}`);
+      const detail = boot?.stderr?.slice(0, 200) || (boot?.exitCode != null ? `exit ${boot.exitCode}` : t("no response"));
+      throw new Error(t("box setup failed: {detail}", { detail }));
     }
 
     const joinUrl = await mintDesktopUrl(cfg, box.id);
-    if (!joinUrl) throw new Error("box desktop link could not be created");
+    if (!joinUrl) throw new Error(t("box desktop link could not be created"));
     return { boxId: box.id, machineName: vmName, reused: !created, state: ready.state, joinUrl };
   } catch (error) {
     if (!created || !box?.id) throw error;
@@ -270,16 +271,21 @@ export async function provisionBox(cfg: AppConfig, botId: string, botName: strin
     boxIdCache.delete(botId);
     if (cleanup?.ok) throw error;
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`${message}. The new computer could not be removed automatically; delete box ${box.id} in ascii.dev.`);
+    throw new Error(
+      t("{message}. The new computer could not be removed automatically; delete box {boxId} in ascii.dev.", {
+        message,
+        boxId: box.id,
+      }),
+    );
   }
 }
 
 /** Wake the bot's box and return a FRESH desktop URL. */
 export async function joinBox(cfg: AppConfig, botId: string) {
   const box = await findBox(cfg, botId);
-  if (!box) throw new Error("no computer yet — provision it first");
+  if (!box) throw new Error(t("no computer yet — provision it first"));
   const ready = await waitReady(cfg, box.id);
-  if (!ready) throw new Error("the box did not wake in time — try again");
+  if (!ready) throw new Error(t("the box did not wake in time — try again"));
   // Provider archive/resume preserves disk but not processes. Reattach the
   // driver daemon before handing the desktop back to the user.
   await runCommand(cfg, box.id, ensureRemoteCuaCommand(), { timeoutMs: 15_000 }).catch(() => null);
@@ -289,7 +295,7 @@ export async function joinBox(cfg: AppConfig, botId: string) {
 /** Archive the bot's box now (billing pauses, disk survives). */
 export async function sleepBox(cfg: AppConfig, botId: string) {
   const box = await findBox(cfg, botId);
-  if (!box) throw new Error("no computer for this bot");
+  if (!box) throw new Error(t("no computer for this bot"));
   // Ask the browser's oldest (main) process to exit before the provider
   // snapshots the disk. This gives Chrome a chance to flush cookies and
   // session state instead of restoring a crash-marked profile next wake.
@@ -305,9 +311,9 @@ export async function sleepBox(cfg: AppConfig, botId: string) {
 /** Owner-scoped shell for the Computer panel's console. */
 export async function execOnBox(cfg: AppConfig, botId: string, command: string) {
   const box = await findBox(cfg, botId);
-  if (!box) throw new Error("no computer for this bot yet");
+  if (!box) throw new Error(t("no computer for this bot yet"));
   const ready = await waitReady(cfg, box.id, 60_000);
-  if (!ready) throw new Error("box did not wake");
+  if (!ready) throw new Error(t("box did not wake"));
   const out = await runCommand(cfg, box.id, String(command ?? "").slice(0, 4000));
   return { exitCode: out.exitCode, stdout: out.stdout.slice(-4000), stderr: out.stderr.slice(-2000) };
 }
@@ -353,15 +359,15 @@ export async function screenshotBox(cfg: AppConfig, botId: string, knownBoxId?: 
   let boxId = knownBoxId;
   if (!boxId) {
     const box = await findBox(cfg, botId);
-    if (!box) throw new Error("no computer for this bot yet");
-    if (!READY.has(box.state)) throw new Error(`box is ${box.state}`);
+    if (!box) throw new Error(t("no computer for this bot yet"));
+    if (!READY.has(box.state)) throw new Error(t("box is {state}", { state: box.state }));
     boxId = box.id as string;
   }
   const out = await runCommand(cfg, boxId, SHOT_CMD, { timeoutMs: 60_000 });
   if (!/captured/.test(out.stdout)) {
-    throw new Error(out.stderr.slice(0, 200) || "screen capture failed on the box");
+    throw new Error(out.stderr.slice(0, 200) || t("screen capture failed on the box"));
   }
   const data = await readFileBase64(cfg, boxId, PANEL_PATH);
-  if (!data) throw new Error("could not read the frame back from the box");
+  if (!data) throw new Error(t("could not read the frame back from the box"));
   return { png: data, format: "jpeg" };
 }

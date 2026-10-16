@@ -30,12 +30,12 @@ import { isRoutineApproval, isSkillApproval, pendingApprovals, spokenApprovalPro
 import { cn } from "@/lib/cn";
 import { track } from "@/lib/analytics";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
+import { t } from "@/lib/i18n";
+import { spokenNo, spokenYes } from "@/lib/spoken-answer";
 
 /** Spoken answers to a permission card. Anything else is read as a reply
  * to the bot, not as consent — an approval must never be granted by a
  * sentence that merely contained the word "sure". */
-const YES = /^(yes|yeah|yep|yup|sure|ok|okay|go ahead|do it|allow|approve|approved|fine|please do)\b/i;
-const NO = /^(no|nope|don'?t|do not|stop|deny|denied|cancel|never|skip it)\b/i;
 
 type Phase = "listening" | "sending" | "working" | "speaking";
 const CALL_ENDPOINT_MS = 850;
@@ -85,29 +85,29 @@ export function CallTargetButton({
   const buttonRef = useRef<HTMLButtonElement>(null);
   const helpId = useId();
   const label = active
-    ? `Hang up on ${targetName}`
+    ? t("Hang up on {name}", { name: targetName })
     : !capabilitiesReady
-      ? "Checking call availability"
+      ? t("Checking call availability")
       : !supported
-        ? "Calls currently need the macOS desktop app"
+        ? t("Calls currently need the macOS desktop app")
         : !configured
-          ? "Set up a voice in an agent profile to make calls"
+          ? t("Set up a voice in an agent profile to make calls")
           : !voiceReady
-            ? "Pick a voice in an agent profile to make calls"
-            : `Call ${targetName}`;
+            ? t("Pick a voice in an agent profile to make calls")
+            : t("Call {name}", { name: targetName });
 
   const reason = !capabilitiesReady
-    ? "Checking whether this device can make calls."
+    ? t("Checking whether this device can make calls.")
     : !capabilities.dictation.available
-      ? "Calls require OpenMausBot for macOS because speech recognition runs on-device."
+      ? t("Calls require OpenMausBot for macOS because speech recognition runs on-device.")
       : !window.ogb?.speechStart
-        ? "The speech service is unavailable in this app build. Restart or update OpenMausBot."
+        ? t("The speech service is unavailable in this app build. Restart or update OpenMausBot.")
         : !configured
-          ? "Add an ElevenLabs API key — or switch to the built-in Mac voices — so the bot can speak during calls."
+          ? t("Add an ElevenLabs API key — or switch to the built-in Mac voices — so the bot can speak during calls.")
           : !voiceReady
             ? voices.length > 1
-              ? "Give every channel member a voice before starting a channel call."
-              : "Choose a voice before starting a call."
+              ? t("Give every channel member a voice before starting a channel call.")
+              : t("Choose a voice before starting a call.")
             : "";
 
   useEffect(() => {
@@ -164,10 +164,10 @@ export function CallTargetButton({
         <div
           id={helpId}
           role="group"
-          aria-label="Call unavailable"
+          aria-label={t("Call unavailable")}
           className="animate-pop-in absolute right-0 z-30 mt-1.5 w-[280px] rounded-xl border border-hairline bg-panel p-3 text-left shadow-2xl"
         >
-          <div className="text-[13px] font-medium text-ink">Call unavailable</div>
+          <div className="text-[13px] font-medium text-ink">{t("Call unavailable")}</div>
           <div className="mt-1 text-[12px] leading-[1.45] text-ink-secondary">{reason}</div>
           {voiceSetupRequired && (
             <button
@@ -179,7 +179,7 @@ export function CallTargetButton({
               }}
               className="mt-2.5 rounded-lg bg-accent px-3 py-1.5 text-[12px] font-medium text-white hover:brightness-110"
             >
-              Open agent settings
+              {t("Open agent settings")}
             </button>
           )}
         </div>
@@ -202,7 +202,7 @@ function Call({ bot }: { bot: Bot }) {
   const [heard, setHeard] = useState("");
   const [note, setNote] = useState<string | null>(null);
   const pushToTalk = usePushToTalk(bot.id, phase === "listening", () => {
-    setNote("Push to talk couldn't start. Check Microphone and Speech Recognition access.");
+    setNote(t("Push to talk couldn't start. Check Microphone and Speech Recognition access."));
   });
 
   const messages = visibleMessages(bot);
@@ -257,7 +257,7 @@ function Call({ bot }: { bot: Bot }) {
     setNote(null);
     void window.ogb?.speechStart({ endpointMs: CALL_ENDPOINT_MS }).catch(() => {
       if (alive.current && currentCall() === bot.id) {
-        setNote("The microphone couldn't start. Check Microphone and Speech Recognition access.");
+        setNote(t("The microphone couldn't start. Check Microphone and Speech Recognition access."));
       }
     });
   }, [bot.id, move]);
@@ -308,7 +308,7 @@ function Call({ bot }: { bot: Bot }) {
     const offTranscript = bridge.onSpeechTranscript((line) => {
       if (!alive.current || currentCall() !== bot.id || phaseRef.current !== "listening") return;
       if (line.error) {
-        setNote("Dictation stopped unexpectedly. Check Microphone and Speech Recognition access.");
+        setNote(t("Dictation stopped unexpectedly. Check Microphone and Speech Recognition access."));
         return;
       }
       if (typeof line.text !== "string") return;
@@ -325,11 +325,11 @@ function Call({ bot }: { bot: Bot }) {
           hush();
           return;
         }
-        if (YES.test(said) || NO.test(said)) {
-          const allow = YES.test(said);
+        if (spokenYes(said) || spokenNo(said)) {
+          const allow = spokenYes(said);
           if (allow && open.skill) {
             setHeard("");
-            void sayThenListen("Open this chat to review the complete skill before enabling it. You can say no now to deny it.");
+            void sayThenListen(t("Open this chat to review the complete skill before enabling it. You can say no now to deny it."));
             return;
           }
           // Keep this request claimed until the server's durable card patch
@@ -355,9 +355,11 @@ function Call({ bot }: { bot: Bot }) {
               ) return;
               pending.submitted = false;
               const detail = error.trim().slice(0, 240);
-              const decision = open.routine ? "routine decision" : "approval";
+              const decision = open.routine ? t("routine decision") : t("approval");
               void sayThenListen(
-                `I couldn't save that ${decision}${detail ? `: ${detail}` : "."} Please try again.`,
+                detail
+                  ? t("I couldn't save that {decision}: {detail} Please try again.", { decision, detail })
+                  : t("I couldn't save that {decision}. Please try again.", { decision }),
               );
             },
           });
@@ -365,7 +367,7 @@ function Call({ bot }: { bot: Bot }) {
         }
         // not a decision — leave the card up and say so rather than
         // guessing consent from an ambiguous sentence
-        void sayThenListen("Sorry — is that a yes or a no?");
+        void sayThenListen(t("Sorry — is that a yes or a no?"));
         return;
       }
 
@@ -383,14 +385,14 @@ function Call({ bot }: { bot: Bot }) {
     const offEnd = bridge.onSpeechEnd(({ code, reason }) => {
       if (!alive.current || currentCall() !== bot.id) return;
       if (code === 2) {
-        setNote("Calls need macOS dictation, which isn't available here yet.");
+        setNote(t("Calls need macOS dictation, which isn't available here yet."));
         return;
       }
       if (code === 1) {
         setNote(
           reason === "helper-build-failed"
-            ? "The dictation helper couldn't be built. Install Apple's Command Line Tools and try again."
-            : "Dictation needs Microphone + Speech Recognition access in System Settings.",
+            ? t("The dictation helper couldn't be built. Install Apple's Command Line Tools and try again.")
+            : t("Dictation needs Microphone + Speech Recognition access in System Settings."),
         );
         return;
       }
@@ -443,7 +445,7 @@ function Call({ bot }: { bot: Bot }) {
       };
       spokenIds.current.add(approval.message.id);
       void sayThenListen(isSkillApproval(approval)
-        ? `${bot.name} wants to enable a learned skill. Open this chat to review the complete skill before enabling it. You can say no to deny it.`
+        ? t("{name} wants to enable a learned skill. Open this chat to review the complete skill before enabling it. You can say no to deny it.", { name: bot.name })
         : spokenApprovalPrompt(approval, bot.name));
       return;
     }
@@ -456,9 +458,11 @@ function Call({ bot }: { bot: Bot }) {
       spokenIds.current.add(question.id);
       const detail = question.card.subtitle.trim();
       const choices = question.card.options.length
-        ? ` The options are ${question.card.options.join(", ")}.`
+        ? " " + t("The options are {options}.", { options: question.card.options.join(", ") })
         : "";
-      void sayThenListen(`${bot.name} asks: ${detail}${/[.!?]$/.test(detail) ? "" : "."}${choices}`);
+      void sayThenListen(
+        t("{name} asks: {detail}", { name: bot.name, detail: `${detail}${/[.!?]$/.test(detail) ? "" : "."}` }) + choices,
+      );
       return;
     }
     const fresh = messages.filter((m) => !spokenIds.current.has(m.id));
@@ -521,19 +525,19 @@ function Call({ bot }: { bot: Bot }) {
   const status =
     phase === "listening"
       ? pushToTalk
-        ? "Push to talk"
-        : "Listening"
+        ? t("Push to talk")
+        : t("Listening")
       : phase === "sending"
-        ? "One moment"
+        ? t("One moment")
         : phase === "speaking"
           ? bot.name
-          : "Working";
+          : t("Working");
 
   return (
     <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-6 bg-app/95 backdrop-blur-sm">
       <button
         onClick={() => endCall(bot.id)}
-        aria-label="Hang up"
+        aria-label={t("Hang up")}
         className="absolute right-5 top-5 rounded-md p-2 text-ink-secondary hover:bg-raised hover:text-ink"
       >
         <X size={18} />
@@ -554,7 +558,7 @@ function Call({ bot }: { bot: Bot }) {
         {phase === "listening" ? (
           heard || (
             <span className="text-ink-secondary">
-              {pushToTalk ? "Release Control + Option to send…" : "Say something…"}
+              {pushToTalk ? t("Release Control + Option to send…") : t("Say something…")}
             </span>
           )
         ) : (
@@ -569,7 +573,7 @@ function Call({ bot }: { bot: Bot }) {
             onClick={listen}
             className="rounded-full border border-warning/40 px-3 py-1.5 text-[12px] hover:bg-warning/10"
           >
-            Try microphone again
+            {t("Try microphone again")}
           </button>
         </div>
       )}
@@ -585,19 +589,20 @@ function Call({ bot }: { bot: Bot }) {
             }}
             className="rounded-full border border-hairline/50 px-4 py-2 text-[13.5px] text-ink hover:bg-raised"
           >
-            Interrupt
+            {t("Interrupt")}
           </button>
         )}
         <button
           onClick={() => endCall(bot.id)}
           className="flex items-center gap-2 rounded-full bg-danger px-5 py-2.5 text-[14px] font-medium text-white hover:brightness-110"
         >
-          <PhoneOff size={16} /> Hang up
+          <PhoneOff size={16} />{" "}
+          {t("Hang up")}
         </button>
       </div>
 
       <div className="text-[11.5px] text-ink-secondary/70">
-        Hold Control + Option to talk · Space interrupts · Esc hangs up
+        {t("Hold Control + Option to talk · Space interrupts · Esc hangs up")}
       </div>
     </div>
   );

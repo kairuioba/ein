@@ -7,6 +7,7 @@ import { join } from "node:path";
 
 import type { ModelCatalog } from "../../contracts.ts";
 import { decodeInjectId, hostApiKey, localHost, mergeLocalInject } from "../local-inject.ts";
+import { t } from "../../../shared/i18n.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 
 const EMPTY: ModelCatalog = { default: "", options: [] };
@@ -94,7 +95,9 @@ const support: AcpSupport = {
   resolveTurnModel: (model, env) => (model ? ensureQwenInjectModel(model, env) : model),
   defaultCli: "qwen",
   nativeSource: "qwen.acp",
-  loginNote: "Qwen Code CLI is not installed",
+  get loginNote() {
+    return t("Qwen Code CLI is not installed");
+  },
   install: {
     command: {
       darwin: "curl -fsSL https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen-standalone.sh | bash",

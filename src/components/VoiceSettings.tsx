@@ -11,8 +11,9 @@ import { useDesktopCapabilities } from "@/components/DesktopCapabilities";
 import { speaker } from "@/lib/tts";
 import { cn } from "@/lib/cn";
 import { Switch } from "./SettingsPrimitives";
+import { msg, t } from "@/lib/i18n";
 
-const SAMPLE = "Morning. Overnight the tests went green, and I left two notes for you in the thread.";
+const SAMPLE = msg("Morning. Overnight the tests went green, and I left two notes for you in the thread.");
 
 export function VoiceSettings({
   bot,
@@ -94,23 +95,22 @@ export function VoiceSettings({
 
   return (
     <div className="rounded-xl bg-card p-4">
-      <div className="text-[15px] font-medium text-ink">Voice</div>
+      <div className="text-[15px] font-medium text-ink">{t("Voice")}</div>
       <div className="mt-0.5 text-[13px] text-ink-secondary">
-        Give this agent a voice for calls and spoken replies. The voice choice belongs to this agent;
         {provider === "system"
           ? systemVoicesAvailable
-            ? " the voices are the ones already installed on this Mac."
-            : " built-in Mac voices are unavailable here. Switch to ElevenLabs to keep using voice."
-          : " the ElevenLabs key is shared by the workspace."}
+            ? t("Give this agent a voice for calls and spoken replies. The voice choice belongs to this agent; the voices are the ones already installed on this Mac.")
+            : t("Give this agent a voice for calls and spoken replies. The voice choice belongs to this agent; built-in Mac voices are unavailable here. Switch to ElevenLabs to keep using voice.")
+          : t("Give this agent a voice for calls and spoken replies. The voice choice belongs to this agent; the ElevenLabs key is shared by the workspace.")}
       </div>
 
       {(systemVoicesAvailable || provider === "system") && (
         <div className="mt-4">
-          <div className="mb-2 text-[13px] text-ink-secondary">Voice engine</div>
-          <div className="inline-flex rounded-xl bg-inset p-1" role="radiogroup" aria-label="Voice engine">
+          <div className="mb-2 text-[13px] text-ink-secondary">{t("Voice engine")}</div>
+          <div className="inline-flex rounded-xl bg-inset p-1" role="radiogroup" aria-label={t("Voice engine")}>
             {([
               { value: "elevenlabs", label: "ElevenLabs", available: true },
-              { value: "system", label: "Built-in Mac voices", available: systemVoicesAvailable },
+              { value: "system", label: t("Built-in Mac voices"), available: systemVoicesAvailable },
             ] as const).map((option) => (
               <button
                 key={option.value}
@@ -118,7 +118,7 @@ export function VoiceSettings({
                 role="radio"
                 aria-checked={provider === option.value}
                 disabled={switching || !option.available}
-                title={!option.available ? "Built-in voices are available only on macOS" : undefined}
+                title={!option.available ? t("Built-in voices are available only on macOS") : undefined}
                 onClick={() => setProvider(option.value)}
                 className={cn(
                   "rounded-lg px-3.5 py-1.5 text-[12.5px] transition-colors disabled:opacity-50",
@@ -136,8 +136,8 @@ export function VoiceSettings({
         <div className="mt-4">
         <div className="mb-1.5 flex items-center gap-2 text-[13px] text-ink-secondary">
           <span className={cn("size-1.5 rounded-full", configured ? "bg-success" : "bg-raised-hover")} />
-          <span>ElevenLabs key</span>
-          {configured && <span className="text-[11px] text-success">Connected</span>}
+          <span>{t("ElevenLabs key")}</span>
+          {configured && <span className="text-[11px] text-success">{t("Connected")}</span>}
         </div>
         <div className="flex gap-2">
           <input
@@ -145,8 +145,8 @@ export function VoiceSettings({
             value={key}
             onChange={(e) => setKey(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && key.trim() && void saveKey()}
-            placeholder={configured ? "••••••••  (paste to replace)" : "Paste your ElevenLabs API key"}
-            aria-label="ElevenLabs key"
+            placeholder={configured ? t("••••••••  (paste to replace)") : t("Paste your ElevenLabs API key")}
+            aria-label={t("ElevenLabs key")}
             autoComplete="off"
             className="w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px] text-ink placeholder:text-ink-secondary focus:border-hairline focus:outline-none"
           />
@@ -155,7 +155,7 @@ export function VoiceSettings({
             disabled={saving || !key.trim()}
             className="flex w-[72px] shrink-0 items-center justify-center gap-1.5 rounded-lg bg-control py-2 text-[13px] text-ink hover:bg-raised-hover disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {saving ? <Loader2 size={13} className="animate-spin" /> : <><Check size={13} />Save</>}
+            {saving ? <Loader2 size={13} className="animate-spin" /> : <><Check size={13} />{t("Save")}</>}
           </button>
         </div>
         {!configured && (
@@ -165,7 +165,7 @@ export function VoiceSettings({
             rel="noopener noreferrer"
             className="mt-1.5 inline-block text-[12px] font-medium text-accent hover:underline"
           >
-            Get a key from ElevenLabs
+            {t("Get a key from ElevenLabs")}
           </a>
         )}
         </div>
@@ -173,23 +173,23 @@ export function VoiceSettings({
 
       {configured && (
         <div className="mt-4">
-          <div className="mb-1.5 text-[13px] text-ink-secondary">Voice</div>
+          <div className="mb-1.5 text-[13px] text-ink-secondary">{t("Voice")}</div>
           <div className="flex gap-2">
             <select
               value={selectedVoice}
               onChange={(e) => onPatch({ voice: e.target.value })}
-              aria-label={`${bot.name}'s voice`}
+              aria-label={t("{name}'s voice", { name: bot.name })}
               className="w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px] text-ink focus:border-hairline focus:outline-none"
             >
               <option value="">
                 {loadingVoices
-                  ? "Loading voices…"
+                  ? t("Loading voices…")
                   : tts.voice
-                    ? "Workspace default"
-                    : "Pick a voice"}
+                    ? t("Workspace default")
+                    : t("Pick a voice")}
               </option>
               {selectedVoice && !voices.some((voice) => voice.id === selectedVoice) && (
-                <option value={selectedVoice}>Current agent voice</option>
+                <option value={selectedVoice}>{t("Current agent voice")}</option>
               )}
               {voices.map((v) => (
                 <option key={v.id} value={v.id}>
@@ -199,13 +199,14 @@ export function VoiceSettings({
               ))}
             </select>
             <button
-              onClick={() => void speaker.speak(SAMPLE, { voiceId: bot.voice, botId: bot.id })}
+              onClick={() => void speaker.speak(t(SAMPLE), { voiceId: bot.voice, botId: bot.id })}
               disabled={!ready}
-              title={ready ? "Hear this voice" : "Pick a voice first"}
-              aria-label="Hear this voice"
+              title={ready ? t("Hear this voice") : t("Pick a voice first")}
+              aria-label={t("Hear this voice")}
               className="flex w-[72px] shrink-0 items-center justify-center gap-1.5 rounded-lg bg-control py-2 text-[13px] text-ink hover:bg-raised-hover disabled:cursor-not-allowed disabled:opacity-50"
             >
-              <Volume2 size={14} /> Try
+              <Volume2 size={14} />{" "}
+              {t("Try")}
             </button>
           </div>
         </div>
@@ -213,14 +214,14 @@ export function VoiceSettings({
 
       <div className="mt-4 flex items-center justify-between gap-4 border-t border-hairline/40 pt-4">
         <div>
-          <div className="text-[13px] font-medium text-ink">Read replies aloud</div>
+          <div className="text-[13px] font-medium text-ink">{t("Read replies aloud")}</div>
           <div className="mt-0.5 text-[11.5px] leading-relaxed text-ink-secondary">
-            Speak this agent's answers as they arrive, even from another chat.
+            {t("Speak this agent's answers as they arrive, even from another chat.")}
           </div>
         </div>
         <Switch
           checked={Boolean(bot.speakReplies)}
-          aria-label="Read this bot's replies aloud"
+          aria-label={t("Read this bot's replies aloud")}
           onClick={() => onPatch({ speakReplies: !bot.speakReplies })}
         />
       </div>

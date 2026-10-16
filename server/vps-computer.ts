@@ -5,6 +5,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createConnection, createServer, type AddressInfo } from "node:net";
 
+import { t } from "../shared/i18n.ts";
 import {
   BASE_IMAGE,
   CUA_DRIVER_VERSION,
@@ -151,7 +152,7 @@ function unusedLoopbackPort(): Promise<number> {
       probe.close((error) => {
         if (error) reject(error);
         else if (port >= 1024) resolve(port);
-        else reject(new Error("could not reserve a VPS viewer port"));
+        else reject(new Error(t("could not reserve a VPS viewer port")));
       });
     });
   });
@@ -298,7 +299,7 @@ function emptyStatus(botId: string, alias: string | null): VpsComputerStatus {
     desktopReady: false,
     desktop_error: null,
     ready: false,
-    problem: alias ? "Docker over SSH is not reachable" : "Configure a VPS SSH alias in App Settings → Connections",
+    problem: alias ? t("Docker over SSH is not reachable") : t("Configure a VPS SSH alias in App Settings → Connections"),
     image_ref: VPS_IMAGE,
     base_image_ref: BASE_IMAGE,
     driver_version: CUA_DRIVER_VERSION,
@@ -318,7 +319,9 @@ function isMissingObjectMessage(message: string): boolean {
 }
 
 function transportFailure(message: string): string {
-  return `Docker over SSH failed while checking the VPS: ${message.trim().slice(0, 200) || "unknown transport error"}`;
+  return t("Docker over SSH failed while checking the VPS: {detail}", {
+    detail: message.trim().slice(0, 200) || t("unknown transport error"),
+  });
 }
 
 function privateDockerIpv4(value: string | undefined): boolean {
@@ -366,18 +369,18 @@ function hasNoPublishedPorts(config: {
 }
 
 function statusProblem(status: VpsComputerStatus): string | null {
-  if (!status.configured) return "Configure a VPS SSH alias in App Settings → Connections";
-  if (!status.daemonUp) return "Docker over SSH could not reach the VPS; check the SSH alias and Docker on the VPS";
-  if (!status.image) return `Prepare the pinned OpenMausBot Cua image on the VPS (Driver ${CUA_DRIVER_VERSION})`;
-  if (status.container === "missing") return "No OpenMausBot container exists for this bot on the VPS";
-  if (!status.imageMatches) return "The VPS container uses an incompatible or untrusted OpenMausBot image";
-  if (!status.managed) return "The VPS container name is occupied by a container OpenMausBot did not create";
-  if (status.network === "unsafe") return "The VPS container uses an unapproved network or publishes ports; refusing to use it";
-  if (status.mounts === "unsafe") return "The VPS container has host mounts; refusing to use it";
-  if (status.security === "unsafe") return "The VPS container is missing OpenMausBot safety limits";
-  if (status.container === "stopped") return "The OpenMausBot VPS container is stopped";
-  if (status.desktop_error) return `The VPS Cua desktop failed to start: ${status.desktop_error}`;
-  if (!status.desktopReady) return "The VPS container started, but Cua Driver is not ready yet";
+  if (!status.configured) return t("Configure a VPS SSH alias in App Settings → Connections");
+  if (!status.daemonUp) return t("Docker over SSH could not reach the VPS; check the SSH alias and Docker on the VPS");
+  if (!status.image) return t("Prepare the pinned OpenMausBot Cua image on the VPS (Driver {version})", { version: CUA_DRIVER_VERSION });
+  if (status.container === "missing") return t("No OpenMausBot container exists for this bot on the VPS");
+  if (!status.imageMatches) return t("The VPS container uses an incompatible or untrusted OpenMausBot image");
+  if (!status.managed) return t("The VPS container name is occupied by a container OpenMausBot did not create");
+  if (status.network === "unsafe") return t("The VPS container uses an unapproved network or publishes ports; refusing to use it");
+  if (status.mounts === "unsafe") return t("The VPS container has host mounts; refusing to use it");
+  if (status.security === "unsafe") return t("The VPS container is missing OpenMausBot safety limits");
+  if (status.container === "stopped") return t("The OpenMausBot VPS container is stopped");
+  if (status.desktop_error) return t("The VPS Cua desktop failed to start: {error}", { error: status.desktop_error });
+  if (!status.desktopReady) return t("The VPS container started, but Cua Driver is not ready yet");
   return null;
 }
 
@@ -487,7 +490,7 @@ async function computeVpsComputerStatus(
     if (canProbe && containerRef) {
       try {
         const version = await run(cuaExecArgs(["--version"], { container: containerRef }));
-        if (version.stdout.trim() !== `cua-driver ${CUA_DRIVER_VERSION}`) throw new Error("unexpected Cua Driver version");
+        if (version.stdout.trim() !== `cua-driver ${CUA_DRIVER_VERSION}`) throw new Error(t("unexpected Cua Driver version"));
         await run(cuaExecArgs(["status", "--socket", CUA_SOCKET], { container: containerRef }));
         const health = await run(
           cuaExecArgs(["call", "health_report", "{}", "--socket", CUA_SOCKET], { container: containerRef }),
@@ -503,7 +506,7 @@ async function computeVpsComputerStatus(
           !Array.isArray(report.checks) ||
           (report.overall !== "ok" && report.overall !== "degraded")
         ) {
-          throw new Error(`Cua health report is ${report.overall ?? "invalid"}`);
+          throw new Error(t("Cua health report is {status}", { status: report.overall ?? "invalid" }));
         }
         // The desktop must ANSWER, not render: get_desktop_state succeeding
         // is the readiness proof. The Local VM also pulls a pixel-validated
@@ -643,7 +646,7 @@ function assertUsableContainer(status: VpsComputerStatus) {
     status.mounts !== "none" ||
     status.security !== "hardened"
   ) {
-    throw Object.assign(new Error(status.problem ?? "The existing VPS container is unsafe or incompatible"), {
+    throw Object.assign(new Error(status.problem ?? t("The existing VPS container is unsafe or incompatible")), {
       status: 409,
     });
   }
@@ -730,7 +733,7 @@ async function withVpsLifecycleLock<T>(key: string, operation: () => Promise<T>)
         release();
         if (lifecycleLocks.get(key) === current) lifecycleLocks.delete(key);
       });
-      throw Object.assign(new Error("the VPS is being prepared — try again shortly"), { status: 409 });
+      throw Object.assign(new Error(t("the VPS is being prepared — try again shortly")), { status: 409 });
     }
   }
   try {
@@ -753,7 +756,7 @@ export async function vpsComputerAction(
   runner: VpsCommandRunner = defaultRunner,
 ): Promise<VpsComputerStatus> {
   const alias = vpsSshAlias(cfg);
-  if (!alias) throw Object.assign(new Error("VPS is not configured — add an SSH config alias in App Settings → Connections"), { status: 409 });
+  if (!alias) throw Object.assign(new Error(t("VPS is not configured — add an SSH config alias in App Settings → Connections")), { status: 409 });
   const key = `${alias}:${vpsContainerName(botId)}`;
   const operation = async () => {
     // A mutation invalidates every cached poll answer, before and after: the
@@ -761,7 +764,7 @@ export async function vpsComputerAction(
     statusCache.delete(key);
     try {
       const before = await computeVpsComputerStatus(cfg, botId, runner);
-      if (!before.daemonUp) throw Object.assign(new Error(before.problem ?? "Docker over SSH is not reachable"), { status: 409 });
+      if (!before.daemonUp) throw Object.assign(new Error(before.problem ?? t("Docker over SSH is not reachable")), { status: 409 });
       // A real lifecycle change invalidates the remote endpoint. Provision
       // is also the turn-start idempotency path, so leave an already-running
       // viewer alone when no start/replacement will occur.
@@ -776,15 +779,15 @@ export async function vpsComputerAction(
             await prepareVpsImage(alias, runner);
             imageRef = (await computeVpsComputerStatus(cfg, botId, runner)).image_id;
           }
-          if (!imageRef) throw Object.assign(new Error("The prepared VPS image could not be identified"), { status: 409 });
+          if (!imageRef) throw Object.assign(new Error(t("The prepared VPS image could not be identified")), { status: 409 });
           await run(vpsContainerRunArgs(before.container_name, imageRef));
         } else {
           assertUsableContainer(before);
           if (before.container === "stopped") await run(["start", containerRef]);
         }
       } else if (action === "start") {
-        if (before.container === "missing") throw Object.assign(new Error("No VPS container exists for this bot"), { status: 409 });
-        if (before.container === "running") throw Object.assign(new Error("The VPS container is already running"), { status: 409 });
+        if (before.container === "missing") throw Object.assign(new Error(t("No VPS container exists for this bot")), { status: 409 });
+        if (before.container === "running") throw Object.assign(new Error(t("The VPS container is already running")), { status: 409 });
         assertUsableContainer(before);
         await run(["start", containerRef]);
       } else if (action === "remove") {
@@ -797,14 +800,14 @@ export async function vpsComputerAction(
         if (before.container === "missing") return before;
         if (!before.managed) {
           throw Object.assign(
-            new Error("The VPS container name is occupied by a container OpenMausBot did not create — remove it on the VPS yourself"),
+            new Error(t("The VPS container name is occupied by a container OpenMausBot did not create — remove it on the VPS yourself")),
             { status: 409 },
           );
         }
         await run(["rm", "-f", containerRef]);
         return computeVpsComputerStatus(cfg, botId, runner);
       } else {
-        if (before.container !== "running") throw Object.assign(new Error("The VPS container is not running"), { status: 409 });
+        if (before.container !== "running") throw Object.assign(new Error(t("The VPS container is not running")), { status: 409 });
         assertUsableContainer(before);
         await run(["stop", containerRef]);
       }
@@ -852,7 +855,7 @@ export async function vpsComputerJoin(
   runner: VpsCommandRunner = defaultRunner,
 ): Promise<{ joinUrl: string; state: "running" }> {
   const alias = vpsSshAlias(cfg);
-  if (!alias) throw Object.assign(new Error("VPS is not configured"), { status: 409 });
+  if (!alias) throw Object.assign(new Error(t("VPS is not configured")), { status: 409 });
 
   const existing = desktopTunnels.get(botId);
   if (existing && existing.child.exitCode === null && !existing.child.killed) {
@@ -865,12 +868,12 @@ export async function vpsComputerJoin(
   // endpoint must not reuse.
   const status = await computeVpsComputerStatus(cfg, botId, runner);
   if (!status.ready) {
-    throw Object.assign(new Error(status.problem ?? "The VPS computer is not ready"), { status: 409 });
+    throw Object.assign(new Error(status.problem ?? t("The VPS computer is not ready")), { status: 409 });
   }
   const connection = viewerConnections.get(`${alias}:${status.container_name}`);
   if (!connection) {
     throw Object.assign(
-      new Error("This VPS computer predates secure live desktop access — replace its managed container once"),
+      new Error(t("This VPS computer predates secure live desktop access — replace its managed container once")),
       { status: 409 },
     );
   }
@@ -907,8 +910,8 @@ export async function vpsComputerJoin(
   }
   if (failure || !(await loopbackAnswers(localPort))) {
     if (child.exitCode === null && !child.killed) child.kill("SIGTERM");
-    const detail = failure || stderr.trim() || "the SSH port forward did not become ready";
-    throw Object.assign(new Error(`Could not open the VPS live desktop: ${detail}`), { status: 502 });
+    const detail = failure || stderr.trim() || t("the SSH port forward did not become ready");
+    throw Object.assign(new Error(t("Could not open the VPS live desktop: {detail}", { detail })), { status: 502 });
   }
 
   const joinUrl = `http://127.0.0.1:${localPort}/vnc.html#autoconnect=true&resize=scale&password=${encodeURIComponent(connection.password)}`;
@@ -936,7 +939,7 @@ export function vpsComputerMcp(cfg: AppConfig, botId: string, containerRef?: str
   env: Record<string, string>;
 } {
   const alias = vpsSshAlias(cfg);
-  if (!alias) throw new Error("VPS is not configured — add an SSH config alias first");
+  if (!alias) throw new Error(t("VPS is not configured — add an SSH config alias first"));
   return {
     command: process.execPath,
     args: [SPAWNED_PROXIES.vpsContainerMcp, alias, containerRef ?? vpsContainerName(botId)],
@@ -946,10 +949,10 @@ export function vpsComputerMcp(cfg: AppConfig, botId: string, containerRef?: str
 
 export function vpsDriverError(driverKind: string, computerMcp: boolean): string | null {
   if (driverKind === "boxAgent") {
-    return "The Computer engine runs its agent on Box and cannot use a self-hosted VPS — choose Claude or an ACP engine";
+    return t("The Computer engine runs its agent on Box and cannot use a self-hosted VPS — choose Claude or an ACP engine");
   }
   if (!computerMcp) {
-    return "This model engine cannot mount a self-hosted VPS computer — choose Claude or an ACP engine";
+    return t("This model engine cannot mount a self-hosted VPS computer — choose Claude or an ACP engine");
   }
   return null;
 }
@@ -960,7 +963,7 @@ export async function vpsComputerScreenshot(
   runner: VpsCommandRunner = defaultRunner,
 ): Promise<{ png: string; format: "png" | "jpeg" }> {
   const alias = vpsSshAlias(cfg);
-  if (!alias) throw Object.assign(new Error("VPS is not configured"), { status: 409 });
+  if (!alias) throw Object.assign(new Error(t("VPS is not configured")), { status: 409 });
   const key = `${alias}:${vpsContainerName(botId)}`;
   const cacheable = runner === defaultRunner;
   return withVpsLifecycleLock(key, async () => {
@@ -974,7 +977,7 @@ export async function vpsComputerScreenshot(
         : await computeVpsComputerStatus(cfg, botId, runner);
     if (!status.ready) {
       if (cacheable) statusCache.delete(key);
-      throw Object.assign(new Error(status.problem ?? "The VPS computer is not ready"), { status: 409 });
+      throw Object.assign(new Error(status.problem ?? t("The VPS computer is not ready")), { status: 409 });
     }
     if (cacheable) statusCache.set(key, { status, expiresAt: Date.now() + STATUS_CACHE_TTL_MS });
     const containerRef = status.container_id ?? status.container_name;
@@ -982,7 +985,7 @@ export async function vpsComputerScreenshot(
     // more step removed from the inspect that produced it — revalidate the
     // exact shapes before spending an exec on it.
     if (!CONTAINER_ID.test(containerRef) && !CONTAINER_NAME.test(containerRef)) {
-      throw Object.assign(new Error("the VPS container reference is malformed"), { status: 409 });
+      throw Object.assign(new Error(t("the VPS container reference is malformed")), { status: 409 });
     }
     try {
       await runner(
@@ -1007,7 +1010,7 @@ export async function vpsComputerScreenshot(
         SCREENSHOT_PATH,
       ]), { timeoutMs: 30_000 })).stdout.trim();
       const checked = wholeScreenshot(Buffer.from(encoded, "base64"));
-      if (!checked.ok) throw Object.assign(new Error("Cua Driver returned an incomplete VPS screenshot"), { status: 502 });
+      if (!checked.ok) throw Object.assign(new Error(t("Cua Driver returned an incomplete VPS screenshot")), { status: 502 });
       return { png: encoded, format: checked.mime === "image/jpeg" ? "jpeg" : "png" };
     } catch (error) {
       // The failure may mean the world changed (container stopped, link

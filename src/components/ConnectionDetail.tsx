@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, Copy } from "lucide-react";
+import { t } from "@/lib/i18n";
 
 export const addressPreview = (value: string): string => {
   if (value.length <= 3) return "…";
@@ -45,11 +46,11 @@ export function ConnectionDetail({ label, value }: { label: string; value: strin
         onClick={() => setRevealed((current) => !current)}
         className="shrink-0 rounded px-2 py-1 text-[11px] text-ink-secondary hover:bg-control hover:text-ink"
       >
-        {revealed ? "Hide" : "Reveal"}
+        {revealed ? t("Hide") : t("Reveal")}
       </button>
       <button
         onClick={() => void copy()}
-        aria-label={`Copy ${label}`}
+        aria-label={t("Copy {label}", { label })}
         className="shrink-0 rounded p-1.5 text-ink-secondary hover:bg-control hover:text-ink"
       >
         {copied ? <Check size={13} className="text-success" /> : <Copy size={13} />}

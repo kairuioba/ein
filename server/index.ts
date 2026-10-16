@@ -18,6 +18,7 @@ import {
   isCredentialTargetId,
   type CredentialTargetId,
 } from "../shared/credential-request.ts";
+import { t, tn } from "../shared/i18n.ts";
 
 import { approvalKey, autoVerdict } from "./auto-approve.ts";
 import { requestReview, resolveAutoReviewMode, shouldReview } from "./auto-review.ts";
@@ -56,6 +57,10 @@ import * as box from "./box.ts";
 import { cloudBackendChangeError, vpsAliasChangeError } from "./cloud-backend.ts";
 import * as composio from "./composio.ts";
 import { chiefOfStaffSystemPrompt } from "./chief-of-staff.ts";
+import { Dispatcher, dispatchSettings } from "./dispatch.ts";
+import { handleDispatchApi } from "./dispatch-api.ts";
+import { candidatesFromInstances, recommendModels, type InstanceLike } from "../shared/model-recommender.ts";
+import { getLocale, isLocale, replyLanguageInstruction, setLocale } from "../shared/i18n.ts";
 import { openMausStatusSystemPrompt } from "./openmaus-status-capsule.ts";
 import {
   containerComputerAction,
@@ -234,6 +239,9 @@ const MIME: Record<string, string> = {
 
 ensureDirs();
 const cfg = loadConfig();
+// The desktop shell passes its language as OMB_LOCALE; a dev server falls back
+// to the saved setting. shared/i18n.ts already honours OMB_LOCALE itself.
+if (!isLocale(process.env.OMB_LOCALE) && isLocale(cfg.locale)) setLocale(cfg.locale);
 const registry = new ProviderRegistry(BUILT_IN_DRIVERS);
 await registry.load(instanceConfigs(cfg));
 const bundledSkills = loadBundledSkills();
@@ -313,7 +321,13 @@ const phoneProxyPath = SPAWNED_PROXIES.phone;
 // in the packaged app process.execPath is Electron — run the proxy as node
 const AGENTS_NODE_FLAG = { ELECTRON_RUN_AS_NODE: "1" };
 
-function agentsIntegration(botId: string, threadId: string, depth: number, skillAuthoring: boolean) {
+function agentsIntegration(
+  botId: string,
+  threadId: string,
+  depth: number,
+  skillAuthoring: boolean,
+  dispatch?: { maxSubtasks: number },
+) {
   return {
     command: process.execPath,
     args: [agentsProxyPath],
@@ -325,6 +339,8 @@ function agentsIntegration(botId: string, threadId: string, depth: number, skill
       OMB_COMMS_TOKEN: COMMS_TOKEN,
       OMB_TURN_DEPTH: String(depth),
       OMB_SKILL_AUTHORING_ENABLED: skillAuthoring ? "1" : "0",
+      OMB_DISPATCH_ENABLED: dispatch ? "1" : "0",
+      OMB_DISPATCH_MAX_SUBTASKS: String(dispatch?.maxSubtasks ?? 8),
     },
   };
 }
@@ -683,10 +699,10 @@ function checkedModelSelection(
   }
   const value = raw as { instanceId?: unknown; model?: unknown; effort?: unknown };
   if (typeof value.instanceId !== "string" || !value.instanceId.trim()) {
-    return { ok: false, status: 400, error: "modelSelection.instanceId is required" };
+    return { ok: false, status: 400, error: t("modelSelection.instanceId is required") };
   }
   if (typeof value.model !== "string" || !value.model.trim()) {
-    return { ok: false, status: 400, error: "modelSelection.model is required" };
+    return { ok: false, status: 400, error: t("modelSelection.model is required") };
   }
   const selection: ModelSelection = {
     instanceId: value.instanceId.trim(),
@@ -704,7 +720,7 @@ function checkedModelSelection(
     selection.effort !== current.selection.effort
   );
   if (current?.busy && changed) {
-    return { ok: false, status: 409, error: "the bot is working — stop it before changing models" };
+    return { ok: false, status: 409, error: t("the bot is working — stop it before changing models") };
   }
   const target = registry.get(selection.instanceId);
   // Model IDs remain free-form at the app's general API boundary. Custom
@@ -728,7 +744,7 @@ function checkedModelSelection(
   }
   const allowed: readonly string[] = target?.adapter.capabilities.effortLevels ?? [];
   if (target && selection.effort !== undefined && !allowed.includes(selection.effort)) {
-    return { ok: false, status: 400, error: `effort "${selection.effort}" is not offered by this bot's engine` };
+    return { ok: false, status: 400, error: t(`effort "{effort}" is not offered by this bot's engine`, { effort: selection.effort }) };
   }
   return { ok: true, selection };
 }
@@ -754,17 +770,17 @@ function checkedMemberIds(value: unknown): { ok: true; memberIds: string[] } | {
     (id) => typeof id !== "string" || !id.trim() || !store.bot(id),
   );
   if (invalidIndex !== -1) {
-    return { ok: false, error: `unknown channel member: ${String(value[invalidIndex])}` };
+    return { ok: false, error: t("unknown channel member: {id}", { id: String(value[invalidIndex]) }) };
   }
   const memberIds = [...new Set(value as string[])];
-  if (!memberIds.length) return { ok: false, error: "a channel needs at least one bot" };
+  if (!memberIds.length) return { ok: false, error: t("a channel needs at least one bot") };
   // A room whose every member is archived accepts messages and answers none of
   // them — the failure only surfaces later, as "… is archived and can't
   // respond" on the first turn. Refuse it here, where the mistake is made.
   if (memberIds.every((id) => store.bot(id)?.hidden)) {
     return {
       ok: false,
-      error: "a channel needs at least one active bot — every member given is archived",
+      error: t("a channel needs at least one active bot — every member given is archived"),
     };
   }
   return { ok: true, memberIds };
@@ -1144,7 +1160,7 @@ async function answerRequest(
     store.appendMessage(threadId, {
       role: "bot",
       kind: "activity",
-      tool: { name: "Couldn't deliver that answer — the request is no longer open, so the action was not run", ok: false },
+      tool: { name: t("Couldn't deliver that answer — the request is no longer open, so the action was not run"), ok: false },
     });
   }
   return outcome;
@@ -1220,9 +1236,10 @@ const watchdog = new TurnWatchdog({
     store.appendMessage(turn.threadId, {
       role: "bot",
       kind: "activity",
-      tool: { name: `error: no activity for ${minutes} minutes — the turn was stopped`, ok: false },
+      tool: { name: `error: ${t("no activity for {minutes} minutes — the turn was stopped", { minutes })}`, ok: false },
     });
-    finalizeDelegationWatch(turn.threadId, false, "", "Delegated turn stalled and was stopped");
+    finalizeDelegationWatch(turn.threadId, false, "", t("Delegated turn stalled and was stopped"));
+    dispatcher.onTurnSettled(turn.threadId, false, "", "stalled");
     turnUsage.delete(turn.threadId);
     roomStallCompletions.stall(turn.threadId);
     // ACP interruption settles within five seconds; other adapters settle
@@ -1312,7 +1329,7 @@ async function reviewPermissionCard(args: {
   store.appendMessage(args.threadId, {
     role: "bot",
     kind: "activity",
-    tool: { name: `review approved ${args.tool}: ${reviewed.reason}`, ok: true },
+    tool: { name: t("review approved {tool}: {reason}", { tool: args.tool, reason: reviewed.reason }), ok: true },
   });
   appendDecision(DATA_DIR, {
     threadId: args.threadId,
@@ -1578,7 +1595,7 @@ bus.subscribe((event: RuntimeEvent) => {
               role: "bot",
               kind: "options",
               card: {
-                title: "Approval needed",
+                title: t("Approval needed"),
                 subtitle: summary,
                 options: ["Allow", "Deny"],
                 requestId,
@@ -1586,7 +1603,7 @@ bus.subscribe((event: RuntimeEvent) => {
                 allowKey: event.approvalScope
                   ? undefined
                   : approvalKey(tool, summary, event.approvalScope),
-                held: "Auto mode couldn't answer this one.",
+                held: t("Auto mode couldn't answer this one."),
                 approvalScope: event.approvalScope,
               },
             });
@@ -1612,10 +1629,10 @@ bus.subscribe((event: RuntimeEvent) => {
         card: {
           title:
             permission && event.approvalScope === "local-computer"
-              ? "Local computer approval"
+              ? t("Local computer approval")
               : permission
-                ? "Approval needed"
-                : "Your bot has a question",
+                ? t("Approval needed")
+                : t("Your bot has a question"),
           subtitle: event.summary,
           options: event.choices?.length ? event.choices : permission ? ["Allow", "Deny"] : [],
           requestId: event.requestId,
@@ -1629,7 +1646,7 @@ bus.subscribe((event: RuntimeEvent) => {
           // in auto mode a card can only mean the guard stopped it — say so
           held:
             permission && asker?.autoApprove
-              ? "This looked destructive, so auto mode stopped to ask."
+              ? t("This looked destructive, so auto mode stopped to ask.")
               : undefined,
           approvalScope: event.approvalScope,
         },
@@ -1736,7 +1753,7 @@ bus.subscribe((event: RuntimeEvent) => {
       pushMessage({
         role: "bot",
         kind: "activity",
-        tool: { name: `retrying — attempt ${event.attempt + 1}/${RETRY_MAX_ATTEMPTS} in ${Math.round(event.delayMs / 1000)}s — ${event.reason}`, ok: true },
+        tool: { name: t("retrying — attempt {attempt}/{max} in {seconds}s — {reason}", { attempt: event.attempt + 1, max: RETRY_MAX_ATTEMPTS, seconds: Math.round(event.delayMs / 1000), reason: event.reason }), ok: true },
       });
       break;
     case "runtime.error":
@@ -1836,9 +1853,10 @@ bus.subscribe((event: RuntimeEvent) => {
       // channel that only ever shows requests is half a record. Mirror the
       // reply on success; mirror a failed/stopped terminal chip otherwise.
       const delegationFailureName = !event.ok && event.stopReason?.trim()
-        ? `Delegated turn did not finish — ${event.stopReason.trim().slice(0, 120)}`
+        ? t("Delegated turn did not finish — {reason}", { reason: event.stopReason.trim().slice(0, 120) })
         : undefined;
       finalizeDelegationWatch(event.threadId, event.ok, reply, delegationFailureName);
+      dispatcher.onTurnSettled(event.threadId, event.ok, reply, event.ok ? undefined : event.stopReason ?? undefined);
       // group busy/unread settle in the group turn engine, which knows
       // whether more member turns are queued behind this one
       break;
@@ -1891,7 +1909,7 @@ function finalizeDelegationWatch(
   threadId: string,
   ok: boolean,
   reply = "",
-  failureName = "Delegated turn did not finish",
+  failureName = t("Delegated turn did not finish"),
 ): boolean {
   const watched = delegationWatch.get(threadId);
   if (!watched) return false;
@@ -1917,7 +1935,7 @@ function finalizeDelegationWatch(
       const sourceReply: Omit<Message, "id" | "at"> = {
         role: "bot",
         kind: "text",
-        text: `@${targetName} replied to the delegated task:\n\n${reply.trim()}`,
+        text: `${t("@{name} replied to the delegated task:", { name: targetName })}\n\n${reply.trim()}`,
       };
       if (target) sourceReply.from = { botId: target.id, name: target.name, color: target.color };
       store.appendMessage(watched.sourceThreadId, sourceReply);
@@ -1927,8 +1945,8 @@ function finalizeDelegationWatch(
         kind: "activity",
         tool: {
           name: ok
-            ? `Delegation to @${targetName} completed without a text reply`
-            : `Delegation to @${targetName} failed — ${failureName}`,
+            ? t("Delegation to @{name} completed without a text reply", { name: targetName })
+            : t("Delegation to @{name} failed — {reason}", { name: targetName, reason: failureName }),
           ok,
         },
       });
@@ -1938,7 +1956,7 @@ function finalizeDelegationWatch(
   const channel = watched.channelId ? store.group(watched.channelId) : undefined;
   if (!target || !channel) return true;
   if (ok && reply.trim()) mirrorReply(commsBus, target, reply, channel);
-  else if (ok) mirrorActivity(commsBus, target, channel, "Delegated turn completed", true);
+  else if (ok) mirrorActivity(commsBus, target, channel, t("Delegated turn completed"), true);
   else mirrorActivity(commsBus, target, channel, failureName, false);
   return true;
 }
@@ -1967,7 +1985,7 @@ bus.subscribe((event: RuntimeEvent) => {
   store.appendMessage(event.threadId, {
     role: "bot",
     kind: "activity",
-    tool: { name: `Same call repeated ${threshold}× — ${tool}: ${args.slice(0, 80)}${args.length > 80 ? "…" : ""} — it may be stuck`, ok: false },
+    tool: { name: t("Same call repeated {count}× — {tool}: {args} — it may be stuck", { count: threshold, tool, args: `${args.slice(0, 80)}${args.length > 80 ? "…" : ""}` }), ok: false },
   });
 });
 
@@ -2005,7 +2023,7 @@ const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, text,
           targetThreadId,
           false,
           "",
-          `Delegated turn could not start — ${why.slice(0, 120)}`,
+          t("Delegated turn could not start — {reason}", { reason: why.slice(0, 120) }),
         );
         if (finalized) return;
       }
@@ -2014,7 +2032,7 @@ const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, text,
       store.appendMessage(sourceThreadId, {
         role: "bot",
         kind: "activity",
-        tool: { name: `error: delegation to @${bot?.name ?? toBotId} could not start — ${why.slice(0, 120)}`, ok: false },
+        tool: { name: `error: ${t("delegation to @{name} could not start — {reason}", { name: bot?.name ?? toBotId, reason: why.slice(0, 120) })}`, ok: false },
       });
     };
     return startTurn(toBotId, text, {
@@ -2034,6 +2052,62 @@ const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, text,
 // bot without that event, so every explicit idle release calls this same
 // coalesced retry hook. The microtask lets the releasing state machine finish
 // before another turn claims the bot.
+// ── dispatch hub (调度中枢) ────────────────────────────────────────────
+// Chiefs submit plans with submit_plan; the dispatcher assigns, creates,
+// runs and synthesizes (server/dispatch.ts). Engine descriptions for the
+// model recommender are refreshed in the background so creating a bot never
+// waits on CLI probes.
+let recommenderInstances: InstanceLike[] = [];
+const refreshRecommenderInstances = () => {
+  void registry
+    .describe()
+    .then((rows) => {
+      recommenderInstances = rows as InstanceLike[];
+    })
+    .catch(() => {});
+};
+setTimeout(refreshRecommenderInstances, 2_000).unref?.();
+setInterval(refreshRecommenderInstances, 60_000).unref?.();
+const dispatcher = new Dispatcher({
+  bots: () => store.bots,
+  bot: (id) => store.bot(id) ?? undefined,
+  createBot: (input) => {
+    const created = store.createBot(
+      { name: input.name, title: input.title, description: input.description, section: input.section, modelSelection: input.modelSelection },
+      { seedMessages: false },
+    );
+    // same safe defaults as create_bot: no connected apps, no auto-approval
+    return store.patchBot(created.id, { composio: false, autoApprove: false, approvePeerComms: false }) ?? created;
+  },
+  createTask: (botId, title) => {
+    const task = store.createTask(botId, title, false);
+    return task ? { threadId: task.threadId } : null;
+  },
+  startTurn: async (botId, text, opts) => {
+    await startTurn(botId, text, {
+      threadId: opts.threadId,
+      // workers and the synthesis turn never get team tools: no re-dispatch loops
+      commsDepth: MAX_COMMS_DEPTH,
+      ...(opts.continuation ? { cardContinuation: true } : {}),
+    });
+  },
+  interrupt: async (botId, threadId) => {
+    const bot = store.bot(botId);
+    const instance = bot ? registry.get(bot.modelSelection.instanceId) : null;
+    await instance?.adapter.interruptTurn(threadId);
+  },
+  activity: (threadId, label, ok) => {
+    store.appendMessage(threadId, { role: "bot", kind: "activity", tool: { name: label, ...(ok === false ? { ok: false } : {}) } });
+  },
+  recommend: (task, policy) => recommendModels(task, candidatesFromInstances(recommenderInstances), policy, { limit: 1 })[0] ?? null,
+  broadcast: (run) => broadcast({ type: "dispatch.run", run }),
+  broadcastRoutes: (routes) => broadcast({ type: "dispatch.routes", routes }),
+  settings: () => dispatchSettings(cfg.dispatch),
+  maxBots: MAX_WORKSPACE_BOTS,
+});
+dispatcher.load();
+setTimeout(() => dispatcher.resumeAll(), 3_000).unref?.();
+
 const delegationRetryBots = new Set<string>();
 function retryDelegationsWaitingOn(botId: string): void {
   if (delegationRetryBots.has(botId)) return;
@@ -2041,6 +2115,7 @@ function retryDelegationsWaitingOn(botId: string): void {
   queueMicrotask(() => {
     delegationRetryBots.delete(botId);
     if (store.bot(botId)?.busy) return;
+    dispatcher.onBotIdle(botId);
     for (const waitingThread of releaseDelegationsWaitingOn(botId)) {
       drainDelegations(commsBus, approvalBus, waitingThread, runDelegatedTurn);
     }
@@ -2091,7 +2166,7 @@ function drainQueuedSends() {
         role: "bot",
         kind: "activity",
         tool: {
-          name: `error: queued message could not start — ${(err instanceof Error ? err.message : String(err)).slice(0, 120)}`,
+          name: `error: ${t("queued message could not start — {reason}", { reason: (err instanceof Error ? err.message : String(err)).slice(0, 120) })}`,
           ok: false,
         },
       });
@@ -2246,9 +2321,9 @@ async function startTurn(
   },
 ) {
   const bot = store.bot(botId);
-  if (!bot) throw Object.assign(new Error("no such bot"), { status: 404 });
+  if (!bot) throw Object.assign(new Error(t("no such bot")), { status: 404 });
   if (checkpointRestoreLeases.has(botId)) {
-    throw Object.assign(new Error("this bot's project files are being restored — wait for the restore to finish"), {
+    throw Object.assign(new Error(t("this bot's project files are being restored — wait for the restore to finish")), {
       status: 409,
     });
   }
@@ -2259,7 +2334,7 @@ async function startTurn(
   // a person typing into this bot ends the unattended window immediately
   else if (opts?.automationSource === undefined && !opts?.commsDepth && !opts?.cardContinuation) clearUnattended(bot.id);
   const task = store.taskByThread(bot.id, threadId);
-  if (!task) throw Object.assign(new Error("no such task"), { status: 404 });
+  if (!task) throw Object.assign(new Error(t("no such task")), { status: 404 });
   const commsDepth = opts?.commsDepth ?? 0;
   // a task takes its name from the first thing you asked it to do
   if (text.trim() && !opts?.cardContinuation) store.titleTaskFromFirstMessage(bot.id, text, threadId);
@@ -2271,8 +2346,8 @@ async function startTurn(
     throw Object.assign(
       new Error(
         opts?.runOn === "cloud"
-          ? "the Cloud VM runner is unavailable — configure Box in App Settings"
-          : `provider instance "${bot.modelSelection.instanceId}" is unavailable — pick another model in settings`,
+          ? t("the Cloud VM runner is unavailable — configure Box in App Settings")
+          : t('provider instance "{id}" is unavailable — pick another model in settings', { id: bot.modelSelection.instanceId }),
       ),
       { status: 409 },
     );
@@ -2286,7 +2361,7 @@ async function startTurn(
   // the engine returns so an old or unsupported value never reaches a CLI.
   if (effort && !instance.adapter.capabilities.effortLevels?.includes(effort)) {
     throw Object.assign(
-      new Error(`effort "${effort}" is not offered by this bot's engine — choose another level in settings`),
+      new Error(t(`effort "{effort}" is not offered by this bot's engine — choose another level in settings`, { effort })),
       { status: 409 },
     );
   }
@@ -2362,6 +2437,7 @@ async function startTurn(
     `You are ${bot.name}, a personal bot in OpenMausBot.`,
     bot.title && `Role: ${bot.title}.`,
     bot.description && `About: ${bot.description}`,
+    replyLanguageInstruction(),
   ]
     .filter(Boolean)
     .join(" ");
@@ -2443,24 +2519,24 @@ async function startTurn(
       // fall through to host CUA and accidentally click on the user's Mac.
       if (wants === "vm") {
         if (!mountsComputerMcp || instance.driverKind === "boxAgent") {
-          throw new Error("this model engine cannot use the Local VM — choose Claude or an ACP engine, or select another computer destination");
+          throw new Error(t("this model engine cannot use the Local VM — choose Claude or an ACP engine, or select another computer destination"));
         }
         const localVmTarget = localVmTargetForBot(bot.id);
         if (localVmImageBusy || localVmModeChangeBusy || localVmLifecycleBusy.has(localVmTarget.key)) {
-          throw new Error("this Local VM is being started, stopped, or replaced — wait for setup to finish");
+          throw new Error(t("this Local VM is being started, stopped, or replaced — wait for setup to finish"));
         }
         // Claim before the first await. The lifecycle route performs its
         // matching check synchronously, so neither side can enter while the
         // other is between inspection and mutation.
         if (!localVmLeaseFor(localVmTarget).claim(threadId, bot.id, localVmOwnerBusy)) {
-          throw new Error("this Local VM is already being used by another turn — wait for that turn to finish");
+          throw new Error(t("this Local VM is already being used by another turn — wait for that turn to finish"));
         }
         localVmThreadTargets.set(threadId, localVmTarget);
         localVmActiveThreads.set(localVmTarget.key, threadId);
         localVmIdleFor(localVmTarget).touch();
         const localVm = await containerComputerStatus(undefined, undefined, localVmTarget);
         if (!localVm.ready || !localVm.runtime) {
-          throw new Error(`${localVm.problem ?? "the Local VM is not ready"} (App Settings → Local VM)`);
+          throw new Error(t("{problem} (App Settings → Local VM)", { problem: localVm.problem ?? t("the Local VM is not ready") }));
         }
         integrations.localComputer = containerComputerMcp(
           localVm.runtime,
@@ -2474,10 +2550,10 @@ async function startTurn(
           hostPlatform: process.platform,
           providerSupportsLocal: mountsLocalComputer,
         })) {
-          throw new Error("this model engine cannot control this computer — choose Claude or an ACP engine, or select another destination");
+          throw new Error(t("this model engine cannot control this computer — choose Claude or an ACP engine, or select another destination"));
         }
         const cua = readCuaConnection();
-        if (!cua) throw new Error("CUA Driver is not ready for this computer — check permissions and restart OpenMausBot");
+        if (!cua) throw new Error(t("CUA Driver is not ready for this computer — check permissions and restart OpenMausBot"));
         integrations.localComputer = cua;
         computerKind = "local";
       }
@@ -2507,9 +2583,9 @@ async function startTurn(
           } else {
             activeVpsThreads.delete(bot.id);
             if (wants === "cloud") {
-              throw new Error(remote?.problem ?? "the VPS computer could not be created or reached");
+              throw new Error(remote?.problem ?? t("the VPS computer could not be created or reached"));
             }
-            autoVpsProblem = remote?.problem ?? "the VPS computer could not be reached";
+            autoVpsProblem = remote?.problem ?? t("the VPS computer could not be reached");
           }
         }
       }
@@ -2518,7 +2594,7 @@ async function startTurn(
       // existing cloud box, then falls back to host CUA without provisioning.
       if ((wants === "cloud" || wants === undefined) && cloudBackend === "box" && box.boxConfigured(cfg)) {
         if (!mountsCloudComputer && wants === "cloud") {
-          throw new Error("this model engine cannot use computer tools — choose Claude, an ACP engine, or the Computer engine");
+          throw new Error(t("this model engine cannot use computer tools — choose Claude, an ACP engine, or the Computer engine"));
         }
         let b = await box.findBox(cfg, bot.id).catch(() => null);
         // Explicit Cloud and the box-native Computer engine provision on first
@@ -2550,10 +2626,10 @@ async function startTurn(
         }
       }
       if (wants === "cloud" && cloudBackend === "box" && !box.boxConfigured(cfg)) {
-        throw new Error("Cloud box is not configured — add a Box API key or choose Local VM");
+        throw new Error(t("Cloud box is not configured — add a Box API key or choose Local VM"));
       }
       if (wants === "cloud" && cloudBackend === "box" && !integrations.computer) {
-        throw new Error("the cloud computer could not be created or reached");
+        throw new Error(t("the cloud computer could not be created or reached"));
       }
 
       // Auto-only host fallback. Electron owns cua-driver/TCC attribution;
@@ -2582,9 +2658,9 @@ async function startTurn(
         autoVpsProblem
       ) {
         const hint = bot.autoStartVps
-          ? "Check the VPS connection in App Settings → Connections."
-          : "Open Computer and enable Start VPS automatically, or choose Cloud to start it manually.";
-        throw new Error(`${autoVpsProblem}. ${hint}`);
+          ? t("Check the VPS connection in App Settings → Connections.")
+          : t("Open Computer and enable Start VPS automatically, or choose Cloud to start it manually.");
+        throw new Error(t("{problem}. {hint}", { problem: autoVpsProblem, hint }));
       }
       // Agent control tools include peer comms and the secure credential
       // request card. A comms-invoked turn (depth ≥ cap) gets none — hard recursion
@@ -2603,7 +2679,13 @@ async function startTurn(
         commsDepth < MAX_COMMS_DEPTH &&
         instance.adapter.capabilities.agentsMcp === true
       ) {
-        integrations.agents = agentsIntegration(bot.id, threadId, commsDepth, skillAuthoring);
+        integrations.agents = agentsIntegration(
+          bot.id,
+          threadId,
+          commsDepth,
+          skillAuthoring,
+          bot.chiefOfStaff && dispatchSettings(cfg.dispatch).enabled ? { maxSubtasks: dispatchSettings(cfg.dispatch).maxSubtasks } : undefined,
+        );
       }
       // @mentions in the user's message (the composer's tagging UI) become
       // an explicit coordination nudge. The agent still chooses the matching
@@ -2620,6 +2702,8 @@ async function startTurn(
             store.bots,
             Boolean(integrations.agents),
             openMausStatusSystemPrompt(),
+            dispatchSettings(cfg.dispatch),
+            replyLanguageInstruction(),
           )
         : integrations.agents && sectionPeers.length > 0
           ? "You can work with the other bots in your section through the agents tools. list_bots shows who's available. Use delegate_bot for assigned or independent work so you remain available; use ask_bot only for a short consultation whose reply is required in your current answer."
@@ -2642,7 +2726,7 @@ async function startTurn(
       // a turn.
       if (checkpointCwd) await checkpoints.snapshot(bot.id, checkpointCwd, `turn ${threadId.slice(0, 8)}`);
       if (!directTurnClaimIsCurrent(bot.id, dispatchClaimId, threadId)) {
-        throw new DirectTurnSetupCancelled("turn stopped before dispatch");
+        throw new DirectTurnSetupCancelled(t("turn stopped before dispatch"));
       }
       // Mint the browser bearer at the last possible moment. The desktop
       // registration is asynchronous, so validate this exact setup claim
@@ -2672,7 +2756,7 @@ async function startTurn(
       // quarantine to expire, then revalidate this exact claim before launch.
       await pendingCancelledProviderHandshakes.waitForClear(threadId);
       if (!markDirectTurnDispatching(bot.id, dispatchClaimId, threadId)) {
-        throw new DirectTurnSetupCancelled("turn stopped before dispatch");
+        throw new DirectTurnSetupCancelled(t("turn stopped before dispatch"));
       }
       watchdog.watch(threadId, bot.id);
       const dispatch = await guardTurnDispatch(instance.adapter.sendTurn({
@@ -2730,7 +2814,7 @@ async function startTurn(
       });
       if (dispatch.cancelled) {
         retireProviderTurn(dispatch.value.turnId);
-        throw new DirectTurnSetupCancelled("turn stopped during provider setup");
+        throw new DirectTurnSetupCancelled(t("turn stopped during provider setup"));
       }
       clearDirectTurnDispatch(bot.id, dispatchClaimId);
       // dispatched: the rewind is spent, and the old cursors are dead
@@ -2835,17 +2919,17 @@ function routineRunCard(run: RoutineRun): NonNullable<Message["routineRun"]> {
 function routineRunFallbackText(card: NonNullable<Message["routineRun"]>): string {
   const state =
     card.status === "waiting"
-      ? "needs your attention"
+      ? t("needs your attention")
       : card.status === "completed"
-        ? "completed"
+        ? t("completed")
         : card.status === "failed"
-          ? "failed"
+          ? t("failed")
           : card.status === "cancelled"
-            ? "was cancelled"
+            ? t("was cancelled")
             : card.status === "missed"
-              ? "was missed"
+              ? t("was missed")
               : card.status;
-  return `Routine “${card.routineName}” ${state}`;
+  return t("Routine “{name}” {state}", { name: card.routineName, state });
 }
 
 /** Upsert one durable lifecycle card per run. Replaying the same transition,
@@ -3191,7 +3275,7 @@ async function runGroupMemberTurn(
   const instance = registry.get(bot.modelSelection.instanceId);
   const userName = cfg.profile?.name?.trim() || "User";
   if (!instance) {
-    const message = `${bot.name}'s model is unavailable`;
+    const message = t("{name}'s model is unavailable", { name: bot.name });
     store.appendMessage(threadId, {
       role: "bot",
       kind: "activity",
@@ -3206,7 +3290,7 @@ async function runGroupMemberTurn(
   // processes, interleaved token spend, and an interrupt that only ever
   // reached one of them.
   if (bot.busy) {
-    const message = `${bot.name} is busy in another conversation — skipped this round`;
+    const message = t("{name} is busy in another conversation — skipped this round", { name: bot.name });
     store.appendMessage(threadId, {
       role: "bot",
       kind: "activity",
@@ -3240,7 +3324,7 @@ async function runGroupMemberTurn(
       if (connection) integrations.composio = connection;
     }
   } catch (error) {
-    const message = `connected apps are unavailable — ${error instanceof Error ? error.message : String(error)}`;
+    const message = t("connected apps are unavailable — {reason}", { reason: error instanceof Error ? error.message : String(error) });
     store.appendMessage(threadId, {
       role: "bot",
       kind: "activity",
@@ -3260,7 +3344,7 @@ async function runGroupMemberTurn(
   const readyBot = store.bot(bot.id);
   if (!readyBot) return false;
   if (readyBot.busy) {
-    const message = `${bot.name} became busy in another conversation — skipped this round`;
+    const message = t("{name} became busy in another conversation — skipped this round", { name: bot.name });
     store.appendMessage(threadId, {
       role: "bot",
       kind: "activity",
@@ -3334,6 +3418,7 @@ async function runGroupMemberTurn(
       "If the user explicitly asks to list or review, schedule, run, or change routines, use list_routines and propose_routine or propose_routine_action. A proposal is not applied until the user confirms its in-app card, so never claim the action completed before that confirmation.",
     skillAuthoring &&
       "If the user sends /learn or asks you to save a reusable procedure from this work, use skills_list and skill_manage. Only create new skills, include the URL, folder, or conversation as source provenance, and wait for the user to review and enable the staged SKILL.md.",
+    replyLanguageInstruction(),
   ]
     .filter(Boolean)
     .join("\n");
@@ -3434,7 +3519,7 @@ async function runGroupMemberTurn(
       })
       .catch((err) => {
         onProviderHandshakeSettled?.();
-        const message = err instanceof Error ? err.message : "turn failed";
+        const message = err instanceof Error ? err.message : t("turn failed");
         store.appendMessage(threadId, {
           role: "bot",
           kind: "activity",
@@ -3522,9 +3607,9 @@ async function runGroupMemberTurn(
 
 function startGroupTurn(groupId: string, text: string, replyTo?: Message, sendId?: string) {
   const group = store.group(groupId);
-  if (!group) throw Object.assign(new Error("no such group"), { status: 404 });
+  if (!group) throw Object.assign(new Error(t("no such group")), { status: 404 });
   if (roomSetupPending(group)) {
-    throw Object.assign(new Error("finish room setup before sending the first message"), { status: 409 });
+    throw Object.assign(new Error(t("finish room setup before sending the first message")), { status: 409 });
   }
   // Capture the active thread once. Every queued responder below is bound to
   // this task even if another client asks to switch later.
@@ -3549,7 +3634,7 @@ function startGroupTurn(groupId: string, text: string, replyTo?: Message, sendId
       role: "bot",
       kind: "activity",
       tool: {
-        name: `${mentionedArchived.name} is archived and can't respond — restore it or mention an active room member.`,
+        name: t("{name} is archived and can't respond — restore it or mention an active room member.", { name: mentionedArchived.name }),
         ok: false,
       },
     });
@@ -3568,9 +3653,9 @@ function startGroupTurn(groupId: string, text: string, replyTo?: Message, sendId
     const defaultArchived = archived.find((member) => member.id === defaultArchivedId);
     let unavailableMessage: string | undefined;
     if (!mentionedArchived && !availableMembers.length) {
-      unavailableMessage = "No active room members can respond — restore an archived bot or add an active member.";
+      unavailableMessage = t("No active room members can respond — restore an archived bot or add an active member.");
     } else if (!mentionedArchived && defaultArchived) {
-      unavailableMessage = `${defaultArchived.name} is archived and can't respond — restore it or mention an active room member.`;
+      unavailableMessage = t("{name} is archived and can't respond — restore it or mention an active room member.", { name: defaultArchived.name });
     }
     if (unavailableMessage) {
       store.appendMessage(threadId, {
@@ -3592,7 +3677,7 @@ function startGroupTurn(groupId: string, text: string, replyTo?: Message, sendId
       store.appendMessage(threadId, {
         role: "bot",
         kind: "activity",
-        tool: { name: `${owner?.name ?? "A room member"} is still stopping — this message was not dispatched`, ok: false },
+        tool: { name: t("{name} is still stopping — this message was not dispatched", { name: owner?.name ?? t("A room member") }), ok: false },
       });
       return;
     }
@@ -3677,7 +3762,7 @@ function resolveReplyTarget(threadId: string, value: unknown): Message | undefin
   if (typeof value !== "string") throw Object.assign(new Error("replyToId must be a message id"), { status: 400 });
   const target = store.messagesFor(threadId).find((message) => message.id === value);
   if (!target || target.kind !== "text" || !target.text?.trim()) {
-    throw Object.assign(new Error("the message being replied to is no longer available"), { status: 404 });
+    throw Object.assign(new Error(t("the message being replied to is no longer available")), { status: 404 });
   }
   return target;
 }
@@ -3771,9 +3856,9 @@ function skillCardCopy(staged: { action: "create"; name: string; gist: string; w
   subtitle: string;
   tool: string;
 } {
-  const warnings = staged.warnings.length ? `\n\nWarnings:\n- ${staged.warnings.join("\n- ")}` : "";
+  const warnings = staged.warnings.length ? `\n\n${t("Warnings:")}\n- ${staged.warnings.join("\n- ")}` : "";
   return {
-    title: `Enable skill "${staged.name}"?`,
+    title: t('Enable skill "{name}"?', { name: staged.name }),
     subtitle: `${staged.gist || staged.name}${warnings}`,
     tool: "stage_skill",
   };
@@ -3848,7 +3933,7 @@ function resolveSkillRequest(args: {
   const request = card?.skillRequest;
   if (!request || !card || !message) return { claimed: false };
   if (request.botId !== args.botId) {
-    return { claimed: true, status: 403, error: "this skill request belongs to a different bot" };
+    return { claimed: true, status: 403, error: t("this skill request belongs to a different bot") };
   }
   if (card.answered || card.dismissed) {
     // Settlement is durable before cleanup. Retry cleanup for either outcome
@@ -3877,19 +3962,19 @@ function resolveSkillRequest(args: {
     return {
       claimed: true,
       status: 409,
-      error: "this proposal was created by an older build — deny it and ask the bot to create it again",
+      error: t("this proposal was created by an older build — deny it and ask the bot to create it again"),
     };
   }
   if (args.reviewedSha256 !== request.sha256) {
     return {
       claimed: true,
       status: 409,
-      error: "reviewedSha256 must match the skill shown on the approval card",
+      error: t("reviewedSha256 must match the skill shown on the approval card"),
     };
   }
   const previewSha256 = createHash("sha256").update(request.preview).digest("hex");
   if (previewSha256 !== request.sha256) {
-    return { claimed: true, status: 422, error: "the skill preview changed after review — deny and recreate it" };
+    return { claimed: true, status: 422, error: t("the skill preview changed after review — deny and recreate it") };
   }
   const applied = applyStagedSkillWrite(args.botId, request.stagedId, {
     expectedSha256: request.sha256,
@@ -3897,7 +3982,7 @@ function resolveSkillRequest(args: {
       const patched = store.patchMessage(args.threadId, message.id, {
         card: { ...card, answered: "allow" },
       });
-      if (!patched) throw new Error("the learned-skill approval card is no longer available");
+      if (!patched) throw new Error(t("the learned-skill approval card is no longer available"));
     },
   });
   if ("error" in applied) {
@@ -4175,12 +4260,12 @@ async function testCliBinary(
           const exceededBuffer = e.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
           const isSpawnError = typeof e.code === "string" && !exceededBuffer;
           const message = exceededBuffer
-            ? "CLI test produced more than 64 KiB of output"
+            ? t("CLI test produced more than 64 KiB of output")
             : isSpawnError
               ? describeSpawnFailure(e, cli).message
               : e.killed
-              ? "CLI test timed out after 10s"
-              : `CLI exited with error ${String(e.code)}: ${(stderrOf(err) || "").slice(0, 200) || err.message.split("\n")[0]}`;
+              ? t("CLI test timed out after 10s")
+              : t("CLI exited with error {code}: {detail}", { code: String(e.code), detail: (stderrOf(err) || "").slice(0, 200) || err.message.split("\n")[0] });
           resolve({ ok: false, message, ...(driver?.install && isSpawnError ? { install: driver.install } : {}) });
           return;
         }
@@ -4202,6 +4287,8 @@ function cliProbeEnvironment(): NodeJS.ProcessEnv {
     "OMB_COMPOSIO_BROKER_TOKEN",
     "OMB_TTS_KEY",
     "OMB_OPENAI_IMAGE_KEY",
+    "OMB_WORKBUDDY_API_KEY",
+    "CODEBUDDY_API_KEY",
     "ANTHROPIC_API_KEY",
     "OPENAI_API_KEY",
   ]) {
@@ -4249,6 +4336,53 @@ async function perBotLocalVmCountForModeChange(): Promise<number | null> {
   return existingPerBotLocalVmCount(runtime.runtime);
 }
 
+/** Who is handing work to whom right now — the Team map and the workbench. */
+function teamMapSnapshot() {
+  const visible = new Set(store.bots.filter((bot) => !bot.hidden).map((bot) => bot.id));
+  const collaborations = store.groups
+    .filter(
+      (group) =>
+        group.dm === true &&
+        group.memberIds.length === 2 &&
+        group.memberIds.every((botId) => visible.has(botId)),
+    )
+    .map((group) => ({
+      groupId: group.id,
+      botIds: [group.memberIds[0], group.memberIds[1]] as [string, string],
+      lastAt: store.messagesFor(group.threadId).at(-1)?.at ?? group.createdAt,
+    }))
+    .sort((a, b) => b.lastAt - a.lastAt);
+  const queued = pendingDelegationSnapshot().flatMap((item) => {
+    const source = store.botByThread(item.sourceThreadId);
+    if (!source || !visible.has(source.id) || !visible.has(item.toBotId)) return [];
+    return [{ sourceBotId: source.id, targetBotId: item.toBotId, reason: item.reason }];
+  });
+  const running = [...delegationWatch.entries()].flatMap(([threadId, watch]) => {
+    if (!visible.has(watch.toBotId)) return [];
+    const channel = watch.channelId ? store.group(watch.channelId) : undefined;
+    const sourceBotId = channel?.memberIds.find((botId) => botId !== watch.toBotId);
+    if (!sourceBotId || !visible.has(sourceBotId)) return [];
+    return [{ sourceBotId, targetBotId: watch.toBotId, threadId, groupId: channel?.id }];
+  });
+  return { collaborations, queued, running };
+}
+
+const dispatchApiDeps = {
+  dispatcher,
+  readBody,
+  json,
+  teamMapSnapshot,
+  ownsThread: (botId: string, threadId: string) => Boolean(connectorThread(botId, threadId)),
+  botName: (botId: string) => store.bot(botId)?.name,
+  modelLabel: (botId: string) => {
+    const selection = store.bot(botId)?.modelSelection;
+    if (!selection) return undefined;
+    const instance = registry.get(selection.instanceId);
+    const label = instance?.models.options.find((option) => option.id === selection.model)?.label ?? selection.model;
+    return `${instance?.displayName ?? selection.instanceId} · ${label}`;
+  },
+};
+
 function configStatus() {
   return {
     xai: { configured: Boolean(cfg.xai?.key) },
@@ -4279,6 +4413,9 @@ function configStatus() {
     // show the same durable session as an agent, but config PATCH validation
     // keeps it read-only and rejects callers that try to choose it.
     browserProfiles: cfg.browserProfiles ?? [],
+    locale: getLocale(),
+    dispatch: dispatchSettings(cfg.dispatch),
+    workbuddy: { configured: Boolean(cfg.workbuddy?.apiKey), environment: cfg.workbuddy?.environment ?? "international" },
   };
 }
 
@@ -4304,12 +4441,12 @@ async function reloadProviders() {
       b.threadId,
       false,
       "",
-      "Delegated turn did not finish — provider settings changed",
+      t("Delegated turn did not finish — provider settings changed"),
     );
     store.appendMessage(b.threadId, {
       role: "bot",
       kind: "activity",
-      tool: { name: "error: turn interrupted — provider settings changed", ok: false },
+      tool: { name: `error: ${t("turn interrupted — provider settings changed")}`, ok: false },
     });
     store.setActivity(b.id, "idle");
     retryDelegationsWaitingOn(b.id);
@@ -4351,7 +4488,7 @@ function readBody(req: IncomingMessage): Promise<any> {
         // Keep draining the socket, but stop retaining attacker-controlled
         // bytes. Destroying the request here prevents the caller from
         // receiving the useful 413 response.
-        return fail(413, "body too large");
+        return fail(413, t("body too large"));
       }
       data += c;
     });
@@ -4429,6 +4566,11 @@ const server = createServer(async (req, res) => {
     if (path.startsWith("/api/internal/")) {
       if (!authorizedComms(req.headers.authorization)) {
         return json(res, 401, { error: "unauthorized" });
+      }
+      if (
+        await handleDispatchApi(method, path, url, req, res, dispatchApiDeps, () => dispatchSettings(cfg.dispatch))
+      ) {
+        return;
       }
       if (method === "GET" && path === "/api/internal/agents") {
         const self = url.searchParams.get("self");
@@ -4712,7 +4854,7 @@ const server = createServer(async (req, res) => {
           store.appendMessage(fromThreadId, {
             role: "bot",
             kind: "activity",
-            tool: { name: `@${currentTarget.name} is still working — ask converted to a delegation` },
+            tool: { name: t("@{name} is still working — ask converted to a delegation", { name: currentTarget.name }) },
           });
           return json(res, 200, { timeout: true, taskId, toBotName: currentTarget.name, waitedMs: ASK_BOT_TIMEOUT_MS });
         }
@@ -4720,7 +4862,7 @@ const server = createServer(async (req, res) => {
           // No partial answer to hand back — mirror the failure where the
           // exchange lives, with the provider's reason instead of silence.
           const why = outcome.stopReason?.trim() ? ` — ${outcome.stopReason.trim().slice(0, 120)}` : "";
-          mirrorActivity(commsBus, currentTarget, channel, `Turn failed${why}`, false);
+          mirrorActivity(commsBus, currentTarget, channel, `${t("Turn failed")}${why}`, false);
           return json(res, 200, { botName: currentTarget.name, text: `(the bot's turn failed${why})` });
         }
         const reply = outcome.status === "timeout"
@@ -4940,7 +5082,7 @@ const server = createServer(async (req, res) => {
           // worth a buzz: the bot is blocked on the person's hands, which
           // is exactly the "blocked on you" rule notify.ts encodes
           notify(
-            buildNotification("takeover", bot, bot.threadId, snapshot.helpReason ?? "asked you to take over"),
+            buildNotification("takeover", bot, bot.threadId, snapshot.helpReason ?? t("asked you to take over")),
           );
           return json(res, 200, { held: snapshot.held, helpOpen: snapshot.helpReason !== null, requestId });
         }
@@ -4985,7 +5127,7 @@ const server = createServer(async (req, res) => {
             connector: {
               slug,
               label: toolkit.label,
-              description: toolkit.blurb || `Connect ${toolkit.label} so the bot can continue`,
+              description: toolkit.blurb || t("Connect {label} so the bot can continue", { label: toolkit.label }),
               status: connected ? "connected" : "required",
               resumeKey,
             },
@@ -5001,34 +5143,11 @@ const server = createServer(async (req, res) => {
     // Live Team Map metadata. Prompts and replies never leave their
     // transcripts: this projection carries only ids, status relationships,
     // optional delegation labels, and timestamps.
+    if (path.startsWith("/api/dispatch/")) {
+      if (await handleDispatchApi(method, path, url, req, res, dispatchApiDeps, () => dispatchSettings(cfg.dispatch))) return;
+    }
     if (method === "GET" && path === "/api/team-map") {
-      const visible = new Set(store.bots.filter((bot) => !bot.hidden).map((bot) => bot.id));
-      const collaborations = store.groups
-        .filter(
-          (group) =>
-            group.dm === true &&
-            group.memberIds.length === 2 &&
-            group.memberIds.every((botId) => visible.has(botId)),
-        )
-        .map((group) => ({
-          groupId: group.id,
-          botIds: [group.memberIds[0], group.memberIds[1]] as [string, string],
-          lastAt: store.messagesFor(group.threadId).at(-1)?.at ?? group.createdAt,
-        }))
-        .sort((a, b) => b.lastAt - a.lastAt);
-      const queued = pendingDelegationSnapshot().flatMap((item) => {
-        const source = store.botByThread(item.sourceThreadId);
-        if (!source || !visible.has(source.id) || !visible.has(item.toBotId)) return [];
-        return [{ sourceBotId: source.id, targetBotId: item.toBotId, reason: item.reason }];
-      });
-      const running = [...delegationWatch.entries()].flatMap(([threadId, watch]) => {
-        if (!visible.has(watch.toBotId)) return [];
-        const channel = watch.channelId ? store.group(watch.channelId) : undefined;
-        const sourceBotId = channel?.memberIds.find((botId) => botId !== watch.toBotId);
-        if (!sourceBotId || !visible.has(sourceBotId)) return [];
-        return [{ sourceBotId, targetBotId: watch.toBotId, threadId, groupId: channel?.id }];
-      });
-      return json(res, 200, { collaborations, queued, running });
+      return json(res, 200, teamMapSnapshot());
     }
 
     // ── routines calendar ────────────────────────────────────────────────
@@ -5048,24 +5167,24 @@ const server = createServer(async (req, res) => {
     let routineMatch = path.match(/^\/api\/routines\/([\w-]+)\/run$/);
     if (routineMatch && method === "POST") {
       const run = routines!.runNow(routineMatch[1]);
-      return run ? json(res, 201, { run }) : json(res, 404, { error: "no such routine" });
+      return run ? json(res, 201, { run }) : json(res, 404, { error: t("no such routine") });
     }
     routineMatch = path.match(/^\/api\/routines\/([\w-]+)$/);
     if (routineMatch && method === "PATCH") {
       const routine = routines!.update(routineMatch[1], await readBody(req));
-      return routine ? json(res, 200, { routine }) : json(res, 404, { error: "no such routine" });
+      return routine ? json(res, 200, { routine }) : json(res, 404, { error: t("no such routine") });
     }
     if (routineMatch && method === "DELETE") {
       return routines!.remove(routineMatch[1])
         ? json(res, 200, { ok: true })
-        : json(res, 404, { error: "no such routine" });
+        : json(res, 404, { error: t("no such routine") });
     }
     const runMatch = path.match(/^\/api\/routine-runs\/([\w-]+)\/(cancel|seen)$/);
     if (runMatch && method === "POST") {
       const run = runMatch[2] === "cancel"
         ? await routines!.cancelRun(runMatch[1])
         : routines!.markSeen(runMatch[1]);
-      return run ? json(res, 200, { run }) : json(res, 404, { error: "no such active run" });
+      return run ? json(res, 200, { run }) : json(res, 404, { error: t("no such active run") });
     }
 
     // ── scheduled room sessions ────────────────────────────────────────
@@ -5082,16 +5201,16 @@ const server = createServer(async (req, res) => {
     const calendarCallRoomMatch = path.match(/^\/api\/calendar-calls\/([\w-]+)\/room$/);
     if (calendarCallRoomMatch && method === "POST") {
       const call = calendarCalls!.get(calendarCallRoomMatch[1]);
-      if (!call) return json(res, 404, { error: "no such scheduled call" });
+      if (!call) return json(res, 404, { error: t("no such scheduled call") });
       if (call.botIds.length < 2) {
-        return json(res, 400, { error: "single-bot events open that bot's chat directly" });
+        return json(res, 400, { error: t("single-bot events open that bot's chat directly") });
       }
       const group = ensureCalendarCallRoom(call);
       return json(res, 200, { group: { ...publicGroupState(group), messages: store.messagesFor(group.threadId) } });
     }
     const calendarCallMatch = path.match(/^\/api\/calendar-calls\/([\w-]+)$/);
     if (calendarCallMatch && method === "PATCH") {
-      if (!calendarCalls!.get(calendarCallMatch[1])) return json(res, 404, { error: "no such scheduled call" });
+      if (!calendarCalls!.get(calendarCallMatch[1])) return json(res, 404, { error: t("no such scheduled call") });
       try {
         return json(res, 200, { call: calendarCalls!.update(calendarCallMatch[1], await readBody(req)) });
       } catch (error) {
@@ -5101,7 +5220,7 @@ const server = createServer(async (req, res) => {
     if (calendarCallMatch && method === "DELETE") {
       return calendarCalls!.remove(calendarCallMatch[1])
         ? json(res, 200, { ok: true })
-        : json(res, 404, { error: "no such scheduled call" });
+        : json(res, 404, { error: t("no such scheduled call") });
     }
 
     // ── independent webhook triggers ────────────────────────────────────
@@ -5124,10 +5243,10 @@ const server = createServer(async (req, res) => {
     if (webhookMatch && method === "POST") {
       if (webhookMatch[2] === "test") {
         const result = webhooks.test(webhookMatch[1], await readBody(req));
-        return result ? json(res, 202, result) : json(res, 404, { error: "no such webhook" });
+        return result ? json(res, 202, result) : json(res, 404, { error: t("no such webhook") });
       }
       const rotated = webhooks.rotateSecret(webhookMatch[1]);
-      if (!rotated) return json(res, 404, { error: "no such webhook" });
+      if (!rotated) return json(res, 404, { error: t("no such webhook") });
       const ingress = webhookIngressStatus();
       return json(res, 200, {
         webhook: rotated.webhook,
@@ -5138,12 +5257,12 @@ const server = createServer(async (req, res) => {
     webhookMatch = path.match(/^\/api\/webhooks\/([\w-]+)$/);
     if (webhookMatch && method === "PATCH") {
       const webhook = webhooks.update(webhookMatch[1], await readBody(req));
-      return webhook ? json(res, 200, { webhook }) : json(res, 404, { error: "no such webhook" });
+      return webhook ? json(res, 200, { webhook }) : json(res, 404, { error: t("no such webhook") });
     }
     if (webhookMatch && method === "DELETE") {
       return webhooks.remove(webhookMatch[1])
         ? json(res, 200, { ok: true })
-        : json(res, 404, { error: "no such webhook" });
+        : json(res, 404, { error: t("no such webhook") });
     }
 
     // ── events stream ──
@@ -5231,7 +5350,7 @@ const server = createServer(async (req, res) => {
     if (m && method === "GET") {
       const threadId = m[1];
       if (!store.botByThread(threadId) && !store.groupByThread(threadId)) {
-        return json(res, 404, { error: "no such conversation" });
+        return json(res, 404, { error: t("no such conversation") });
       }
       const limit = pageSize(url.searchParams.get("limit"));
       if (limit === null) return json(res, 400, { error: "limit must be a non-negative whole number" });
@@ -5240,13 +5359,13 @@ const server = createServer(async (req, res) => {
       if (before && around) return json(res, 400, { error: "before and around cannot be combined" });
       if (around) {
         const window = messageWindow(threadId, around, limit ?? DEFAULT_PAGE);
-        if (!window) return json(res, 404, { error: "no such message" });
+        if (!window) return json(res, 404, { error: t("no such message") });
         return json(res, 200, window);
       }
       // An unknown cursor must not silently answer with the newest page —
       // the client would paginate in a circle and never reach the top.
       if (before && !store.messagesFor(threadId).some((msg) => msg.id === before)) {
-        return json(res, 404, { error: "no such message" });
+        return json(res, 404, { error: t("no such message") });
       }
       return json(res, 200, messagePage(threadId, limit ?? DEFAULT_PAGE, before));
     }
@@ -5260,7 +5379,7 @@ const server = createServer(async (req, res) => {
       // it is handed. Without this, a client asking for images on ids that
       // do not exist grows the thread map for as long as it keeps asking.
       if (!store.botByThread(m[1]) && !store.groupByThread(m[1])) {
-        return json(res, 404, { error: "no such conversation" });
+        return json(res, 404, { error: t("no such conversation") });
       }
       const message = store.messagesFor(m[1]).find((msg) => msg.id === m![2]);
       if (!message?.png) return json(res, 404, { error: "no image on that message" });
@@ -5292,7 +5411,7 @@ const server = createServer(async (req, res) => {
       const rawType = Array.isArray(req.headers["content-type"]) ? req.headers["content-type"][0] : req.headers["content-type"];
       const mime = rawType?.split(";")[0]?.trim().toLowerCase();
       if (!mime || !extensionForMime(mime)) {
-        return json(res, 400, { error: "content-type must be an image type" });
+        return json(res, 400, { error: t("content-type must be an image type") });
       }
       const rawLength = Array.isArray(req.headers["content-length"])
         ? req.headers["content-length"][0]
@@ -5304,7 +5423,7 @@ const server = createServer(async (req, res) => {
       }
       if (declaredLength !== undefined && declaredLength > IMAGE_MAX_BYTES) {
         req.resume();
-        return json(res, 413, { error: `image exceeds ${IMAGE_MAX_BYTES} bytes` });
+        return json(res, 413, { error: t("image exceeds {bytes} bytes", { bytes: IMAGE_MAX_BYTES }) });
       }
       const saved = await new Promise<SavedAttachment>((resolve, reject) => {
         const chunks: Buffer[] = [];
@@ -5318,7 +5437,7 @@ const server = createServer(async (req, res) => {
         req.on("data", (chunk: Buffer) => {
           if (settled) return;
           received += chunk.byteLength;
-          if (received > IMAGE_MAX_BYTES) return fail(413, `image exceeds ${IMAGE_MAX_BYTES} bytes`);
+          if (received > IMAGE_MAX_BYTES) return fail(413, t("image exceeds {bytes} bytes", { bytes: IMAGE_MAX_BYTES }));
           chunks.push(chunk);
         });
         req.on("end", async () => {
@@ -5353,7 +5472,7 @@ const server = createServer(async (req, res) => {
       const name = url.searchParams.get("name");
       if (!name) {
         req.resume();
-        return json(res, 400, { error: "name is required" });
+        return json(res, 400, { error: t("name is required") });
       }
       const rawType = Array.isArray(req.headers["content-type"])
         ? req.headers["content-type"][0]
@@ -5368,7 +5487,7 @@ const server = createServer(async (req, res) => {
       }
       if (declaredLength !== undefined && declaredLength > FILE_MAX_BYTES) {
         req.resume();
-        return json(res, 413, { error: `file exceeds ${FILE_MAX_BYTES} bytes` });
+        return json(res, 413, { error: t("file exceeds {bytes} bytes", { bytes: FILE_MAX_BYTES }) });
       }
       try {
         // Returning from this iterator must not destroy the request socket:
@@ -5409,7 +5528,7 @@ const server = createServer(async (req, res) => {
       const limit = rawLimit ? Math.min(Math.max(Number(rawLimit) || 0, 1), 100) : 40;
       const threadId = url.searchParams.get("threadId")?.trim() || undefined;
       if (threadId && !store.botByThread(threadId) && !store.groupByThread(threadId)) {
-        return json(res, 404, { error: "no such conversation" });
+        return json(res, 404, { error: t("no such conversation") });
       }
       // whether each hit sits on its thread's visible branch — a click on
       // one that does not has to switch versions first (and only then)
@@ -5445,7 +5564,7 @@ const server = createServer(async (req, res) => {
       const threadId = m[1];
       const bot = store.botByThread(threadId);
       const group = bot ? undefined : store.groupByThread(threadId);
-      if (!bot && !group) return json(res, 404, { error: "no such conversation" });
+      if (!bot && !group) return json(res, 404, { error: t("no such conversation") });
       const format = url.searchParams.get("format") ?? "markdown";
       if (format !== "markdown" && format !== "json") {
         return json(res, 400, { error: "format must be markdown or json" });
@@ -5465,15 +5584,15 @@ const server = createServer(async (req, res) => {
         });
         return res.end(JSON.stringify({ name: title, threadId, messages: slim }, null, 2));
       }
-      const userName = cfg.profile?.name?.trim() || "User";
+      const userName = cfg.profile?.name?.trim() || t("User");
       const lines: string[] = [`# ${title}`, ""];
       for (const msg of messages) {
-        const who = msg.role === "user" ? userName : (msg.from?.name ?? bot?.name ?? "Bot");
+        const who = msg.role === "user" ? userName : (msg.from?.name ?? bot?.name ?? t("Bot"));
         if (msg.kind === "text" && msg.text) lines.push(`**${who}:**`, "", msg.text, "");
         else if (msg.kind === "activity" && msg.tool) lines.push(`> ${msg.tool.name}`, "");
-        else if (msg.kind === "screen") lines.push("> [screen capture]", "");
+        else if (msg.kind === "screen") lines.push(`> ${t("[screen capture]")}`, "");
         else if (msg.kind === "options" && msg.card) {
-          lines.push(`> ${msg.card.title}${msg.card.answered ? ` — answered: ${msg.card.answered}` : ""}`, "");
+          lines.push(`> ${msg.card.title}${msg.card.answered ? ` — ${t("answered: {answer}", { answer: msg.card.answered })}` : ""}`, "");
         }
       }
       res.writeHead(200, {
@@ -5495,14 +5614,14 @@ const server = createServer(async (req, res) => {
       if (body.name !== undefined && typeof body.name !== "string") {
         return json(res, 400, { error: "channel name must be a string" });
       }
-      const name = body.name?.trim() || `${store.bot(memberIds[0])!.name} & co.`;
-      if (name.length > 100) return json(res, 400, { error: "channel name must be at most 100 characters" });
+      const name = body.name?.trim() || t("{name} & co.", { name: store.bot(memberIds[0])!.name });
+      if (name.length > 100) return json(res, 400, { error: t("channel name must be at most 100 characters") });
       let section: string | undefined;
       if (body.section !== undefined && body.section !== null) {
         if (typeof body.section !== "string") return json(res, 400, { error: "context must be a string" });
         section = body.section.trim() || undefined;
         if (section && section.length > 60) {
-          return json(res, 400, { error: "context must be at most 60 characters" });
+          return json(res, 400, { error: t("context must be at most 60 characters") });
         }
       }
       let setup:
@@ -5517,7 +5636,7 @@ const server = createServer(async (req, res) => {
           return json(res, 400, { error: "setup.bulletin must be a string" });
         }
         if (requested.bulletin.length > 12_000) {
-          return json(res, 400, { error: "setup.bulletin must be at most 12000 characters" });
+          return json(res, 400, { error: t("setup.bulletin must be at most 12000 characters") });
         }
         const responder = checkedGroupResponder(requested.defaultResponder, memberIds);
         if (!responder) return json(res, 400, { error: "invalid setup.defaultResponder" });
@@ -5533,10 +5652,10 @@ const server = createServer(async (req, res) => {
         typeof body.name === "string" && body.name.trim()
           ? body.name.trim()
           : profileName
-            ? `${profileName}'s Team`
-            : "My OpenMaus Team";
+            ? t("{name}'s Team", { name: profileName })
+            : t("My OpenMaus Team");
       const memberIds = store.bots.filter((bot) => !bot.hidden).map((bot) => bot.id);
-      if (memberIds.length === 0) return json(res, 400, { error: "Create a bot before exporting your team" });
+      if (memberIds.length === 0) return json(res, 400, { error: t("Create a bot before exporting your team") });
       try {
         if (body.format === "package") {
           const document = createBotPackageExport({
@@ -5564,14 +5683,14 @@ const server = createServer(async (req, res) => {
           ),
         );
       } catch (error) {
-        return json(res, 400, { error: error instanceof Error ? error.message : "Team could not be exported" });
+        return json(res, 400, { error: error instanceof Error ? error.message : t("Team could not be exported") });
       }
     }
     if (method === "GET" && path === "/api/team-library/catalog") {
       try {
         return json(res, 200, await fetchTeamCatalog());
       } catch (error) {
-        return json(res, 502, { error: error instanceof Error ? error.message : "The team library is unavailable" });
+        return json(res, 502, { error: error instanceof Error ? error.message : t("The team library is unavailable") });
       }
     }
     m = path.match(/^\/api\/team-library\/teams\/([a-z0-9][a-z0-9-]*)$/);
@@ -5580,19 +5699,19 @@ const server = createServer(async (req, res) => {
         return json(res, 200, await fetchLibraryTeam(m[1]));
       } catch (error) {
         const status = (error as { status?: number }).status === 404 ? 404 : 502;
-        return json(res, status, { error: error instanceof Error ? error.message : "The team could not be loaded" });
+        return json(res, status, { error: error instanceof Error ? error.message : t("The team could not be loaded") });
       }
     }
     if (method === "POST" && path === "/api/team-library/github") {
       const body = await readBody(req);
       if (typeof body.url !== "string" || !body.url.trim()) {
-        return json(res, 400, { error: "A GitHub URL is required" });
+        return json(res, 400, { error: t("A GitHub URL is required") });
       }
       try {
         return json(res, 200, await fetchGithubTeam(body.url));
       } catch (error) {
         const status = (error as { status?: number }).status === 404 ? 404 : 400;
-        return json(res, status, { error: error instanceof Error ? error.message : "The GitHub team could not be loaded" });
+        return json(res, status, { error: error instanceof Error ? error.message : t("The GitHub team could not be loaded") });
       }
     }
     if (method === "GET" && path === "/api/teams/scout") {
@@ -5606,7 +5725,7 @@ const server = createServer(async (req, res) => {
       // route below, so a slow network can never delay the suggestion.
       const validated = validateBotCwd(url.searchParams.get("cwd"));
       if (!validated.ok) return json(res, 400, { error: validated.error });
-      if (!validated.cwd) return json(res, 400, { error: "scout needs a folder to read" });
+      if (!validated.cwd) return json(res, 400, { error: t("scout needs a folder to read") });
       const profile = scoutProject(validated.cwd);
       return json(res, 200, { profile, suggestion: suggestTeam(profile) });
     }
@@ -5616,7 +5735,7 @@ const server = createServer(async (req, res) => {
       // to a broken scout.
       const validated = validateBotCwd(url.searchParams.get("cwd"));
       if (!validated.ok) return json(res, 400, { error: validated.error });
-      if (!validated.cwd) return json(res, 400, { error: "scout needs a folder to read" });
+      if (!validated.cwd) return json(res, 400, { error: t("scout needs a folder to read") });
       let directory: MatchedDirectoryBot[] = [];
       try {
         directory = matchDirectoryBots(scoutProject(validated.cwd), await fetchBotDirectory());
@@ -5663,7 +5782,7 @@ const server = createServer(async (req, res) => {
         if (isBotPackage(body)) packageDocument = parseBotPackage(body);
         else manifest = parseTeamManifest(body);
       } catch (error) {
-        return json(res, 400, { error: error instanceof Error ? error.message : "Invalid bot package" });
+        return json(res, 400, { error: error instanceof Error ? error.message : t("Invalid bot package") });
       }
       const pkg = packageDocument?.package;
       const importName = pkg?.name ?? manifest!.team.name;
@@ -5826,7 +5945,7 @@ const server = createServer(async (req, res) => {
     m = path.match(/^\/api\/groups\/([\w-]+)\/setup$/);
     if (m && method === "PATCH") {
       const group = store.group(m[1]);
-      if (!group) return json(res, 404, { error: "no such room" });
+      if (!group) return json(res, 404, { error: t("no such room") });
       if (group.dm) return json(res, 400, { error: "direct-message channels do not have room setup" });
       const body = await readBody(req);
       if (body.action !== "complete" && body.action !== "skip") {
@@ -5836,7 +5955,7 @@ const server = createServer(async (req, res) => {
         return json(res, 200, { group: publicGroupState(group) });
       }
       if (store.messagesFor(group.threadId).length > 0) {
-        return json(res, 409, { error: "room setup must be finished before the first message" });
+        return json(res, 409, { error: t("room setup must be finished before the first message") });
       }
 
       const patch: Partial<Pick<GroupRecord, "cwd" | "defaultResponder" | "bulletin" | "setupCompletedAt" | "setupSkippedAt">> = {};
@@ -5844,7 +5963,7 @@ const server = createServer(async (req, res) => {
         const checked = validateBotCwd(body.cwd ?? null);
         if (!checked.ok) return json(res, 400, { error: checked.error });
         if (typeof body.bulletin !== "string") return json(res, 400, { error: "bulletin must be a string" });
-        if (body.bulletin.length > 12_000) return json(res, 400, { error: "bulletin must be at most 12000 characters" });
+        if (body.bulletin.length > 12_000) return json(res, 400, { error: t("bulletin must be at most 12000 characters") });
         const value = body.defaultResponder as { kind?: unknown; botId?: unknown } | null;
         let responder: GroupDefaultResponder | null = null;
         if (value?.kind === "everyone") responder = { kind: "everyone" };
@@ -5861,7 +5980,7 @@ const server = createServer(async (req, res) => {
         patch.setupSkippedAt = Date.now();
       }
       const updated = store.patchGroup(m[1], patch);
-      if (!updated) return json(res, 404, { error: "no such room" });
+      if (!updated) return json(res, 404, { error: t("no such room") });
       return json(res, 200, { group: publicGroupState(updated) });
     }
 
@@ -5881,10 +6000,10 @@ const server = createServer(async (req, res) => {
     m = path.match(/^\/api\/groups\/([\w-]+)\/tasks$/);
     if (m && method === "POST") {
       const group = store.group(m[1]);
-      if (!group) return json(res, 404, { error: "no such channel" });
-      if (group.dm) return json(res, 400, { error: "bot-to-bot channels keep one canonical conversation" });
+      if (!group) return json(res, 404, { error: t("no such channel") });
+      if (group.dm) return json(res, 400, { error: t("bot-to-bot channels keep one canonical conversation") });
       if (channelTaskBlocked(group)) {
-        return json(res, 409, { error: "this channel is working or waiting on you — finish that turn first" });
+        return json(res, 409, { error: t("this channel is working or waiting on you — finish that turn first") });
       }
       const body = await readBody(req);
       if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -5893,7 +6012,7 @@ const server = createServer(async (req, res) => {
       const request = createGroupTaskRequestSchema.safeParse(body);
       if (!request.success) return json(res, 400, { error: "title must be text" });
       const task = store.createGroupTask(group.id, request.data.title);
-      if (!task) return json(res, 500, { error: "couldn't create that task" });
+      if (!task) return json(res, 500, { error: t("couldn't create that task") });
       const fresh = groupWithThread(store.group(group.id)!);
       broadcast({ kind: "group", group: fresh });
       return json(res, 201, { group: fresh, task });
@@ -5902,13 +6021,13 @@ const server = createServer(async (req, res) => {
     m = path.match(/^\/api\/groups\/([\w-]+)\/tasks\/([\w-]+)$/);
     if (m && method === "POST") {
       const group = store.group(m[1]);
-      if (!group) return json(res, 404, { error: "no such channel" });
-      if (group.dm) return json(res, 400, { error: "bot-to-bot channels keep one canonical conversation" });
+      if (!group) return json(res, 404, { error: t("no such channel") });
+      if (group.dm) return json(res, 400, { error: t("bot-to-bot channels keep one canonical conversation") });
       if (channelTaskBlocked(group)) {
-        return json(res, 409, { error: "this channel is working or waiting on you — finish that turn first" });
+        return json(res, 409, { error: t("this channel is working or waiting on you — finish that turn first") });
       }
       const switched = store.switchGroupTask(group.id, m[2]);
-      if (!switched) return json(res, 404, { error: "no such channel task" });
+      if (!switched) return json(res, 404, { error: t("no such channel task") });
       const fresh = groupWithThread(switched);
       broadcast({ kind: "group", group: fresh });
       const responseGroup = url.searchParams.get("messages") === "0"
@@ -5918,31 +6037,31 @@ const server = createServer(async (req, res) => {
     }
     if (m && method === "PATCH") {
       const group = store.group(m[1]);
-      if (!group) return json(res, 404, { error: "no such channel" });
-      if (group.dm) return json(res, 400, { error: "bot-to-bot channels keep one canonical conversation" });
+      if (!group) return json(res, 404, { error: t("no such channel") });
+      if (group.dm) return json(res, 400, { error: t("bot-to-bot channels keep one canonical conversation") });
       if (channelTaskBlocked(group)) {
-        return json(res, 409, { error: "this channel is working or waiting on you — finish that turn first" });
+        return json(res, 409, { error: t("this channel is working or waiting on you — finish that turn first") });
       }
       const body = await readBody(req);
       if (!body || typeof body !== "object" || Array.isArray(body)) {
         return json(res, 400, { error: "body must be a JSON object" });
       }
       const task = store.renameGroupTask(m[1], m[2], String(body.title ?? ""));
-      if (!task) return json(res, 404, { error: "no such channel task" });
+      if (!task) return json(res, 404, { error: t("no such channel task") });
       return json(res, 200, { task });
     }
     if (m && method === "DELETE") {
       const group = store.group(m[1]);
-      if (!group) return json(res, 404, { error: "no such channel" });
-      if (group.dm) return json(res, 400, { error: "bot-to-bot channels keep one canonical conversation" });
+      if (!group) return json(res, 404, { error: t("no such channel") });
+      if (group.dm) return json(res, 400, { error: t("bot-to-bot channels keep one canonical conversation") });
       if (channelTaskBlocked(group)) {
-        return json(res, 409, { error: "this channel is working or waiting on you — finish that turn first" });
+        return json(res, 409, { error: t("this channel is working or waiting on you — finish that turn first") });
       }
-      if (!store.groupTaskByThread(group.id, m[2])) return json(res, 404, { error: "no such channel task" });
+      if (!store.groupTaskByThread(group.id, m[2])) return json(res, 404, { error: t("no such channel task") });
       const stagedSkillCleanups = stagedSkillCleanupsForThread(m[2]);
       lastReply.delete(m[2]);
       const updated = store.deleteGroupTask(group.id, m[2]);
-      if (!updated) return json(res, 400, { error: "a channel keeps at least one task" });
+      if (!updated) return json(res, 400, { error: t("a channel keeps at least one task") });
       rejectDeletedThreadSkillStages(stagedSkillCleanups);
       const fresh = groupWithThread(updated);
       broadcast({ kind: "group", group: fresh });
@@ -5956,25 +6075,25 @@ const server = createServer(async (req, res) => {
         return json(res, 400, { error: "body must be a JSON object" });
       }
       const existing = store.group(m[1]);
-      if (!existing) return json(res, 404, { error: "no such room" });
+      if (!existing) return json(res, 404, { error: t("no such room") });
       if (
         channelTaskBlocked(existing) &&
         (body.memberIds !== undefined || body.defaultResponder !== undefined || body.bulletin !== undefined)
       ) {
-        return json(res, 409, { error: "this channel is working or waiting on you — finish that turn first" });
+        return json(res, 409, { error: t("this channel is working or waiting on you — finish that turn first") });
       }
       const patch: Record<string, unknown> = {};
       if (body.name !== undefined) {
         if (typeof body.name !== "string") return json(res, 400, { error: "room name must be a string" });
         const name = body.name.trim();
-        if (!name) return json(res, 400, { error: "room name must not be empty" });
-        if (name.length > 100) return json(res, 400, { error: "room name must be at most 100 characters" });
+        if (!name) return json(res, 400, { error: t("room name must not be empty") });
+        if (name.length > 100) return json(res, 400, { error: t("room name must be at most 100 characters") });
         patch.name = name;
       }
       if (body.bulletin !== undefined) {
         if (typeof body.bulletin !== "string") return json(res, 400, { error: "bulletin must be a string" });
         if (body.bulletin.length > 12_000) {
-          return json(res, 400, { error: "bulletin must be at most 12000 characters" });
+          return json(res, 400, { error: t("bulletin must be at most 12000 characters") });
         }
         patch.bulletin = body.bulletin;
       }
@@ -5998,7 +6117,7 @@ const server = createServer(async (req, res) => {
       if (body.cwd !== undefined) {
         if (existing.dm) return json(res, 400, { error: "direct-message channels cannot have a working folder" });
         if (existing.pinnedCwd !== undefined) {
-          return json(res, 409, { error: "the room's working folder is fixed after its first turn" });
+          return json(res, 409, { error: t("the room's working folder is fixed after its first turn") });
         }
         const checked = validateBotCwd(body.cwd);
         if (!checked.ok) return json(res, 400, { error: checked.error });
@@ -6020,27 +6139,27 @@ const server = createServer(async (req, res) => {
         else {
           const trimmed = body.section.trim();
           if (!trimmed) patch.section = undefined;
-          else if (trimmed.length > 60) return json(res, 400, { error: "section must be at most 60 characters" });
+          else if (trimmed.length > 60) return json(res, 400, { error: t("section must be at most 60 characters") });
           else patch.section = trimmed;
         }
       }
       const group = store.patchGroup(m[1], patch);
-      if (!group) return json(res, 404, { error: "no such room" });
+      if (!group) return json(res, 404, { error: t("no such room") });
       return json(res, 200, { group: publicGroupState(group) });
     }
     m = path.match(/^\/api\/groups\/([\w-]+)\/read$/);
     if (m && method === "POST") {
       const group = store.patchGroup(m[1], { unread: false });
-      if (!group) return json(res, 404, { error: "no such room" });
+      if (!group) return json(res, 404, { error: t("no such room") });
       broadcast({ kind: "group", group: publicGroupState(group) });
       return json(res, 200, { group: publicGroupState(group) });
     }
     m = path.match(/^\/api\/groups\/([\w-]+)$/);
     if (m && method === "DELETE") {
       const group = store.group(m[1]);
-      if (!group) return json(res, 404, { error: "no such room" });
+      if (!group) return json(res, 404, { error: t("no such room") });
       if (groupIsWorking(group)) {
-        return json(res, 409, { error: "this channel is working — stop that turn first" });
+        return json(res, 409, { error: t("this channel is working — stop that turn first") });
       }
       const threadIds = new Set([group.threadId, ...(group.tasks ?? []).map((task) => task.threadId)]);
       const stagedSkillCleanups = [...threadIds].flatMap(stagedSkillCleanupsForThread);
@@ -6065,7 +6184,7 @@ const server = createServer(async (req, res) => {
       const text = String(body.text ?? "").trim();
       if (!text) return json(res, 400, { error: "text required" });
       const group = store.group(m[1]);
-      if (!group) return json(res, 404, { error: "no such group" });
+      if (!group) return json(res, 404, { error: t("no such group") });
       if (body.threadId !== undefined && (typeof body.threadId !== "string" || !/^[\w-]+$/.test(body.threadId))) {
         return json(res, 400, { error: "threadId must be a task id" });
       }
@@ -6074,7 +6193,7 @@ const server = createServer(async (req, res) => {
         ? group.threadId === threadId
         : Boolean(store.groupTaskByThread(group.id, threadId));
       if (!ownsThread) {
-        return json(res, 409, { error: "the channel switched tasks before it could receive the message" });
+        return json(res, 409, { error: t("the channel switched tasks before it could receive the message") });
       }
       const sendId = parseSendId(body.sendId);
       const replyTo = resolveReplyTarget(threadId, body.replyToId);
@@ -6092,9 +6211,9 @@ const server = createServer(async (req, res) => {
             }
           }
           const current = store.group(group.id);
-          if (!current) throw Object.assign(new Error("no such group"), { status: 404 });
+          if (!current) throw Object.assign(new Error(t("no such group")), { status: 404 });
           if (current.threadId !== threadId) {
-            throw Object.assign(new Error("the channel switched tasks before it could receive the message"), {
+            throw Object.assign(new Error(t("the channel switched tasks before it could receive the message")), {
               status: 409,
             });
           }
@@ -6107,7 +6226,7 @@ const server = createServer(async (req, res) => {
     m = path.match(/^\/api\/groups\/([\w-]+)\/interrupt$/);
     if (m && method === "POST") {
       const group = store.group(m[1]);
-      if (!group) return json(res, 404, { error: "no such room" });
+      if (!group) return json(res, 404, { error: t("no such room") });
       const rawBody = await readBody(req);
       if (rawBody !== null && (typeof rawBody !== "object" || Array.isArray(rawBody))) {
         return json(res, 400, { error: "body must be a JSON object" });
@@ -6117,7 +6236,7 @@ const server = createServer(async (req, res) => {
         return json(res, 400, { error: "threadId must be a task id" });
       }
       if (body.threadId !== undefined && body.threadId !== group.threadId) {
-        return json(res, 409, { error: "the channel switched tasks before it could be interrupted" });
+        return json(res, 409, { error: t("the channel switched tasks before it could be interrupted") });
       }
       // Mark the whole room operation cancelled before awaiting the provider.
       // This covers setup-before-busy and responder handoffs, and makes every
@@ -6138,7 +6257,7 @@ const server = createServer(async (req, res) => {
       const emoji = String(body.emoji ?? "").slice(0, 8);
       if (!emoji) return json(res, 400, { error: "emoji required" });
       const patched = store.toggleReaction(m[1], m[2], emoji, typeof body.by === "string" ? body.by : "user");
-      if (!patched) return json(res, 404, { error: "no such message" });
+      if (!patched) return json(res, 404, { error: t("no such message") });
       return json(res, 200, { message: patched });
     }
     if (method === "POST" && path === "/api/sidebar-sections") {
@@ -6147,19 +6266,19 @@ const server = createServer(async (req, res) => {
         return json(res, 400, { error: "name and one to 100 valid botIds are required" });
       }
       const name = parsed.data.name.trim();
-      if (!name) return json(res, 400, { error: "name is required" });
+      if (!name) return json(res, 400, { error: t("name is required") });
       if (name.length > 60) {
-        return json(res, 400, { error: "name must be at most 60 characters" });
+        return json(res, 400, { error: t("name must be at most 60 characters") });
       }
       const botIds = [...new Set(parsed.data.botIds)];
       const result = store.setBotsSection(botIds, name);
       if (!result.ok) {
         if (result.reason === "chief-conflict") {
           return json(res, 409, {
-            error: "A section can have only one Chief of Staff. Choose one Chief or use a section without one.",
+            error: t("A section can have only one Chief of Staff. Choose one Chief or use a section without one."),
           });
         }
-        return json(res, 404, { error: "one or more bots are unavailable" });
+        return json(res, 404, { error: t("one or more bots are unavailable") });
       }
       // This files bots under a derived label; it does not create a durable
       // section resource, and an identical retry is an ordinary no-op.
@@ -6188,7 +6307,7 @@ const server = createServer(async (req, res) => {
         if (typeof body.section !== "string") return json(res, 400, { error: "section must be a string" });
         section = body.section.trim() || undefined;
         if (section && section.length > 60) {
-          return json(res, 400, { error: "section must be at most 60 characters" });
+          return json(res, 400, { error: t("section must be at most 60 characters") });
         }
       }
       let selection: ModelSelection;
@@ -6202,7 +6321,7 @@ const server = createServer(async (req, res) => {
       // Keep the capacity check immediately beside the synchronous write.
       // Awaiting provider discovery before this point cannot race the cap.
       if (store.bots.length >= MAX_WORKSPACE_BOTS) {
-        return json(res, 409, { error: `this workspace is limited to ${MAX_WORKSPACE_BOTS} bots` });
+        return json(res, 409, { error: t("this workspace is limited to {count} bots", { count: MAX_WORKSPACE_BOTS }) });
       }
       const bot = store.createBot({ ...profile.patch, section, modelSelection: selection });
       return json(res, 201, {
@@ -6216,24 +6335,24 @@ const server = createServer(async (req, res) => {
     m = path.match(/^\/api\/bots\/([\w-]+)\/avatar\/generate$/);
     if (m && method === "POST") {
       const existing = store.bot(m[1]);
-      if (!existing) return json(res, 404, { error: "no such bot" });
+      if (!existing) return json(res, 404, { error: t("no such bot") });
       // Generation is slow and both desktop and companion clients may edit or
       // delete this bot while it is in flight. Snapshot the two fields this
       // request owns before the first await so a late result cannot win.
       const initialAvatar = snapshotAvatarGenerationState(existing);
       const parsed = avatarGenerationRequestSchema.safeParse(await readBody(req));
       if (!parsed.success) {
-        return json(res, 400, { error: `prompt must be at most 400 characters` });
+        return json(res, 400, { error: t("prompt must be at most 400 characters") });
       }
       const generated = await generateAvatarImage(cfg.imageGen?.key ?? "", existing, parsed.data.prompt);
       const current = store.bot(existing.id);
-      if (!current) return json(res, 404, { error: "no such bot" });
+      if (!current) return json(res, 404, { error: t("no such bot") });
       if (!avatarGenerationStateMatches(initialAvatar, current)) {
-        return json(res, 409, { error: "avatar changed while generation was in progress" });
+        return json(res, 409, { error: t("avatar changed while generation was in progress") });
       }
       const saved = saveImage(generated.bytes, generated.mime);
       const avatarUrl = botAvatarUrlFromStoredPath(saved.path);
-      if (!avatarUrl) throw Object.assign(new Error("Could not store the generated avatar"), { status: 500 });
+      if (!avatarUrl) throw Object.assign(new Error(t("Could not store the generated avatar")), { status: 500 });
       const avatarCrop = initialAvatar.avatarCrop && initialAvatar.avatarCrop !== "mascot"
         ? initialAvatar.avatarCrop
         : "circle";
@@ -6242,7 +6361,7 @@ const server = createServer(async (req, res) => {
         // There are no awaits between the refreshed lookup and this patch, but
         // keep the attachment invariant explicit if the store ever changes.
         try { unlinkSync(saved.path); } catch {}
-        return json(res, 404, { error: "no such bot" });
+        return json(res, 404, { error: t("no such bot") });
       }
       const visible = wireBot(bot);
       broadcast({ kind: "bot", bot: visible });
@@ -6256,7 +6375,7 @@ const server = createServer(async (req, res) => {
         return json(res, 400, { error: "avatarUrl must reference an existing stored image" });
       }
       const bot = store.patchBot(m[1], parsed.patch);
-      if (!bot) return json(res, 404, { error: "no such bot" });
+      if (!bot) return json(res, 404, { error: t("no such bot") });
       const visible = wireBot(bot);
       broadcast({ kind: "bot", bot: visible });
       return json(res, 200, { bot: visible });
@@ -6264,7 +6383,7 @@ const server = createServer(async (req, res) => {
     m = path.match(/^\/api\/bots\/([\w-]+)\/read$/);
     if (m && method === "POST") {
       const bot = store.patchBot(m[1], { unread: false });
-      if (!bot) return json(res, 404, { error: "no such bot" });
+      if (!bot) return json(res, 404, { error: t("no such bot") });
       const visible = wireBot(bot);
       broadcast({ kind: "bot", bot: visible });
       return json(res, 200, { bot: visible });
@@ -6274,7 +6393,7 @@ const server = createServer(async (req, res) => {
       const body = await readBody(req);
       const allowKey = typeof body.allowKey === "string" ? body.allowKey : "";
       const bot = store.bot(m[1]);
-      if (!bot) return json(res, 404, { error: "no such bot" });
+      if (!bot) return json(res, 404, { error: t("no such bot") });
       if (!allowKey) return json(res, 400, { error: "allowKey required" });
       const pending = store.messagesFor(bot.threadId).some((message) =>
         message.card?.requestId &&
@@ -6283,7 +6402,7 @@ const server = createServer(async (req, res) => {
         message.card.allowKey === allowKey
       );
       if (!pending) {
-        return json(res, 409, { error: "that grant is not on a pending approval for this bot" });
+        return json(res, 409, { error: t("that grant is not on a pending approval for this bot") });
       }
       const updated = store.patchBot(bot.id, {
         alwaysAllow: [...new Set([...(bot.alwaysAllow ?? []), allowKey])].slice(0, 200),
@@ -6344,7 +6463,7 @@ const server = createServer(async (req, res) => {
         else {
           const trimmed = body.section.trim();
           if (!trimmed) section = null;
-          else if (trimmed.length > 60) return json(res, 400, { error: "section must be at most 60 characters" });
+          else if (trimmed.length > 60) return json(res, 400, { error: t("section must be at most 60 characters") });
           else section = trimmed;
         }
       }
@@ -6372,7 +6491,7 @@ const server = createServer(async (req, res) => {
       if (body.browser !== undefined) {
         if (typeof body.browser !== "boolean") return json(res, 400, { error: "browser must be true or false" });
         if (existingBot?.busy && body.browser !== (existingBot.browser !== false)) {
-          return json(res, 409, { error: "stop this bot's turn before changing its browser access" });
+          return json(res, 409, { error: t("stop this bot's turn before changing its browser access") });
         }
         patch.browser = body.browser;
       }
@@ -6382,7 +6501,7 @@ const server = createServer(async (req, res) => {
           ? undefined
           : body.browserProfile;
         if (existingBot?.busy && requestedProfile !== existingBot.browserProfile) {
-          return json(res, 409, { error: "stop this bot's turn before changing its browser profile" });
+          return json(res, 409, { error: t("stop this bot's turn before changing its browser profile") });
         }
         if (requestedProfile === undefined) patch.browserProfile = undefined;
         else if (
@@ -6390,7 +6509,7 @@ const server = createServer(async (req, res) => {
           (requestedProfile === "guest" || (cfg.browserProfiles ?? []).some((profile) => profile.id === requestedProfile))
         ) {
           patch.browserProfile = requestedProfile;
-        } else return json(res, 400, { error: "browserProfile must name an existing browser profile" });
+        } else return json(res, 400, { error: t("browserProfile must name an existing browser profile") });
       }
       if (
         body.computer !== undefined &&
@@ -6418,7 +6537,7 @@ const server = createServer(async (req, res) => {
         patch.cwd = checked.cwd ?? undefined;
       }
       if (body.hidden === true && existingBot?.chiefOfStaff && body.chiefOfStaff !== false) {
-        return json(res, 400, { error: "choose another Chief of Staff before hiding this bot" });
+        return json(res, 400, { error: t("choose another Chief of Staff before hiding this bot") });
       }
       // the permission fields decide what runs unattended, so they are
       // type-checked rather than copied through: a string alwaysAllow would
@@ -6444,7 +6563,7 @@ const server = createServer(async (req, res) => {
       const alreadyGranted = existingBot?.computer === "local" && existingBot?.autoApprove === true;
       if (wantsComputer === "local" && wantsAuto === true && !alreadyGranted && body.acknowledgeLocalAuto !== true) {
         return json(res, 400, {
-          error: "Auto mode on this computer requires confirming the warning first (acknowledgeLocalAuto)",
+          error: t("Auto mode on this computer requires confirming the warning first (acknowledgeLocalAuto)"),
         });
       }
       if (body.approvePeerComms !== undefined) {
@@ -6472,12 +6591,12 @@ const server = createServer(async (req, res) => {
         section !== undefined &&
         sectionKey(existingBot?.section) !== sectionKey(section);
       const bot = store.patchBot(m[1], patch);
-      if (!bot) return json(res, 404, { error: "no such bot" });
+      if (!bot) return json(res, 404, { error: t("no such bot") });
       const chiefChanges =
         body.chiefOfStaff === true || chiefMovedSections
           ? store.setChiefOfStaff(bot.id)
           : [];
-      if (chiefChanges === null) return json(res, 404, { error: "no such bot" });
+      if (chiefChanges === null) return json(res, 404, { error: t("no such bot") });
       return json(res, 200, { bot: wireBot(store.bot(bot.id)!) });
     }
 
@@ -6517,32 +6636,32 @@ const server = createServer(async (req, res) => {
     m = path.match(/^\/api\/bots\/([\w-]+)$/);
     if (m && method === "DELETE") {
       const bot = store.bot(m[1]);
-      if (!bot) return json(res, 404, { error: "no such bot" });
+      if (!bot) return json(res, 404, { error: t("no such bot") });
       const activeRoutine = routines!.activeRunForBot(bot.id);
       if (activeRoutine) {
         return json(res, 409, {
-          error: "stop this bot's active routine before deleting the bot",
+          error: t("stop this bot's active routine before deleting the bot"),
         });
       }
       const activeGroup = activeGroupTurnForBot(bot.id);
       if (activeGroup) {
         return json(res, 409, {
-          error: `stop this bot's work in channel ${activeGroup.group.name} before deleting the bot`,
+          error: t("stop this bot's work in channel {name} before deleting the bot", { name: activeGroup.group.name }),
         });
       }
       if (localVmMode(cfg) === "per-bot") {
         const target = perBotLocalVmTarget(bot.id);
         if (localVmActiveThreads.has(target.key) || localVmLifecycleBusy.has(target.key)) {
-          return json(res, 409, { error: "stop this bot's Local VM turn or setup action before deleting the bot" });
+          return json(res, 409, { error: t("stop this bot's Local VM turn or setup action before deleting the bot") });
         }
         const vm = await containerComputerStatus(undefined, undefined, target);
         if (!vm.daemonUp && existsSync(target.workspaceDir)) {
           return json(res, 409, {
-            error: "start the container runtime and delete this bot's Local VM before deleting the bot",
+            error: t("start the container runtime and delete this bot's Local VM before deleting the bot"),
           });
         }
         if (vm.container !== "missing") {
-          return json(res, 409, { error: "delete this bot's Local VM from its Computer panel before deleting the bot" });
+          return json(res, 409, { error: t("delete this bot's Local VM from its Computer panel before deleting the bot") });
         }
       }
       // Establish a durable cleanup intent before any teardown. A malformed
@@ -6574,6 +6693,7 @@ const server = createServer(async (req, res) => {
         localVmIdles.get(target.key)?.cancel();
         localVmIdles.delete(target.key);
         store.deleteBot(bot.id);
+        dispatcher.onBotDeleted(bot.id);
       } catch (error) {
         if (browserCleanupRequest) browserCleanup.abort(browserCleanupRequest);
         throw error;
@@ -6581,7 +6701,7 @@ const server = createServer(async (req, res) => {
       if (browserCleanupRequest) {
         const committedCleanup = browserCleanup.commit(browserCleanupRequest);
         const acknowledged = await browserCleanup.ensure(committedCleanup);
-        requireBrowserCleanupAcknowledged(acknowledged, `Browser data for ${bot.name}`);
+        requireBrowserCleanupAcknowledged(acknowledged, t("Browser data for {name}", { name: bot.name }));
       }
       for (const dir of [EVENTS_DIR, NATIVE_DIR]) {
         try {
@@ -6596,28 +6716,28 @@ const server = createServer(async (req, res) => {
     // person enables after reading. See server/skills.ts for the policy.
     m = path.match(/^\/api\/bots\/([\w-]+)\/skills$/);
     if (m && method === "GET") {
-      if (!store.bot(m[1])) return json(res, 404, { error: "no such bot" });
+      if (!store.bot(m[1])) return json(res, 404, { error: t("no such bot") });
       return json(res, 200, {
         skills: listSkills(m[1]),
         staged: listStagedSkillWrites(m[1]).map(stagedSkillListing),
       });
     }
     if (m && method === "POST") {
-      if (!store.bot(m[1])) return json(res, 404, { error: "no such bot" });
+      if (!store.bot(m[1])) return json(res, 404, { error: t("no such bot") });
       const parsed = z.object({ source: z.string().min(1).max(2000) }).safeParse(await readBody(req));
-      if (!parsed.success) return json(res, 400, { error: "source must be a GitHub URL or owner/repo" });
+      if (!parsed.success) return json(res, 400, { error: t("source must be a GitHub URL or owner/repo") });
       const fetched = await fetchSkillFromSource(parsed.data.source);
       if ("error" in fetched) return json(res, 422, { error: fetched.error });
       const results = fetched.skills.map((skill) => installSkill(m![1]!, skill.source, skill.files));
       const installed = results.filter((entry): entry is Exclude<typeof entry, { error: string }> => !("error" in entry));
       const errors = results.flatMap((entry) => ("error" in entry ? [entry.error] : []));
-      if (!installed.length) return json(res, 422, { error: errors.join("; ") || "nothing importable found" });
+      if (!installed.length) return json(res, 422, { error: errors.join("; ") || t("nothing importable found") });
       return json(res, 201, { installed, errors });
     }
     m = path.match(/^\/api\/bots\/([\w-]+)\/skills\/([a-z0-9-]+)$/);
     if (m && method === "GET") {
       const text = readSkillFile(m[1]!, m[2]!);
-      if (text === null) return json(res, 404, { error: "no such skill" });
+      if (text === null) return json(res, 404, { error: t("no such skill") });
       return json(res, 200, { text });
     }
     if (m && method === "PATCH") {
@@ -6642,12 +6762,12 @@ const server = createServer(async (req, res) => {
       if (!url.searchParams.has("section")) return json(res, 400, { error: "section is required" });
       const requested = url.searchParams.get("section") ?? "";
       const section = sectionContextKey(requested);
-      if (section.length > 60) return json(res, 400, { error: "section must be at most 60 characters" });
+      if (section.length > 60) return json(res, 400, { error: t("section must be at most 60 characters") });
       const exists =
         section === "" ||
         store.bots.some((bot) => !bot.hidden && sectionKey(bot.section) === section) ||
         store.groups.some((group) => sectionKey(group.section) === section);
-      if (!exists) return json(res, 404, { error: "no such section" });
+      if (!exists) return json(res, 404, { error: t("no such section") });
 
       if (method === "GET") {
         const context = readSectionContext(section);
@@ -6663,7 +6783,7 @@ const server = createServer(async (req, res) => {
       const parsed = z.object({ text: z.string() }).safeParse(await readBody(req));
       if (!parsed.success) return json(res, 400, { error: "text must be a string" });
       if (Buffer.byteLength(parsed.data.text, "utf8") > SECTION_CONTEXT_MAX_BYTES) {
-        return json(res, 400, { error: `section context is capped at ${SECTION_CONTEXT_MAX_BYTES / 1000}KB` });
+        return json(res, 400, { error: t("section context is capped at {size}KB", { size: SECTION_CONTEXT_MAX_BYTES / 1000 }) });
       }
       const context = writeSectionContext(section, parsed.data.text);
       return json(res, 200, {
@@ -6683,16 +6803,16 @@ const server = createServer(async (req, res) => {
     // not run yet simply has nothing to show.
     m = path.match(/^\/api\/bots\/([\w-]+)\/memory$/);
     if (m && method === "GET") {
-      if (!store.bot(m[1])) return json(res, 404, { error: "no such bot" });
+      if (!store.bot(m[1])) return json(res, 404, { error: t("no such bot") });
       return json(res, 200, { ...readMemoryFile(m[1]), topics: listMemoryTopics(m[1]) });
     }
     if (m && method === "PUT") {
-      if (!store.bot(m[1])) return json(res, 404, { error: "no such bot" });
+      if (!store.bot(m[1])) return json(res, 404, { error: t("no such bot") });
       const parsed = z.object({ text: z.string() }).safeParse(await readBody(req));
       if (!parsed.success) return json(res, 400, { error: "text must be a string" });
       if (Buffer.byteLength(parsed.data.text, "utf8") > MEMORY_FILE_MAX_BYTES) {
         return json(res, 400, {
-          error: `memory is capped at ${MEMORY_FILE_MAX_BYTES / 1024}KB — move longer notes into memory/<topic>.md files`,
+          error: t("memory is capped at {size}KB — move longer notes into memory/<topic>.md files", { size: MEMORY_FILE_MAX_BYTES / 1024 }),
         });
       }
       writeMemoryFile(m[1], parsed.data.text);
@@ -6701,7 +6821,7 @@ const server = createServer(async (req, res) => {
     }
     m = path.match(/^\/api\/bots\/([\w-]+)\/memory\/topics\/([^/]+)$/);
     if (m && method === "GET") {
-      if (!store.bot(m[1])) return json(res, 404, { error: "no such bot" });
+      if (!store.bot(m[1])) return json(res, 404, { error: t("no such bot") });
       // Decode before validating: a UI-sent name arrives percent-encoded
       // ("my notes.md" → "my%20notes.md"), and an encoded traversal
       // ("..%2F..") must be judged by what it decodes TO, not slip through
@@ -6711,11 +6831,11 @@ const server = createServer(async (req, res) => {
       try {
         name = decodeURIComponent(m[2]);
       } catch {
-        return json(res, 400, { error: "invalid topic name" });
+        return json(res, 400, { error: t("invalid topic name") });
       }
-      if (!isMemoryTopicName(name)) return json(res, 400, { error: "invalid topic name" });
+      if (!isMemoryTopicName(name)) return json(res, 400, { error: t("invalid topic name") });
       const text = readMemoryTopic(m[1], name);
-      if (text === null) return json(res, 404, { error: "no such topic file" });
+      if (text === null) return json(res, 404, { error: t("no such topic file") });
       return json(res, 200, { name, text });
     }
 
@@ -6726,7 +6846,7 @@ const server = createServer(async (req, res) => {
     // whose checkpoints failed earlier this session.
     m = path.match(/^\/api\/bots\/([\w-]+)\/checkpoints$/);
     if (m && method === "GET") {
-      if (!store.bot(m[1])) return json(res, 404, { error: "no such bot" });
+      if (!store.bot(m[1])) return json(res, 404, { error: t("no such bot") });
       const cwd = url.searchParams.get("cwd") ?? "";
       if (!cwd.trim()) return json(res, 400, { error: "cwd query parameter required" });
       return json(res, 200, {
@@ -6737,7 +6857,7 @@ const server = createServer(async (req, res) => {
     m = path.match(/^\/api\/bots\/([\w-]+)\/checkpoints\/restore$/);
     if (m && method === "POST") {
       const bot = store.bot(m[1]);
-      if (!bot) return json(res, 404, { error: "no such bot" });
+      if (!bot) return json(res, 404, { error: t("no such bot") });
       const parsed = z
         .object({ cwd: z.string().min(1), hash: z.string().regex(/^[0-9a-f]{40}$/) })
         .safeParse(await readBody(req));
@@ -6747,9 +6867,9 @@ const server = createServer(async (req, res) => {
       // Claim synchronously with the busy check. startTurn checks the same
       // lease before reserving the bot, so no turn can enter during the
       // awaited Git operation.
-      if (bot.busy) return json(res, 409, { error: "the bot is working — stop the turn before restoring files" });
+      if (bot.busy) return json(res, 409, { error: t("the bot is working — stop the turn before restoring files") });
       if (checkpointRestoreLeases.has(bot.id)) {
-        return json(res, 409, { error: "this bot's project files are already being restored" });
+        return json(res, 409, { error: t("this bot's project files are already being restored") });
       }
       checkpointRestoreLeases.add(bot.id);
       let result: checkpoints.RestoreResult;
@@ -6766,9 +6886,9 @@ const server = createServer(async (req, res) => {
     m = path.match(/^\/api\/bots\/([\w-]+)\/cards\/([\w-]+)$/);
     if (m && method === "PATCH") {
       const bot = store.bot(m[1]);
-      if (!bot) return json(res, 404, { error: "no such bot" });
+      if (!bot) return json(res, 404, { error: t("no such bot") });
       const existing = store.messagesFor(bot.threadId).find((msg) => msg.id === m![2]);
-      if (!existing?.card) return json(res, 404, { error: "no such card" });
+      if (!existing?.card) return json(res, 404, { error: t("no such card") });
       if (existing.card.requestId) {
         return json(res, 409, { error: "request cards must be answered through the approval endpoint" });
       }
@@ -6791,7 +6911,7 @@ const server = createServer(async (req, res) => {
       const text = String(body.text ?? "").trim();
       if (!text) return json(res, 400, { error: "text required" });
       const bot = store.bot(m[1]);
-      if (!bot) return json(res, 404, { error: "no such bot" });
+      if (!bot) return json(res, 404, { error: t("no such bot") });
       if (body.threadId !== undefined && (typeof body.threadId !== "string" || !/^[\w-]+$/.test(body.threadId))) {
         return json(res, 400, { error: "threadId must be a task id" });
       }
@@ -6800,7 +6920,7 @@ const server = createServer(async (req, res) => {
       // target the task that is active now.
       const threadId = body.threadId ?? bot.threadId;
       if (!store.taskByThread(bot.id, threadId)) {
-        return json(res, 409, { error: "the bot switched tasks before it could receive the message" });
+        return json(res, 409, { error: t("the bot switched tasks before it could receive the message") });
       }
       const sendId = parseSendId(body.sendId);
       const replyTo = resolveReplyTarget(threadId, body.replyToId);
@@ -6833,12 +6953,12 @@ const server = createServer(async (req, res) => {
           }
 
           const currentAtStart = store.bot(bot.id);
-          if (!currentAtStart) throw Object.assign(new Error("no such bot"), { status: 404 });
+          if (!currentAtStart) throw Object.assign(new Error(t("no such bot")), { status: 404 });
           if (!store.taskByThread(currentAtStart.id, threadId)) {
-            throw Object.assign(new Error("the target task no longer exists"), { status: 409 });
+            throw Object.assign(new Error(t("the target task no longer exists")), { status: 409 });
           }
           if (currentAtStart.threadId !== threadId) {
-            throw Object.assign(new Error("the bot switched tasks before it could receive the message"), {
+            throw Object.assign(new Error(t("the bot switched tasks before it could receive the message")), {
               status: 409,
             });
           }
@@ -6861,19 +6981,19 @@ const server = createServer(async (req, res) => {
             // message into a task the bot no longer owns. A conflict leaves the
             // text in the client's composer/outbox to resend deliberately.
             const current = store.bot(bot.id);
-            if (!current) throw Object.assign(new Error("no such bot"), { status: 404 });
+            if (!current) throw Object.assign(new Error(t("no such bot")), { status: 404 });
             if (!store.taskByThread(bot.id, threadId)) {
-              throw Object.assign(new Error("the target task no longer exists"), { status: 409 });
+              throw Object.assign(new Error(t("the target task no longer exists")), { status: 409 });
             }
             if (current.threadId !== threadId) {
-              throw Object.assign(new Error("the bot switched tasks before it could receive the message"), {
+              throw Object.assign(new Error(t("the bot switched tasks before it could receive the message")), {
                 status: 409,
               });
             }
             if (steered) {
               if (!current.busy) {
                 throw Object.assign(
-                  new Error("the running turn ended before the steered message could be recorded"),
+                  new Error(t("the running turn ended before the steered message could be recorded")),
                   { status: 409 },
                 );
               }
@@ -6909,10 +7029,10 @@ const server = createServer(async (req, res) => {
     m = path.match(/^\/api\/bots\/([\w-]+)\/queue\/([\w-]+)$/);
     if (m && method === "DELETE") {
       const bot = store.bot(m[1]);
-      if (!bot) return json(res, 404, { error: "no such bot" });
+      if (!bot) return json(res, 404, { error: t("no such bot") });
       const queueId = m[2];
       if (!cancelSteeredMessage(bot.id, queueId)) {
-        return json(res, 404, { error: "no such queued message" });
+        return json(res, 404, { error: t("no such queued message") });
       }
       return json(res, 200, { ok: true });
     }
@@ -6925,25 +7045,25 @@ const server = createServer(async (req, res) => {
     if (m && method === "POST") {
       const messageId = m[2];
       const bot = store.bot(m[1]);
-      if (!bot) return json(res, 404, { error: "no such bot" });
+      if (!bot) return json(res, 404, { error: t("no such bot") });
       const body = await readBody(req);
       const text = String(body.text ?? "").trim();
       if (!text) return json(res, 400, { error: "text required" });
       // everything from here down is synchronous, so two racing edits can
       // never both get past this check: startTurn flips busy before the
       // next request is handled
-      if (bot.busy) return json(res, 409, { error: "the bot is working — stop it before editing" });
+      if (bot.busy) return json(res, 409, { error: t("the bot is working — stop it before editing") });
       const source = store.messagesFor(bot.threadId).find((msg) => msg.id === messageId);
       if (!source || source.role !== "user" || source.kind !== "text") {
-        return json(res, 404, { error: "only user messages can be edited" });
+        return json(res, 404, { error: t("only user messages can be edited") });
       }
       if (!registry.get(bot.modelSelection.instanceId)) {
         return json(res, 409, {
-          error: `provider instance "${bot.modelSelection.instanceId}" is unavailable — pick another model in settings`,
+          error: t('provider instance "{id}" is unavailable — pick another model in settings', { id: bot.modelSelection.instanceId }),
         });
       }
       const message = store.branchMessage(bot.threadId, messageId, text);
-      if (!message) return json(res, 404, { error: "no such message" });
+      if (!message) return json(res, 404, { error: t("no such message") });
       store.patchBot(bot.id, { rewound: true });
       const replyTo = message.replyToId ? resolveReplyTarget(bot.threadId, message.replyToId) : undefined;
       await startTurn(bot.id, text, { userMessage: message, replyTo });
@@ -6954,11 +7074,11 @@ const server = createServer(async (req, res) => {
     m = path.match(/^\/api\/bots\/([\w-]+)\/active-branch$/);
     if (m && method === "POST") {
       const bot = store.bot(m[1]);
-      if (!bot) return json(res, 404, { error: "no such bot" });
-      if (bot.busy) return json(res, 409, { error: "the bot is working — stop it before switching versions" });
+      if (!bot) return json(res, 404, { error: t("no such bot") });
+      if (bot.busy) return json(res, 409, { error: t("the bot is working — stop it before switching versions") });
       const body = await readBody(req);
       const leaf = store.setActiveLeaf(bot.threadId, String(body.messageId ?? ""));
-      if (!leaf) return json(res, 404, { error: "no such message" });
+      if (!leaf) return json(res, 404, { error: t("no such message") });
       // provider sessions still hold the other branch — next turn replays
       store.patchBot(bot.id, { rewound: true });
       return json(res, 200, { activeLeafId: leaf });
@@ -6966,7 +7086,7 @@ const server = createServer(async (req, res) => {
     m = path.match(/^\/api\/bots\/([\w-]+)\/respond$/);
     if (m && method === "POST") {
       const bot = store.bot(m[1]);
-      if (!bot) return json(res, 404, { error: "no such bot" });
+      if (!bot) return json(res, 404, { error: t("no such bot") });
       const body = await readBody(req);
       const behavior = requestBehavior(body.behavior);
       const reviewedSha256 = typeof body.reviewedSha256 === "string" ? body.reviewedSha256 : undefined;
@@ -7011,7 +7131,7 @@ const server = createServer(async (req, res) => {
       );
       if (skillCard?.card?.skillRequest) {
         const skillBotId = skillCard.from?.botId ?? store.botByThread(threadId)?.id;
-        if (!skillBotId) return json(res, 400, { error: "this skill request has no valid owner" });
+        if (!skillBotId) return json(res, 400, { error: t("this skill request has no valid owner") });
         const skillOwner = store.bot(skillBotId);
         if (sendSkillResolution(res, resolveSkillRequest({
           botId: skillBotId,
@@ -7030,7 +7150,7 @@ const server = createServer(async (req, res) => {
         // payload being authorized. Room cards carry their trusted sender;
         // one-to-one tasks resolve through the store's thread ownership.
         const routineBotId = routineCard.from?.botId ?? store.botByThread(threadId)?.id;
-        if (!routineBotId) return json(res, 400, { error: "this routine request has no valid owner" });
+        if (!routineBotId) return json(res, 400, { error: t("this routine request has no valid owner") });
         const routineOwner = store.bot(routineBotId);
         if (resolveAndSendRoutine(res, {
           botId: routineBotId,
@@ -7057,14 +7177,14 @@ const server = createServer(async (req, res) => {
         ? (group.busyBotId ? store.bot(group.busyBotId) : undefined) ??
           (pending?.from ? store.bot(pending.from.botId) : undefined)
         : store.botByThread(threadId);
-      if (!owner && !pending) return json(res, 404, { error: "nothing is waiting on an answer in this conversation" });
+      if (!owner && !pending) return json(res, 404, { error: t("nothing is waiting on an answer in this conversation") });
       const outcome = await answerRequest(threadId, owner?.modelSelection.instanceId ?? "", requestId, behavior, body.message, owner ? { id: owner.id, name: owner.name } : undefined);
       return json(res, 200, { ok: true, outcome });
     }
     m = path.match(/^\/api\/bots\/([\w-]+)\/interrupt$/);
     if (m && method === "POST") {
       const bot = store.bot(m[1]);
-      if (!bot) return json(res, 404, { error: "no such bot" });
+      if (!bot) return json(res, 404, { error: t("no such bot") });
       const rawBody = await readBody(req);
       if (rawBody !== null && (typeof rawBody !== "object" || Array.isArray(rawBody))) {
         return json(res, 400, { error: "body must be a JSON object" });
@@ -7078,7 +7198,7 @@ const server = createServer(async (req, res) => {
       const routineRun = routines!.activeRunForBot(bot.id);
       if (routineRun) {
         if (expectedThreadId !== undefined && routineRun.threadId !== expectedThreadId) {
-          return json(res, 409, { error: "this bot is running a routine in another conversation" });
+          return json(res, 409, { error: t("this bot is running a routine in another conversation") });
         }
         cancelDirectTurnDispatch(bot.id, routineRun.threadId ?? expectedThreadId);
         if (routineRun.threadId) await releaseBrowserCapabilityForThread(routineRun.threadId);
@@ -7091,7 +7211,7 @@ const server = createServer(async (req, res) => {
       const busyGroup = activeGroupTurnForBot(bot.id);
       if (busyGroup) {
         if (expectedThreadId !== undefined && busyGroup.threadId !== expectedThreadId) {
-          return json(res, 409, { error: `this bot is working in channel ${busyGroup.group.name}` });
+          return json(res, 409, { error: t("this bot is working in channel {name}", { name: busyGroup.group.name }) });
         }
         cancelGroupTurnOperations(busyGroup.group.id, busyGroup.threadId);
         await releaseBrowserCapabilityForThread(busyGroup.threadId);
@@ -7105,7 +7225,7 @@ const server = createServer(async (req, res) => {
         bot.threadId !== expectedThreadId &&
         directClaim?.threadId !== expectedThreadId
       ) {
-        return json(res, 409, { error: "the bot switched tasks before it could be interrupted" });
+        return json(res, 409, { error: t("the bot switched tasks before it could be interrupted") });
       }
       const cancelledDirect = cancelDirectTurnDispatch(bot.id, expectedThreadId);
       const directThreadId = cancelledDirect?.threadId ?? bot.threadId;
@@ -7129,11 +7249,11 @@ const server = createServer(async (req, res) => {
     m = path.match(/^\/api\/bots\/([\w-]+)\/tasks$/);
     if (m && method === "POST") {
       const bot = store.bot(m[1]);
-      if (!bot) return json(res, 404, { error: "no such bot" });
-      if (bot.busy) return json(res, 409, { error: "this bot is working — let it finish before starting a task" });
+      if (!bot) return json(res, 404, { error: t("no such bot") });
+      if (bot.busy) return json(res, 409, { error: t("this bot is working — let it finish before starting a task") });
       const body = await readBody(req);
       const task = store.createTask(bot.id, typeof body.title === "string" ? body.title : undefined);
-      if (!task) return json(res, 500, { error: "couldn't create that task" });
+      if (!task) return json(res, 500, { error: t("couldn't create that task") });
       const fresh = botWithThread(store.bot(bot.id)!);
       broadcast({ kind: "bot", bot: fresh });
       return json(res, 201, { bot: fresh, task: wireTask(task) });
@@ -7141,14 +7261,14 @@ const server = createServer(async (req, res) => {
     m = path.match(/^\/api\/bots\/([\w-]+)\/tasks\/([\w-]+)$/);
     if (m && method === "POST") {
       const bot = store.bot(m[1]);
-      if (!bot) return json(res, 404, { error: "no such bot" });
+      if (!bot) return json(res, 404, { error: t("no such bot") });
       // Switching the active thread while its provider turn is still running
       // loses ownership of the process and can make a later interrupt target
       // the wrong task. Keep this mutation atomic at the HTTP boundary; an
       // MCP client cannot make a safe check-then-switch across two requests.
-      if (bot.busy) return json(res, 409, { error: "this bot is working — stop it before switching tasks" });
+      if (bot.busy) return json(res, 409, { error: t("this bot is working — stop it before switching tasks") });
       const switched = store.switchTask(bot.id, m[2]);
-      if (!switched) return json(res, 404, { error: "no such task" });
+      if (!switched) return json(res, 404, { error: t("no such task") });
       const fresh = botWithThread(switched);
       broadcast({ kind: "bot", bot: fresh });
       const responseBot = url.searchParams.get("messages") === "0"
@@ -7159,7 +7279,7 @@ const server = createServer(async (req, res) => {
     if (m && method === "PATCH") {
       const body = await readBody(req);
       const task = store.renameTask(m[1], m[2], String(body.title ?? ""));
-      if (!task) return json(res, 404, { error: "no such task" });
+      if (!task) return json(res, 404, { error: t("no such task") });
       const fresh = botWithThread(store.bot(m[1])!);
       broadcast({ kind: "bot", bot: fresh });
       return json(res, 200, { task: wireTask(task) });
@@ -7167,11 +7287,11 @@ const server = createServer(async (req, res) => {
     if (m && method === "DELETE") {
       const bot = store.bot(m[1]);
       if (bot?.busy && (bot.threadId === m[2] || routines!.isActiveThread(m[2]))) {
-        return json(res, 409, { error: "this task is running — stop it first" });
+        return json(res, 409, { error: t("this task is running — stop it first") });
       }
       const stagedSkillCleanups = stagedSkillCleanupsForThread(m[2]);
       const updated = store.deleteTask(m[1], m[2]);
-      if (!updated) return json(res, 400, { error: "a bot keeps at least one task" });
+      if (!updated) return json(res, 400, { error: t("a bot keeps at least one task") });
       rejectDeletedThreadSkillStages(stagedSkillCleanups);
       const fresh = botWithThread(updated);
       broadcast({ kind: "bot", bot: fresh });
@@ -7194,14 +7314,14 @@ const server = createServer(async (req, res) => {
       }
       const action = z.enum(["pull", "run", "start", "stop", "remove"]).parse(m[1]);
       if (localVmImageBusy || localVmModeChangeBusy || localVmLifecycleBusy.has(SHARED_LOCAL_VM_TARGET.key)) {
-        return json(res, 409, { error: "another Local VM setup action is still running" });
+        return json(res, 409, { error: t("another Local VM setup action is still running") });
       }
       if (localVmMode(cfg) === "per-bot" && action === "run") {
-        return json(res, 409, { error: "Per-bot mode creates each desktop from that bot's Computer panel" });
+        return json(res, 409, { error: t("Per-bot mode creates each desktop from that bot's Computer panel") });
       }
       const vmOwner = localVmLeaseFor(SHARED_LOCAL_VM_TARGET).current(localVmOwnerBusy);
       if (vmOwner && (action === "stop" || action === "remove" || action === "run")) {
-        return json(res, 409, { error: "the Local VM is being used by a bot — stop that turn first" });
+        return json(res, 409, { error: t("the Local VM is being used by a bot — stop that turn first") });
       }
       if (action === "pull") localVmImageBusy = true;
       else localVmLifecycleBusy.add(SHARED_LOCAL_VM_TARGET.key);
@@ -7231,7 +7351,7 @@ const server = createServer(async (req, res) => {
     m = path.match(/^\/api\/bots\/([\w-]+)\/local-computer$/);
     if (m && method === "GET") {
       const bot = store.bot(m[1]);
-      if (!bot) return json(res, 404, { error: "no such bot" });
+      if (!bot) return json(res, 404, { error: t("no such bot") });
       return json(res, 200, await localVmPayload(localVmTargetForBot(bot.id)));
     }
     m = path.match(/^\/api\/bots\/([\w-]+)\/local-computer\/(run|stop|remove)$/);
@@ -7240,20 +7360,20 @@ const server = createServer(async (req, res) => {
         return json(res, 415, { error: "content-type must be application/json" });
       }
       const bot = store.bot(m[1]);
-      if (!bot) return json(res, 404, { error: "no such bot" });
+      if (!bot) return json(res, 404, { error: t("no such bot") });
       const action = z.enum(["run", "stop", "remove"]).parse(m[2]);
       const target = localVmTargetForBot(bot.id);
       if (target.key === SHARED_LOCAL_VM_TARGET.key) {
-        return json(res, 409, { error: "Shared mode manages this desktop in App Settings → Local VM" });
+        return json(res, 409, { error: t("Shared mode manages this desktop in App Settings → Local VM") });
       }
       if (localVmImageBusy || localVmModeChangeBusy || localVmLifecycleBusy.has(target.key)) {
-        return json(res, 409, { error: "this bot's Local VM setup action is still running" });
+        return json(res, 409, { error: t("this bot's Local VM setup action is still running") });
       }
       if (action === "run" && localVmProvisionBusy) {
-        return json(res, 409, { error: "another per-bot Local VM is being created — retry after it finishes" });
+        return json(res, 409, { error: t("another per-bot Local VM is being created — retry after it finishes") });
       }
       const vmOwner = localVmLeaseFor(target).current(localVmOwnerBusy);
-      if (vmOwner) return json(res, 409, { error: "this bot is using its Local VM — stop the turn first" });
+      if (vmOwner) return json(res, 409, { error: t("this bot is using its Local VM — stop the turn first") });
       // Fence this target, and the cross-target capacity decision for creates,
       // before the first await so two requests cannot both pass the limit.
       localVmLifecycleBusy.add(target.key);
@@ -7261,12 +7381,12 @@ const server = createServer(async (req, res) => {
       try {
         if (action === "run") {
           const before = await containerComputerStatus(undefined, undefined, target);
-          if (!before.runtime) return json(res, 409, { error: before.problem ?? "No container runtime is installed" });
+          if (!before.runtime) return json(res, 409, { error: before.problem ?? t("No container runtime is installed") });
           if (!(await containerComputerExists(before.runtime, target))) {
             const count = await existingPerBotLocalVmCount(before.runtime);
             if (count >= localVmMaxInstances(cfg)) {
               return json(res, 409, {
-                error: `The per-bot Local VM limit is ${localVmMaxInstances(cfg)} — delete an unused bot VM or raise the limit in App Settings`,
+                error: t("The per-bot Local VM limit is {count} — delete an unused bot VM or raise the limit in App Settings", { count: localVmMaxInstances(cfg) }),
               });
             }
           }
@@ -7289,7 +7409,7 @@ const server = createServer(async (req, res) => {
     m = path.match(/^\/api\/bots\/([\w-]+)\/local-computer\/screenshot$/);
     if (m && method === "POST") {
       const bot = store.bot(m[1]);
-      if (!bot) return json(res, 404, { error: "no such bot" });
+      if (!bot) return json(res, 404, { error: t("no such bot") });
       const target = localVmTargetForBot(bot.id);
       localVmIdleFor(target).touch();
       return json(res, 200, {
@@ -7313,7 +7433,7 @@ const server = createServer(async (req, res) => {
       const known =
         store.bots.some((b) => store.tasks(b.id).some((t) => t.threadId === threadId)) ||
         Boolean(store.groupByThread(threadId));
-      if (!known) return json(res, 404, { error: "no such thread" });
+      if (!known) return json(res, 404, { error: t("no such thread") });
       const rawLimit = url.searchParams.get("limit");
       const parsedLimit = rawLimit === null ? undefined : Number(rawLimit);
       if (parsedLimit !== undefined && (!Number.isInteger(parsedLimit) || parsedLimit <= 0)) {
@@ -7370,7 +7490,7 @@ const server = createServer(async (req, res) => {
       }
       const body = await readBody(req);
       const cli = typeof body?.cli === "string" ? body.cli.trim() : "";
-      if (!cli || /[\n\r]/.test(cli)) return json(res, 400, { error: "cli must be a non-empty path" });
+      if (!cli || /[\n\r]/.test(cli)) return json(res, 400, { error: t("cli must be a non-empty path") });
       const driver = typeof body?.driver === "string" ? BUILT_IN_DRIVERS.find((d) => d.driverKind === body.driver) : undefined;
       // Probe the exact configured wrapper plus --version. testCliBinary uses
       // a credential-redacted environment, so fixed wrapper arguments cannot
@@ -7390,12 +7510,12 @@ const server = createServer(async (req, res) => {
       }
       const body = await readBody(req);
       if (typeof body?.cli !== "string") return json(res, 400, { error: "cli must be a string" });
-      if (/[\n\r]/.test(body.cli)) return json(res, 400, { error: "cli must not contain newlines" });
-      if (providerConfigBusy) return json(res, 409, { error: "provider settings are already being updated" });
+      if (/[\n\r]/.test(body.cli)) return json(res, 400, { error: t("cli must not contain newlines") });
+      if (providerConfigBusy) return json(res, 409, { error: t("provider settings are already being updated") });
       providerConfigBusy = true;
       try {
         const result = withInstanceCli(cfg, instancePatch[1], body.cli);
-        if (!result.ok) return json(res, 404, { error: `unknown instance "${instancePatch[1]}"` });
+        if (!result.ok) return json(res, 404, { error: t('unknown instance "{id}"', { id: instancePatch[1] }) });
         // persist the whole instances map this rebuild produced — a fresh
         // saveConfig({instances}) merge would re-derive defaults identically,
         // but writing the resolved map keeps disk and runtime in lockstep
@@ -7419,8 +7539,9 @@ const server = createServer(async (req, res) => {
     if ((method === "PUT" || method === "PATCH") && path === "/api/config") {
       const body = await readBody(req);
       const patch = parseConfigPatch(body);
-      if (!Object.keys(patch).length) return json(res, 400, { error: "nothing to save" });
-      if (providerConfigBusy) return json(res, 409, { error: "provider settings are already being updated" });
+      if (isLocale(patch.locale)) setLocale(patch.locale);
+      if (!Object.keys(patch).length) return json(res, 400, { error: t("nothing to save") });
+      if (providerConfigBusy) return json(res, 409, { error: t("provider settings are already being updated") });
       const disablingBuiltInBrowser = patch.features?.browser === false && builtInBrowserEnabled(cfg);
       const removedBrowserProfileIds = patch.browserProfiles === undefined
         ? []
@@ -7441,7 +7562,7 @@ const server = createServer(async (req, res) => {
         );
         if (pendingReuse) {
           return json(res, 409, {
-            error: `the previous “${pendingReuse.name}” browser session is still being erased — wait before reusing it`,
+            error: t("the previous “{name}” browser session is still being erased — wait before reusing it", { name: pendingReuse.name }),
           });
         }
       }
@@ -7458,7 +7579,7 @@ const server = createServer(async (req, res) => {
         );
         if (activeReference) {
           return json(res, 409, {
-            error: `stop ${activeReference.name}'s turn before removing its browser profile`,
+            error: t("stop {name}'s turn before removing its browser profile", { name: activeReference.name }),
           });
         }
       }
@@ -7468,18 +7589,18 @@ const server = createServer(async (req, res) => {
       try {
         if (changingLocalVmMode) {
           if (localVmActiveThreads.size > 0 || localVmLifecycleBusy.size > 0 || localVmImageBusy) {
-            return json(res, 409, { error: "stop Local VM turns and setup actions before changing the Local VM isolation mode" });
+            return json(res, 409, { error: t("stop Local VM turns and setup actions before changing the Local VM isolation mode") });
           }
           if (localVmMode(cfg) === "per-bot" && patch.localVm?.mode === "shared") {
             const existing = await perBotLocalVmCountForModeChange();
             if (existing === null) {
               return json(res, 409, {
-                error: "start the container runtime and delete every per-bot VM before switching to shared mode",
+                error: t("start the container runtime and delete every per-bot VM before switching to shared mode"),
               });
             }
             if (existing > 0) {
               return json(res, 409, {
-                error: `delete the ${existing} per-bot Local VM${existing === 1 ? "" : "s"} before switching to shared mode`,
+                error: tn(existing, "delete the {count} per-bot Local VM before switching to shared mode", "delete the {count} per-bot Local VMs before switching to shared mode"),
               });
             }
           }
@@ -7528,7 +7649,7 @@ const server = createServer(async (req, res) => {
         );
         if (activeReference) {
           return json(res, 409, {
-            error: `stop ${activeReference.name}'s turn before removing its browser profile`,
+            error: t("stop {name}'s turn before removing its browser profile", { name: activeReference.name }),
           });
         }
       }
@@ -7537,7 +7658,7 @@ const server = createServer(async (req, res) => {
         if (utilityParentPort) {
           for (const profileId of removedBrowserProfileIds) {
             const target = browserProfilePartitionTarget(cfg, profileId);
-            if (!target) throw new Error(`browser profile cleanup target “${profileId}” is unavailable`);
+            if (!target) throw new Error(t("browser profile cleanup target “{id}” is unavailable", { id: profileId }));
             browserCleanupRequests.push(
               browserCleanup.prepare("profile", target.profileId, target.partitionId),
             );
@@ -7563,6 +7684,7 @@ const server = createServer(async (req, res) => {
           if (persisted.opencodeGo?.apiKey !== undefined) persisted.opencodeGo.apiKey = "";
           if (persisted.tts?.key !== undefined) persisted.tts.key = "";
           if (persisted.imageGen?.key !== undefined) persisted.imageGen.key = "";
+          if (persisted.workbuddy?.apiKey !== undefined) persisted.workbuddy.apiKey = "";
           saveConfig(persisted);
           configWriteCommitted = true;
           syncCredentialEnv(patch);
@@ -7658,7 +7780,7 @@ const server = createServer(async (req, res) => {
       // the runtime aligned with the config even on a truthful 503 response.
       requireBrowserCleanupAcknowledged(
         finalized.acknowledgements.every(Boolean),
-        removedBrowserProfileIds.length === 1 ? "The browser profile" : "The browser profiles",
+        removedBrowserProfileIds.length === 1 ? t("The browser profile") : t("The browser profiles"),
       );
       return json(res, 200, finalized.value);
       } finally {
@@ -7693,7 +7815,7 @@ const server = createServer(async (req, res) => {
       // The normal client sends <=320-character utterances. A hard ceiling
       // prevents an arbitrary local request from turning the user's hosted
       // voice account into an unbounded, billable synthesis job.
-      if (text.length > 500) return json(res, 413, { error: "voice utterances are limited to 500 characters" });
+      if (text.length > 500) return json(res, 413, { error: t("voice utterances are limited to 500 characters") });
       try {
         const audio = await tts.speak(cfg, text, typeof body.voiceId === "string" ? body.voiceId : undefined);
         res.writeHead(200, {
@@ -7760,11 +7882,11 @@ const server = createServer(async (req, res) => {
       const body = await readBody(req);
       const threadId = String(body.threadId ?? "");
       const message = secretMessage(m[1], threadId, m[2]);
-      if (!message?.secret) return json(res, 404, { error: "no such credential request" });
+      if (!message?.secret) return json(res, 404, { error: t("no such credential request") });
       if (m[3] === "provided") {
-        if (message.secret.dismissed) return json(res, 409, { error: "this credential request was dismissed" });
+        if (message.secret.dismissed) return json(res, 409, { error: t("this credential request was dismissed") });
         if (!credentialIsConfigured(cfg, message.secret.target)) {
-          return json(res, 409, { error: `${message.secret.label} was not saved yet` });
+          return json(res, 409, { error: t("{label} was not saved yet", { label: message.secret.label }) });
         }
         resumeSecretCard(m[1], threadId, message.id, "provided");
         return json(res, 200, { provided: true, resumed: true });
@@ -7772,10 +7894,10 @@ const server = createServer(async (req, res) => {
       if (m[3] === "resume") {
         const outcome = credentialResumeOutcome(message.secret);
         if (!outcome) {
-          return json(res, 409, { error: "this credential request is not ready to resume" });
+          return json(res, 409, { error: t("this credential request is not ready to resume") });
         }
         if (outcome === "provided" && !credentialIsConfigured(cfg, message.secret.target)) {
-          return json(res, 409, { error: `${message.secret.label} is no longer configured` });
+          return json(res, 409, { error: t("{label} is no longer configured", { label: message.secret.label }) });
         }
         resumeSecretCard(m[1], threadId, message.id, outcome);
         return json(res, 200, { resumed: true });
@@ -7792,7 +7914,7 @@ const server = createServer(async (req, res) => {
       const body = method === "POST" ? await readBody(req) : {};
       const threadId = String(method === "GET" ? url.searchParams.get("threadId") ?? "" : body.threadId ?? "");
       const message = connectorMessage(m[1], threadId, m[2]);
-      if (!message?.connector) return json(res, 404, { error: "no such connection request" });
+      if (!message?.connector) return json(res, 404, { error: t("no such connection request") });
       const connector = message.connector;
       if (m[3] === "authorize" && method === "POST") {
         store.patchMessage(threadId, message.id, {
@@ -7814,7 +7936,7 @@ const server = createServer(async (req, res) => {
         const next = {
           ...connector,
           status: state?.connected ? ("connected" as const) : failed ? ("failed" as const) : ("authorizing" as const),
-          error: failed ? `Connection ${state?.status ?? "failed"}` : undefined,
+          error: failed ? t("Connection {status}", { status: state?.status ?? "failed" }) : undefined,
         };
         store.patchMessage(threadId, message.id, { connector: next });
         if (state?.connected) maybeResumeConnectors(m[1], threadId, connector.resumeKey);
@@ -7824,7 +7946,7 @@ const server = createServer(async (req, res) => {
         const resumed = maybeResumeConnectors(m[1], threadId, connector.resumeKey);
         return resumed
           ? json(res, 200, { resumed: true })
-          : json(res, 409, { error: "finish connecting every requested app first" });
+          : json(res, 409, { error: t("finish connecting every requested app first") });
       }
       if (m[3] === "dismiss" && method === "POST") {
         store.patchMessage(threadId, message.id, { connector: { ...connector, dismissed: true } });
@@ -7837,7 +7959,7 @@ const server = createServer(async (req, res) => {
     m = path.match(/^\/api\/bots\/([\w-]+)\/computer$/);
     if (m && method === "GET") {
       const bot = store.bot(m[1]);
-      if (!bot) return json(res, 404, { error: "no such bot" });
+      if (!bot) return json(res, 404, { error: t("no such bot") });
       return bot.cloudBackend === "vps"
         ? json(res, 200, { backend: "vps", ...(await vps.vpsComputerStatus(cfg, bot.id)) })
         : json(res, 200, { backend: "box", ...(await box.boxStatus(cfg, bot.id)) });
@@ -7848,7 +7970,7 @@ const server = createServer(async (req, res) => {
     m = path.match(/^\/api\/bots\/([\w-]+)\/computer\/control$/);
     if (m) {
       const bot = store.bot(m[1]);
-      if (!bot) return json(res, 404, { error: "no such bot" });
+      if (!bot) return json(res, 404, { error: t("no such bot") });
       if (method === "GET") return json(res, 200, computerControl.snapshot(bot.id));
       if (method === "POST") {
         // JSON-only for the same anti-form-POST reason as every other
@@ -7888,7 +8010,7 @@ const server = createServer(async (req, res) => {
     m = path.match(/^\/api\/bots\/([\w-]+)\/computer\/viewer-close$/);
     if (m && method === "POST") {
       const bot = store.bot(m[1]);
-      if (!bot) return json(res, 404, { error: "no such bot" });
+      if (!bot) return json(res, 404, { error: t("no such bot") });
       if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
         return json(res, 415, { error: "content-type must be application/json" });
       }
@@ -7898,7 +8020,7 @@ const server = createServer(async (req, res) => {
     if (m && method === "POST") {
       const botId = m[1];
       const bot = store.bot(botId);
-      if (!bot) return json(res, 404, { error: "no such bot" });
+      if (!bot) return json(res, 404, { error: t("no such bot") });
       // Requiring JSON makes every computer mutation a non-simple browser
       // request (same reasoning as the Local VM lifecycle routes above): a
       // hostile page cannot submit it with a form, and its cross-origin JSON
@@ -7909,18 +8031,18 @@ const server = createServer(async (req, res) => {
       }
       if (bot.cloudBackend === "vps") {
         if (m[2] === "exec") {
-          return json(res, 409, { error: "the VPS console is available to the bot through its scoped computer tools" });
+          return json(res, 409, { error: t("the VPS console is available to the bot through its scoped computer tools") });
         }
         if (m[2] === "provision" && bot.computer !== "cloud" && !bot.autoStartVps) {
-          return json(res, 409, { error: "Auto may start this VPS only after Start VPS automatically is enabled" });
+          return json(res, 409, { error: t("Auto may start this VPS only after Start VPS automatically is enabled") });
         }
         if ((m[2] === "sleep" || m[2] === "remove") && (bot.busy || activeVpsThreads.has(botId))) {
-          return json(res, 409, { error: "the VPS computer is being used by this bot — interrupt the turn first" });
+          return json(res, 409, { error: t("the VPS computer is being used by this bot — interrupt the turn first") });
         }
         if (m[2] === "join") {
           if (req.headers["x-openmausbot-companion"] === "1") {
             return json(res, 409, {
-              error: "VPS live desktop control is currently available in the desktop app; the SSH viewer is loopback-only",
+              error: t("VPS live desktop control is currently available in the desktop app; the SSH viewer is loopback-only"),
             });
           }
           return json(res, 200, await vps.vpsComputerJoin(cfg, botId));
@@ -7931,7 +8053,7 @@ const server = createServer(async (req, res) => {
       }
       if (m[2] === "remove") {
         // Boxes sleep and wake; only the VPS backend has a container to remove.
-        return json(res, 409, { error: "the cloud Box backend has no container to remove — use sleep instead" });
+        return json(res, 409, { error: t("the cloud Box backend has no container to remove — use sleep instead") });
       }
       switch (m[2]) {
         case "provision":

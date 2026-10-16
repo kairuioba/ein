@@ -21,6 +21,7 @@ import {
   type CursorSilhouette,
 } from "./CursorAvatar";
 import { botAvatarProfile, type BotAvatarCrop } from "../../shared/bot-avatar";
+import { t } from "@/lib/i18n";
 
 /**
  * The pack's baked-in silhouette was exported with the body fill hardcoded
@@ -250,7 +251,7 @@ export function BotAvatar({ bot, size = 44, label, ...mascotProps }: BotAvatarPr
   return (
     <img
       src={profile.avatarUrl}
-      alt={label ?? (bot.name ? `${bot.name} avatar` : "Bot avatar")}
+      alt={label ?? (bot.name ? t("{name} avatar", { name: bot.name }) : t("Bot avatar"))}
       width={size}
       height={size}
       draggable={false}

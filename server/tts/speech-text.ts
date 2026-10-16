@@ -13,6 +13,7 @@
 //
 // Pure and synchronous on purpose: it is the piece most likely to need
 // tuning against real transcripts, so it stays trivially testable.
+import { msg, t } from "../../shared/i18n.ts";
 
 /** A fenced block becomes a mention of itself, with its language if known. */
 function describeCodeBlock(fence: string): string {
@@ -37,7 +38,7 @@ function describeCodeBlock(fence: string): string {
     diff: "diff",
   };
   const name = spoken[lang.toLowerCase()];
-  return name ? `. (a ${name} code block) ` : ". (a code block) ";
+  return name ? `. ${t("(a {language} code block)", { language: name })} ` : `. ${t("(a code block)")} `;
 }
 
 /** `a/b/c/file.ts` → `file.ts`. A path's directories are for the eye. */
@@ -45,8 +46,11 @@ function shortenPaths(text: string): string {
   return text.replace(/(?:[\w.@-]+\/){1,}([\w.-]+\.\w{1,6})\b/g, "$1");
 }
 
-/** Trailing punctuation that already ends a sentence. */
-const ENDS_SENTENCE = /[.!?:;]\s*$/;
+/** Trailing punctuation that already ends a sentence (Latin or CJK). */
+const ENDS_SENTENCE = /[.!?:;。！？：；]\s*$/;
+
+/** One CJK character or full-width punctuation mark. */
+const CJK = /[\u3000-\u303f\u3400-\u9fff\uf900-\ufaff\uff00-\uffef]/;
 
 /**
  * Markdown (or any agent output) → a line a voice can read.
@@ -64,11 +68,13 @@ export function speakable(input: string): string {
   text = text.replace(/~~~([^\n]*)\n[\s\S]*?(?:~~~|$)/g, (_m, fence: string) => describeCodeBlock(fence));
 
   // images before links — the syntax differs by one character
-  text = text.replace(/!\[([^\]]*)\]\([^)]*\)/g, (_m, alt: string) => (alt ? `. (image: ${alt}) ` : ". (an image) "));
+  text = text.replace(/!\[([^\]]*)\]\([^)]*\)/g, (_m, alt: string) =>
+    alt ? `. ${t("(image: {alt})", { alt })} ` : `. ${t("(an image)")} `,
+  );
   // [label](url) → label; a bare url becomes a noun rather than an alphabet soup
   text = text.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1");
-  text = text.replace(/<https?:\/\/[^>\s]+>/g, " a link ");
-  text = text.replace(/\bhttps?:\/\/\S+/g, " a link ");
+  text = text.replace(/<https?:\/\/[^>\s]+>/g, ` ${t("a link")} `);
+  text = text.replace(/\bhttps?:\/\/\S+/g, ` ${t("a link")} `);
 
   // tables: a grid is hopeless aloud, and the separator row is pure noise
   text = text.replace(/^\s*\|?[\s:-]*\|[\s|:-]*$/gm, "");
@@ -81,7 +87,7 @@ export function speakable(input: string): string {
   );
 
   // inline code: keep short identifiers (they carry meaning), drop long ones
-  text = text.replace(/`([^`\n]+)`/g, (_m, code: string) => (code.length <= 40 ? code : " that snippet "));
+  text = text.replace(/`([^`\n]+)`/g, (_m, code: string) => (code.length <= 40 ? code : ` ${t("that snippet")} `));
 
   // headings become sentences so the voice pauses instead of running on
   text = text.replace(/^\s{0,3}#{1,6}\s+(.*)$/gm, (_m, head: string) =>
@@ -120,6 +126,12 @@ export function speakable(input: string): string {
   text = text.replace(/\s+([.,!?;:])/g, "$1");
   text = text.replace(/(?:\.\s*){2,}/g, ". ");
   text = text.replace(/,\s*\./g, ".");
+  // Chinese: the paragraph and heading rules above add Latin full stops.
+  // After CJK punctuation they are noise; after a CJK character they become
+  // 。 so a Chinese voice pauses instead of saying "dot".
+  text = text.replace(/([。！？；：，、])\s*\.\s*/g, "$1");
+  text = text.replace(/([\u3400-\u9fff])\.\s*/g, "$1。");
+  text = text.replace(/\s+([。！？；：，、])/g, "$1");
   text = text.trim();
 
   // The paragraph→". " rule turns whitespace-only input into a lone full
@@ -131,6 +143,9 @@ export function speakable(input: string): string {
 /** Sentence-ish boundary: `.`/`!`/`?` followed by space, but not inside a
  * decimal, an ellipsis, or a common abbreviation. */
 const BOUNDARY = /(?<!\b(?:e\.g|i\.e|etc|vs|Dr|Mr|Mrs|Ms|No|approx))(?<![.\d])([.!?])(["')\]]*)\s+/g;
+
+/** Chinese and Japanese end a sentence with no space after it. */
+const CJK_BOUNDARY = /([。！？])([”’」』）)\]"']*)\s*/g;
 
 /**
  * Split speakable text into utterances a synthesizer can start on.
@@ -151,6 +166,7 @@ export function toUtterances(input: string, { minChars = 12, maxChars = 320 } = 
   const MARK = "\u0000";
   const rough = text
     .replace(BOUNDARY, `$1$2${MARK}`)
+    .replace(CJK_BOUNDARY, `$1$2${MARK}`)
     .split(MARK)
     .map((s) => s.trim())
     .filter(Boolean);
@@ -161,8 +177,8 @@ export function toUtterances(input: string, { minChars = 12, maxChars = 320 } = 
     const parts = piece.length <= maxChars ? [piece] : splitLong(piece, maxChars);
     for (const part of parts) {
       const prev = out[out.length - 1];
-      if (prev && (prev.length < minChars || part.length < minChars)) {
-        out[out.length - 1] = `${prev} ${part}`;
+      if (prev && (spokenWeight(prev) < minChars || spokenWeight(part) < minChars)) {
+        out[out.length - 1] = joinSpoken(prev, part);
       } else {
         out.push(part);
       }
@@ -171,15 +187,33 @@ export function toUtterances(input: string, { minChars = 12, maxChars = 320 } = 
   return out;
 }
 
+/** Length for the "too short to say alone" test. A CJK character carries
+ * about as much as a short word, so it counts twice: 「好的。」 is still glued
+ * to its neighbour, a ten-character Chinese sentence stands on its own. */
+function spokenWeight(text: string): number {
+  let cjk = 0;
+  for (const char of text) if (CJK.test(char)) cjk += 1;
+  return text.length + cjk;
+}
+
+/** Glue two utterances: a space between words, none between CJK text. */
+function joinSpoken(a: string, b: string): string {
+  return CJK.test(a.slice(-1)) || CJK.test(b.charAt(0)) ? `${a}${b}` : `${a} ${b}`;
+}
+
+/** Clause breaks, Latin and CJK. A cut lands right after the mark. */
+const CLAUSE_BREAKS = [", ", "; ", " — ", "，", "；", "：", "、"];
+
 function splitLong(text: string, maxChars: number): string[] {
   const out: string[] = [];
   let rest = text;
   while (rest.length > maxChars) {
     const window = rest.slice(0, maxChars);
     // prefer a clause break, then any space; never cut a word in half
-    const at = Math.max(window.lastIndexOf(", "), window.lastIndexOf("; "), window.lastIndexOf(" — "));
-    const cut = at > maxChars / 2 ? at + 1 : window.lastIndexOf(" ");
-    if (cut <= 0) break;
+    const at = Math.max(...CLAUSE_BREAKS.map((mark) => window.lastIndexOf(mark)));
+    let cut = at > maxChars / 2 ? at + 1 : window.lastIndexOf(" ");
+    // text without spaces (Chinese, Japanese) has no words to keep whole
+    if (cut <= 0) cut = maxChars;
     out.push(rest.slice(0, cut).trim());
     rest = rest.slice(cut).trim();
   }
@@ -197,23 +231,23 @@ export function narrateTool(toolName: string): string | null {
 
   const bare = name.toLowerCase();
   const verbs: Array<[RegExp, string]> = [
-    [/^(bash|shell|terminal|run_command|execute|computer_exec)$/, "running a command"],
-    [/^(read|read_file|view)$/, "reading a file"],
-    [/^(write|create_file)$/, "writing a file"],
-    [/^(edit|apply_patch|str_replace|multiedit)$/, "editing a file"],
-    [/^(grep|search|glob|find)$/, "searching"],
-    [/^(web_?search|websearch)$/, "searching the web"],
-    [/^(web_?fetch|fetch)$/, "reading a page"],
-    [/^screenshot$/, "looking at the screen"],
-    [/^(click|type_text|press_key|scroll|computer_batch)$/, "using the computer"],
-    [/^open_url$/, "opening a page"],
-    [/^list_bots$/, "checking who's around"],
-    [/^ask_bot$/, "asking a teammate"],
+    [/^(bash|shell|terminal|run_command|execute|computer_exec)$/, msg("running a command")],
+    [/^(read|read_file|view)$/, msg("reading a file")],
+    [/^(write|create_file)$/, msg("writing a file")],
+    [/^(edit|apply_patch|str_replace|multiedit)$/, msg("editing a file")],
+    [/^(grep|search|glob|find)$/, msg("searching")],
+    [/^(web_?search|websearch)$/, msg("searching the web")],
+    [/^(web_?fetch|fetch)$/, msg("reading a page")],
+    [/^screenshot$/, msg("looking at the screen")],
+    [/^(click|type_text|press_key|scroll|computer_batch)$/, msg("using the computer")],
+    [/^open_url$/, msg("opening a page")],
+    [/^list_bots$/, msg("checking who's around")],
+    [/^ask_bot$/, msg("asking a teammate")],
   ];
   for (const [pattern, phrase] of verbs) {
-    if (pattern.test(bare)) return phrase;
+    if (pattern.test(bare)) return t(phrase);
   }
   // an unrecognized tool still deserves a beat, but not its raw argv
   const short = shortenPaths(name).slice(0, 40);
-  return /^[\w .:/-]+$/.test(short) ? `running ${short}` : null;
+  return /^[\w .:/-]+$/.test(short) ? t("running {tool}", { tool: short }) : null;
 }

@@ -9,6 +9,7 @@ import { decodeInjectId, hostApiKey, localHost, mergeLocalInject } from "../loca
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 import type { ModelCatalog, ProviderErrorCode } from "../../contracts.ts";
 import { execCli } from "../../procs.ts";
+import { t } from "../../../shared/i18n.ts";
 
 const STATIC_MODELS: ModelCatalog = {
   default: "opencode/x-preview-f-free",
@@ -350,8 +351,9 @@ const support = (loadCatalog: OpenCodeCatalogLoader): AcpSupport => ({
   models: STATIC_MODELS,
   defaultCli: "opencode",
   nativeSource: "opencode.acp",
-  loginNote:
-    "OpenCode has no usable models — run `opencode auth login` or connect a provider in the OpenCode app",
+  get loginNote() {
+    return t("OpenCode has no usable models — run `opencode auth login` or connect a provider in the OpenCode app");
+  },
   install: {
     command: {
       darwin: "npm install -g opencode-ai",

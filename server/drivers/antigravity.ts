@@ -28,6 +28,7 @@ import { computerProxyEnv } from "../container-computer.ts";
 import { augmentedPath } from "../env-path.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
 import { injectedApiModel, mergeLocalInject } from "./local-inject.ts";
+import { t } from "../../shared/i18n.ts";
 
 import type { ChildProcess } from "node:child_process";
 import type {
@@ -346,10 +347,10 @@ export function ensureAntigravityComputerMcp(
 function decodeConfig(raw: unknown): AntigravityConfig {
   const o = (raw ?? {}) as Record<string, unknown>;
   if (o.cli !== undefined && typeof o.cli !== "string") {
-    throw new Error(`antigravity: invalid cli ${JSON.stringify(o.cli)}`);
+    throw new Error(t("antigravity: invalid cli {value}", { value: JSON.stringify(o.cli) }));
   }
   if (o.fullAuto !== undefined && typeof o.fullAuto !== "boolean") {
-    throw new Error(`antigravity: invalid fullAuto ${JSON.stringify(o.fullAuto)}`);
+    throw new Error(t("antigravity: invalid fullAuto {value}", { value: JSON.stringify(o.fullAuto) }));
   }
   return {
     cli: typeof o.cli === "string" ? o.cli : "agy",
@@ -431,8 +432,8 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
 
     const sendTurn = async (turn: SendTurnInput) => {
       const { threadId } = turn;
-      if (disposed) throw new Error("Antigravity instance is disposed");
-      if (active.has(threadId) || pending.has(threadId)) throw new Error("a turn is already running on this thread");
+      if (disposed) throw new Error(t("Antigravity instance is disposed"));
+      if (active.has(threadId) || pending.has(threadId)) throw new Error(t("a turn is already running on this thread"));
       pending.add(threadId);
       const turnId = newId();
 
@@ -489,7 +490,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         emit({
           ...base(threadId, turnId),
           type: "runtime.error",
-          message: `prompt too large for Antigravity's argv-only print mode (${Buffer.byteLength(prompt)} bytes)`,
+          message: t("prompt too large for Antigravity's argv-only print mode ({bytes} bytes)", { bytes: Buffer.byteLength(prompt) }),
         });
         settle(false, "prompt_too_large");
         pending.delete(threadId);
@@ -521,9 +522,10 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         emit({
           ...base(threadId, turnId),
           type: "runtime.error",
-          message: `could not update Antigravity's MCP config (${join(".gemini", "config", "mcp_config.json")}): ${
-            error instanceof Error ? error.message : String(error)
-          }`,
+          message: t("could not update Antigravity's MCP config ({path}): {error}", {
+            path: join(".gemini", "config", "mcp_config.json"),
+            error: error instanceof Error ? error.message : String(error),
+          }),
         });
         settle(false, "mcp_config_error");
         return { turnId };
@@ -581,7 +583,9 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
           emit({
             ...base(threadId, turnId),
             type: "runtime.error",
-            message: `could not restore Antigravity's MCP config: ${error instanceof Error ? error.message : String(error)}`,
+            message: t("could not restore Antigravity's MCP config: {error}", {
+              error: error instanceof Error ? error.message : String(error),
+            }),
           });
         } finally {
           releaseMcpLease();
@@ -684,7 +688,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
                 ? payload.message 
                 : typeof payload.error === "string" && payload.error 
                   ? payload.error 
-                  : `Model turn failed: ${payload.status || "unknown reason"}`;
+                  : t("Model turn failed: {reason}", { reason: payload.status || t("unknown reason") });
               emit({
                 ...base(threadId, turnId),
                 type: "runtime.error",
@@ -742,7 +746,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
           emit({
             ...base(threadId, turnId),
             type: "runtime.error",
-            message: `agy exited ${code} before result${stderr ? `: ${stderr.trim().slice(-300)}` : ""}`,
+            message: t("agy exited {code} before result", { code: String(code) }) + (stderr ? `: ${stderr.trim().slice(-300)}` : ""),
           });
           settle(false, "exit_before_result");
         }
@@ -755,7 +759,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       // settles first; this is the backstop for a fully wedged child.
       watchdog = setTimeout(() => {
         if (!settled) {
-          emit({ ...base(threadId, turnId), type: "runtime.error", message: "agy watchdog timeout" });
+          emit({ ...base(threadId, turnId), type: "runtime.error", message: t("agy watchdog timeout") });
           stop();
           settle(false, "timeout");
         }
@@ -773,7 +777,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
           resolve(err ? null : stdout.trim()),
         );
       });
-      if (!version) return { state: "unavailable", reason: `\`${config.cli}\` CLI not found` };
+      if (!version) return { state: "unavailable", reason: t("`{cli}` CLI not found", { cli: config.cli }) };
       // No auth field: agy auth is keyring-backed with no reliable file marker
       // (~/.gemini/antigravity-cli/ exists after first run even when logged
       // out), so any file heuristic would overstate "signed in". Leave undefined.

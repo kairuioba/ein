@@ -10,6 +10,8 @@
 // backstop for the obvious catastrophes. Real containment is the
 // sandbox and the bot's own computer, not a regex.
 
+import { t } from "../shared/i18n.ts";
+
 const DESTRUCTIVE = [
   /\brm\s+(-[a-z]*\s+)*-[a-z]*[rf]/i, // rm -rf, rm -fr, rm -r -f
   /\bmkfs\b|\bdiskutil\s+erase|\bdd\s+[^|]*\bof=\/dev\//i,
@@ -127,9 +129,9 @@ export function autoVerdict(
     destructive || sensitive
       ? null
       : bot.alwaysAllow?.includes(key)
-        ? { approve: `auto-approved ${key} (always allowed)`, source: "always-allow" as const, rule: key }
+        ? { approve: t("auto-approved {key} (always allowed)", { key }), source: "always-allow" as const, rule: key }
         : bot.autoApprove
-          ? { approve: `auto-approved ${tool}`, source: "auto-mode" as const, rule: undefined }
+          ? { approve: t("auto-approved {tool}", { tool }), source: "auto-mode" as const, rule: undefined }
           : null;
   if (context?.unattended) {
     // Auto mode is something a person switched on for turns they are present

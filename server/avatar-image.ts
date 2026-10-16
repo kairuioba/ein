@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { t } from "../shared/i18n.ts";
 import type { BotRecord } from "./store.ts";
 
 export const AVATAR_DIRECTION_MAX_CHARS = 400;
@@ -63,7 +64,7 @@ async function boundedResponseText(response: Response): Promise<string> {
   const advertised = Number(response.headers.get("content-length"));
   if (Number.isFinite(advertised) && advertised > MAX_UPSTREAM_RESPONSE_BYTES) {
     await response.body?.cancel().catch(() => {});
-    throw Object.assign(new Error("Generated avatar exceeded the response limit"), { status: 502 });
+    throw Object.assign(new Error(t("Generated avatar exceeded the response limit")), { status: 502 });
   }
   const reader = response.body?.getReader();
   if (!reader) return "";
@@ -78,7 +79,7 @@ async function boundedResponseText(response: Response): Promise<string> {
       received += value.byteLength;
       if (received > MAX_UPSTREAM_RESPONSE_BYTES) {
         await reader.cancel().catch(() => {});
-        throw Object.assign(new Error("Generated avatar exceeded the response limit"), { status: 502 });
+        throw Object.assign(new Error(t("Generated avatar exceeded the response limit")), { status: 502 });
       }
       chunks.push(decoder.decode(value, { stream: true }));
     }
@@ -96,7 +97,7 @@ export async function generateAvatarImage(
   fetchImpl: typeof fetch = fetch,
   timeoutMs = AVATAR_IMAGE_TIMEOUT_MS,
 ): Promise<GeneratedAvatarImage> {
-  if (!apiKey.trim()) throw Object.assign(new Error("Add an OpenAI image API key first"), { status: 409 });
+  if (!apiKey.trim()) throw Object.assign(new Error(t("Add an OpenAI image API key first")), { status: 409 });
 
   const timeoutSignal = AbortSignal.timeout(timeoutMs);
   let response: Response;
@@ -119,7 +120,7 @@ export async function generateAvatarImage(
   } catch (error) {
     const timedOut = timeoutSignal.aborted || (error instanceof Error && error.name === "TimeoutError");
     throw Object.assign(
-      new Error(timedOut ? "Avatar generation timed out" : "Could not reach OpenAI image generation"),
+      new Error(timedOut ? t("Avatar generation timed out") : t("Could not reach OpenAI image generation")),
       { status: 502 },
     );
   }
@@ -132,12 +133,12 @@ export async function generateAvatarImage(
     // same timeout later aborts the response body, undici may surface either
     // TimeoutError or AbortError; the signal is the authoritative cause.
     if (timeoutSignal.aborted || (error instanceof Error && error.name === "TimeoutError")) {
-      throw Object.assign(new Error("Avatar generation timed out"), { status: 502 });
+      throw Object.assign(new Error(t("Avatar generation timed out")), { status: 502 });
     }
     throw error;
   }
   if (!response.ok) {
-    let message = `OpenAI image generation failed (HTTP ${response.status})`;
+    let message = t("OpenAI image generation failed (HTTP {status})", { status: response.status });
     try {
       const parsed = z.object({ error: z.object({ message: z.string() }) }).safeParse(JSON.parse(text));
       if (parsed.success) message = parsed.data.error.message.slice(0, 500);
@@ -151,19 +152,19 @@ export async function generateAvatarImage(
   try {
     parsedJson = JSON.parse(text);
   } catch {
-    throw Object.assign(new Error("OpenAI returned an invalid image response"), { status: 502 });
+    throw Object.assign(new Error(t("OpenAI returned an invalid image response")), { status: 502 });
   }
   const parsed = generatedImageResponseSchema.safeParse(parsedJson);
   if (!parsed.success) {
-    throw Object.assign(new Error("OpenAI returned no generated image"), { status: 502 });
+    throw Object.assign(new Error(t("OpenAI returned no generated image")), { status: 502 });
   }
   const encoded = parsed.data.data[0]!.b64_json;
   if (!/^[A-Za-z0-9+/]+={0,2}$/.test(encoded) || encoded.length % 4 !== 0) {
-    throw Object.assign(new Error("OpenAI returned invalid image data"), { status: 502 });
+    throw Object.assign(new Error(t("OpenAI returned invalid image data")), { status: 502 });
   }
   const bytes = Buffer.from(encoded, "base64");
   if (bytes.byteLength === 0) {
-    throw Object.assign(new Error("OpenAI returned an empty image"), { status: 502 });
+    throw Object.assign(new Error(t("OpenAI returned an empty image")), { status: 502 });
   }
   return { bytes, mime: "image/webp" };
 }

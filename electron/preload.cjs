@@ -134,6 +134,26 @@ contextBridge.exposeInMainWorld("ogb", {
   },
   /** Mirrors durable unread state into the native Dock/taskbar badge. */
   setUnreadCount: (count) => ipcRenderer.send("desktop:unread-count", count),
+  /** The app language, read once per page load before React mounts so the
+   * first paint is already in the right language (shared/i18n.ts). */
+  locale: (() => {
+    try {
+      const value = ipcRenderer.sendSync("locale:get");
+      return value === "zh-CN" || value === "en" ? value : null;
+    } catch {
+      return null;
+    }
+  })(),
+  /** Save a language choice for the menus, dialogs and the next launch. */
+  setLocale: (locale) => ipcRenderer.invoke("locale:set", locale),
+  /** Menu-bar items the page carries out (new bot, settings, workbench). */
+  onMenuCommand: (cb) => {
+    const handler = (_event, name) => {
+      if (typeof name === "string") cb(name);
+    };
+    ipcRenderer.on("menu:command", handler);
+    return () => ipcRenderer.removeListener("menu:command", handler);
+  },
   /** Live VNC/noVNC in a sandboxed window owned by the app window. */
   desktopViewer: {
     open: (url, title, contextId) => ipcRenderer.invoke("desktop-viewer:open", url, title, contextId),

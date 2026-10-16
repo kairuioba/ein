@@ -19,6 +19,7 @@ import {
   companionOriginHealth,
   createCompanionOriginEndpoint,
 } from "./companion-origin-gateway.mjs";
+import { t } from "./i18n.cjs";
 
 // Passed to the fork rather than left to the sidecar's own defaults, so the
 // port this file fetches the control API on cannot drift from the port the
@@ -196,8 +197,8 @@ async function start({ resourcesPath, harnessPort, hostedUrl = null, log }) {
     // not a missing build step, so the old "run pnpm build:companion" advice
     // would send someone to a command that cannot help.
     lastError = app.isPackaged
-      ? "the companion is missing from this build"
-      : "the companion sources are missing from this checkout";
+      ? t("the companion is missing from this build")
+      : t("the companion sources are missing from this checkout");
     return companionState();
   }
   log?.(`companion fork ${resolved.entry}`);
@@ -206,7 +207,7 @@ async function start({ resourcesPath, harnessPort, hostedUrl = null, log }) {
   try {
     allocatedOrigin = createCompanionOriginEndpoint();
   } catch {
-    lastError = "the private companion origin could not be created";
+    lastError = t("the private companion origin could not be created");
     return companionState();
   }
   let cleanedOrigin = false;
@@ -242,7 +243,7 @@ async function start({ resourcesPath, harnessPort, hostedUrl = null, log }) {
     });
   } catch {
     cleanupOrigin();
-    lastError = "the companion process could not be started";
+    lastError = t("the companion process could not be started");
     return companionState();
   }
   child.stdout?.on("data", (d) => log?.(`[companion] ${String(d).trimEnd()}`));
@@ -273,7 +274,7 @@ async function start({ resourcesPath, harnessPort, hostedUrl = null, log }) {
   // request, which reads as a broken app rather than a failed start.
   for (let i = 0; i < 40; i++) {
     if (exited) {
-      lastError = "the companion could not start — check the log";
+      lastError = t("the companion could not start — check the log");
       return companionState();
     }
     try {
@@ -289,7 +290,7 @@ async function start({ resourcesPath, harnessPort, hostedUrl = null, log }) {
         } catch {
           /* already gone */
         }
-        lastError = `port ${CONTROL_PORT} is already serving another companion — stop it and try again`;
+        lastError = t("port {port} is already serving another companion — stop it and try again", { port: CONTROL_PORT });
         return companionState();
       }
       if (!Number.isSafeInteger(child.pid) || child.pid <= 0) {
@@ -310,7 +311,7 @@ async function start({ resourcesPath, harnessPort, hostedUrl = null, log }) {
   } catch {
     /* already gone */
   }
-  lastError = "the companion did not come up in time";
+  lastError = t("the companion did not come up in time");
   return companionState();
 }
 
@@ -385,7 +386,7 @@ export async function companionState() {
       devices: [],
       connectedDeviceIds: [],
       pairing: null,
-      error: "the companion is not responding",
+      error: t("the companion is not responding"),
     };
   }
 }
@@ -413,7 +414,7 @@ export async function companionPairing(open, expectedToken) {
     const state = await companionState();
     return {
       ...state,
-      error: state.error ?? "Phone pairing could not be updated.",
+      error: state.error ?? t("Phone pairing could not be updated."),
     };
   }
 }

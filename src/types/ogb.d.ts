@@ -191,6 +191,13 @@ type SkillRecordingPayload = {
       openExternal?(url: string): Promise<boolean>;
       /** Recolor the native window chrome for a skin; absent on older builds. */
       applySkin?(skin: string): Promise<boolean>;
+      /** The desktop shell's language, read synchronously at page load. */
+      locale?: "zh-CN" | "en" | null;
+      /** Switch the desktop shell's language (menus, dialogs, notifications)
+       * and remember it for the next launch; absent on older builds. */
+      setLocale?(locale: "zh-CN" | "en"): Promise<boolean>;
+      /** Menu-bar commands the page carries out. */
+      onMenuCommand?(cb: (name: "new-bot" | "open-settings" | "open-workbench" | string) => void): () => void;
       /** Receives a GitHub package URL opened through openmausbot://install. */
       onPackageInstall?(cb: (url: string) => void): () => void;
       /** Updates the native Dock/taskbar unread indicator. */
@@ -257,7 +264,14 @@ type SkillRecordingPayload = {
       saveFile?(filePath: string): Promise<string | null>;
       /** Save a provider credential through Electron's OS-backed store. */
       setCredential?(
-        name: "composioApiKey" | "xaiApiKey" | "boxToken" | "opencodeGoApiKey" | "ttsKey" | "openaiImageApiKey",
+        name:
+          | "composioApiKey"
+          | "xaiApiKey"
+          | "boxToken"
+          | "opencodeGoApiKey"
+          | "ttsKey"
+          | "openaiImageApiKey"
+          | "workbuddyApiKey",
         value: string,
       ): Promise<ConfigStatus>;
       /** In-app auto-update (packaged app only; dormant in dev). onState
@@ -298,6 +312,9 @@ export interface UpdaterState {
   version?: string;
   percent?: number;
   message?: string;
+  /** The build has no update feed (the Chinese edition ships without one,
+   * so it can never "update" itself to the upstream English release). */
+  unavailable?: boolean;
 }
 
 export interface CompanionAccountState {

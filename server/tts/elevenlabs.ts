@@ -10,6 +10,8 @@
 // client already splits text into utterances and fetches the next while the
 // current one plays, which gets the same perceived latency with far fewer
 // moving parts — and no socket to leak when a turn is interrupted.
+import { t } from "../../shared/i18n.ts";
+
 const API = process.env.OMB_ELEVENLABS_API || "https://api.elevenlabs.io/v1";
 const MODEL = "eleven_flash_v2_5";
 // 64kbps mono is indistinguishable for speech and a third of the bytes
@@ -48,11 +50,11 @@ function message(status: number, what: string, body: any): string {
     // Restricted keys are the common case, not a corner: a key with the
     // wrong scopes is REAL and still fails, so saying "copy a fresh one"
     // sends people to regenerate a key that was never the problem.
-    return "ElevenLabs rejected that key. If it's a restricted key, give it the Voices and Text to Speech permissions — or paste an unrestricted one.";
+    return t("ElevenLabs rejected that key. If it's a restricted key, give it the Voices and Text to Speech permissions — or paste an unrestricted one.");
   }
-  if (status === 429) return theirs || "ElevenLabs is rate-limiting this account — wait a moment and try again.";
-  if (status === 402) return theirs || "ElevenLabs says this account is out of credit.";
-  return theirs ? `${what} failed: ${theirs}` : `${what} failed (${status})`;
+  if (status === 429) return theirs || t("ElevenLabs is rate-limiting this account — wait a moment and try again.");
+  if (status === 402) return theirs || t("ElevenLabs says this account is out of credit.");
+  return theirs ? t("{what} failed: {reason}", { what, reason: theirs }) : t("{what} failed ({status})", { what, status });
 }
 
 /** Check a key before we store it: a rejected credential must fail at the
@@ -70,9 +72,9 @@ export async function verifyKey(key: string): Promise<VerifyResult> {
       signal: AbortSignal.timeout(20_000),
     });
     if (res.ok) return { ok: true };
-    return { ok: false, message: message(res.status, "checking that key", await safeJson(res)) };
+    return { ok: false, message: message(res.status, t("checking that key"), await safeJson(res)) };
   } catch {
-    return { ok: false, message: "Couldn't reach ElevenLabs to check that key — check your connection." };
+    return { ok: false, message: t("Couldn't reach ElevenLabs to check that key — check your connection.") };
   }
 }
 
@@ -82,11 +84,11 @@ export async function listVoices(key: string): Promise<Voice[]> {
     signal: AbortSignal.timeout(20_000),
   });
   const body = await safeJson(res);
-  if (!res.ok) throw new Error(message(res.status, "listing voices", body));
+  if (!res.ok) throw new Error(message(res.status, t("listing voices"), body));
   return (body?.voices ?? [])
     .map((v: any): Voice => ({
       id: String(v.voice_id ?? ""),
-      label: String(v.name ?? "Voice"),
+      label: String(v.name ?? t("Voice")),
       description: [v.labels?.accent, v.labels?.description].filter(Boolean).join(" · ") || undefined,
     }))
     .filter((v: Voice) => v.id);
@@ -99,6 +101,6 @@ export async function synthesize(text: string, voiceId: string, key: string): Pr
     body: JSON.stringify({ text, model_id: MODEL }),
     signal: AbortSignal.timeout(60_000),
   });
-  if (!res.ok) throw new Error(message(res.status, "speaking", await safeJson(res)));
+  if (!res.ok) throw new Error(message(res.status, t("speaking"), await safeJson(res)));
   return { bytes: new Uint8Array(await res.arrayBuffer()), mime: "audio/mpeg" };
 }

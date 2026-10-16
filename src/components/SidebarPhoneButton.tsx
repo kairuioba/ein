@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Plus, Smartphone } from "lucide-react";
 
 import { cn } from "@/lib/cn";
+import { t } from "@/lib/i18n";
 import type { Action } from "@/state/store";
 import type { SidebarDensity } from "@/lib/sidebar-preferences";
 import { companionBridge, type CompanionState } from "./PhoneSetupFlow";
@@ -38,17 +39,17 @@ export function deriveSidebarPhoneStatus(
   now: number,
 ): SidebarPhoneStatus {
   if (snapshot === undefined) {
-    return { kind: "checking", label: "Checking phone status", pairedCount: 0, connectedCount: 0 };
+    return { kind: "checking", label: t("Checking phone status"), pairedCount: 0, connectedCount: 0 };
   }
   if (snapshot === null) {
-    return { kind: "unavailable", label: "Phone status unavailable", pairedCount: 0, connectedCount: 0 };
+    return { kind: "unavailable", label: t("Phone status unavailable"), pairedCount: 0, connectedCount: 0 };
   }
 
   const pairedCount = snapshot.devices.length;
   if (snapshot.error) {
     return {
       kind: "unavailable",
-      label: "Phone status unavailable",
+      label: t("Phone status unavailable"),
       pairedCount,
       connectedCount: 0,
     };
@@ -56,13 +57,13 @@ export function deriveSidebarPhoneStatus(
   if (!snapshot.enabled) {
     return {
       kind: "unavailable",
-      label: "Phone access off",
+      label: t("Phone access off"),
       pairedCount,
       connectedCount: 0,
     };
   }
   if (!pairedCount) {
-    return { kind: "unpaired", label: "Pair a phone", pairedCount: 0, connectedCount: 0 };
+    return { kind: "unpaired", label: t("Pair a phone"), pairedCount: 0, connectedCount: 0 };
   }
 
   if (Array.isArray(snapshot.connectedDeviceIds)) {
@@ -70,15 +71,15 @@ export function deriveSidebarPhoneStatus(
     const connectedCount = snapshot.devices.filter((device) => live.has(device.id)).length;
     if (connectedCount) {
       const label = pairedCount === 1
-        ? "Phone connected"
+        ? t("Phone connected")
         : connectedCount === pairedCount
-          ? `${pairedCount} phones connected`
-          : `${connectedCount} of ${pairedCount} phones connected`;
+          ? t("{count} phones connected", { count: pairedCount })
+          : t("{connected} of {paired} phones connected", { connected: connectedCount, paired: pairedCount });
       return { kind: "connected", label, pairedCount, connectedCount };
     }
     return {
       kind: "disconnected",
-      label: pairedCount === 1 ? "Phone paired — not connected" : `${pairedCount} phones paired — none connected`,
+      label: pairedCount === 1 ? t("Phone paired — not connected") : t("{count} phones paired — none connected", { count: pairedCount }),
       pairedCount,
       connectedCount: 0,
     };
@@ -92,18 +93,18 @@ export function deriveSidebarPhoneStatus(
   }).length;
   if (recentCount) {
     const label = pairedCount === 1
-      ? "Phone active recently"
+      ? t("Phone active recently")
       : recentCount === pairedCount
-        ? `${pairedCount} phones active recently`
-        : `${recentCount} of ${pairedCount} phones active recently`;
+        ? t("{count} phones active recently", { count: pairedCount })
+        : t("{recent} of {paired} phones active recently", { recent: recentCount, paired: pairedCount });
     return { kind: "recent", label, pairedCount, connectedCount: 0 };
   }
 
   return {
     kind: "stale",
     label: pairedCount === 1
-      ? "Phone paired — not recently active"
-      : `${pairedCount} phones paired — none recently active`,
+      ? t("Phone paired — not recently active")
+      : t("{count} phones paired — none recently active", { count: pairedCount }),
     pairedCount,
     connectedCount: 0,
   };

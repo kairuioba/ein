@@ -9,6 +9,7 @@ import type {
 import { newEventId, newId } from "../contracts.ts";
 import { appendNative } from "./native.ts";
 import { classifyError, computeBackoff, interruptibleDelay, RETRY_MAX_ATTEMPTS } from "./retry.ts";
+import { t } from "../../shared/i18n.ts";
 
 export interface OpenAIChatMessage {
   role: "system" | "user" | "assistant";
@@ -177,7 +178,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
 
   const sendTurn = async (turn: SendTurnInput) => {
     if (!options.apiKey) throw new Error(options.missingKeyError);
-    if (active.has(turn.threadId)) throw new Error("a turn is already running on this thread");
+    if (active.has(turn.threadId)) throw new Error(t("a turn is already running on this thread"));
 
     const turnId = newId();
     const abort = new AbortController();

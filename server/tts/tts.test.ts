@@ -232,6 +232,17 @@ describe("built-in macOS voices", () => {
     await expect(access(dirname(args[1]))).rejects.toThrow();
   });
 
+  it("puts Chinese voices first in the Chinese edition only", async () => {
+    const { chineseFirst } = await import("./system-voices.ts");
+    const voices = [
+      { id: "Albert", label: "Albert", description: "en_US — Hello!" },
+      { id: "Sinji", label: "Sinji", description: "zh_HK — 你好" },
+      { id: "Tingting", label: "Tingting", description: "zh_CN — 你好，我叫婷婷。" },
+    ];
+    expect(chineseFirst(voices, "zh-CN").map((voice) => voice.id)).toEqual(["Tingting", "Sinji", "Albert"]);
+    expect(chineseFirst(voices, "en")).toBe(voices);
+  });
+
   it("still demands a picked voice, and says so", async () => {
     const { speak, NoVoiceConfigured } = await voice();
     expect(() => speak(cfg({ provider: "system" }), "hi", undefined, fakeSay([]))).toThrow(NoVoiceConfigured);

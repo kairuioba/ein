@@ -16,6 +16,7 @@
 // State is per-boot and in-memory on purpose: a hold is a live fact about
 // who is at the screen right now, and surviving a harness restart would
 // mean a stale hold silently bricking a bot's computer.
+import { t } from "../shared/i18n.ts";
 
 export interface ControlSnapshot {
   /** True while the person is driving; the bot's hands are refused. */
@@ -147,7 +148,7 @@ export class ComputerControl {
       controlLeaseId: null,
     };
     if (entry.helpReason === null) {
-      entry.helpReason = text || "the bot asked you to take over";
+      entry.helpReason = text || t("the bot asked you to take over");
       entry.helpRequestId = `${botId}-${++this.requestSequence}`;
     }
     this.entries.set(botId, entry);

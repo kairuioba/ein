@@ -1,3 +1,5 @@
+import { intlLocale, t } from "@/lib/i18n";
+
 import type { Routine, RoutineRun, RoutineSchedule } from "./routines";
 
 export const CALENDAR_SLOT_MINUTES = 15;
@@ -188,11 +190,19 @@ export function calendarRangeLabel(from: number, days: number): string {
   const to = addDays(from, days - 1);
   const start = new Date(from);
   const end = new Date(to);
+  const locale = intlLocale();
   if (days === 1) {
-    return start.toLocaleDateString([], { month: "long", day: "numeric", year: "numeric" });
+    return start.toLocaleDateString(locale, { month: "long", day: "numeric", year: "numeric" });
   }
   if (start.getMonth() === end.getMonth()) {
-    return `${start.toLocaleDateString([], { month: "long" })} ${start.getDate()} – ${end.getDate()}, ${end.getFullYear()}`;
+    return t("{start} – {endDay}, {year}", {
+      start: start.toLocaleDateString(locale, { month: "long", day: "numeric" }),
+      endDay: end.getDate(),
+      year: end.getFullYear(),
+    });
   }
-  return `${start.toLocaleDateString([], { month: "short", day: "numeric" })} – ${end.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })}`;
+  return t("{start} – {end}", {
+    start: start.toLocaleDateString(locale, { month: "short", day: "numeric" }),
+    end: end.toLocaleDateString(locale, { month: "short", day: "numeric", year: "numeric" }),
+  });
 }

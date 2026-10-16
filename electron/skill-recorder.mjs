@@ -27,6 +27,7 @@ import {
   recorderHelperBinary,
   recorderHelperBundle,
 } from "./build-recorder-helper.mjs";
+import { t } from "./i18n.cjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SOURCE = path.join(__dirname, "resources", "recorder-helper.swift");
@@ -65,7 +66,7 @@ export function recorderPermissionStatus() {
 export function startRecorder(win) {
   stopRecorder();
   const permission = recorderPermissionStatus();
-  if (!permission.supported) throw new Error("Skill recording is currently available on macOS.");
+  if (!permission.supported) throw new Error(t("Skill recording is currently available on macOS."));
   ensureBuilt();
   const sessionDir = mkdtempSync(path.join(app.getPath("temp"), "openmausbot-recorder-"));
   const outputPath = path.join(sessionDir, "events.ndjson");
@@ -153,7 +154,7 @@ export function startRecorder(win) {
     cleanup();
     if (!readySettled) {
       readySettled = true;
-      rejectReady(new Error(detail || "The action recorder could not start"));
+      rejectReady(new Error(detail || t("The action recorder could not start")));
     }
     if (active !== session) return;
     active = null;
@@ -176,7 +177,7 @@ export function startRecorder(win) {
     if (readySettled) return;
     readySettled = true;
     stopRecorder();
-    rejectReady(new Error("The action recorder did not become ready. Check Accessibility and Input Monitoring permissions."));
+    rejectReady(new Error(t("The action recorder did not become ready. Check Accessibility and Input Monitoring permissions.")));
   }, 5_000);
   timeout.unref();
   return ready.finally(() => clearTimeout(timeout));
@@ -232,7 +233,7 @@ function uniqueSkillDirectory(root, requested) {
     const directory = path.join(root, name);
     if (!existsSync(directory)) return { id: name, directory };
   }
-  throw new Error("Too many skills use this name");
+  throw new Error(t("Too many skills use this name"));
 }
 
 function decodeDataUrl(dataUrl, maxBytes, allowed) {
@@ -332,9 +333,9 @@ export function compileSkillMarkdown({ id, name, description, transcript, events
 }
 
 export function saveSkillRecording(payload, options = {}) {
-  if (!payload || typeof payload !== "object") throw new Error("Recording data is required");
+  if (!payload || typeof payload !== "object") throw new Error(t("Recording data is required"));
   const name = cleanText(payload.name, 100);
-  if (!name) throw new Error("Name the skill before creating it");
+  if (!name) throw new Error(t("Name the skill before creating it"));
   const description = cleanText(payload.description, 300);
   const dataRoot = options.dataRoot ?? process.env.OMB_DATA_DIR ?? path.join(os.homedir(), ".openmausbot");
   const skillsRoot = path.join(dataRoot, "skills");

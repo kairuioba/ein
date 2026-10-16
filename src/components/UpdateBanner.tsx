@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { ArrowDownToLine, Loader2, RefreshCw, Sparkles, X } from "lucide-react";
 import { useUpdaterState } from "@/lib/updater";
 import { cn } from "@/lib/cn";
+import { t } from "@/lib/i18n";
 
 // The one action button in the card. Disabled drops the accent fill for the
 // flat raised grey — the "I heard you" the click needs while the main process
@@ -18,11 +19,11 @@ const primaryAction =
 // so name the two cases that actually happen and clip anything else to its
 // first line.
 function friendlyError(message?: string): string {
-  if (!message) return "Something went wrong.";
+  if (!message) return t("Something went wrong.");
   if (/cannot find .*\.yml|404/i.test(message))
-    return "No update has been published for this platform yet.";
+    return t("No update has been published for this platform yet.");
   if (/ENOTFOUND|ECONNREFUSED|ETIMEDOUT|net::/i.test(message))
-    return "Couldn't reach the update server.";
+    return t("Couldn't reach the update server.");
   return message.split("\n")[0].slice(0, 140);
 }
 
@@ -49,26 +50,28 @@ export function UpdateBanner() {
 
   const title =
     s.status === "available"
-      ? `OpenMausBot ${s.version} is available`
+      ? t("OpenMausBot {version} is available", { version: s.version })
       : s.status === "downloading"
-        ? `Downloading ${s.version ?? "update"}…`
+        ? s.version
+          ? t("Downloading {version}…", { version: s.version })
+          : t("Downloading update…")
         : s.status === "downloaded"
-          ? `${s.version} is ready`
+          ? t("{version} is ready", { version: s.version })
           : installing
-            ? "Restarting to update…"
-            : "Update check failed";
+            ? t("Restarting to update…")
+            : t("Update check failed");
   const subtitle =
     s.status === "available"
-      ? "A newer version is ready to download."
+      ? t("A newer version is ready to download.")
       : s.status === "downloading"
         ? // no percent yet means the transfer hasn't reported in — don't imply 0
           s.percent == null
-          ? "Starting download…"
+          ? t("Starting download…")
           : `${Math.round(s.percent)}%`
         : s.status === "downloaded"
-          ? "Restart to finish updating."
+          ? t("Restart to finish updating.")
           : installing
-            ? "OpenMausBot will reopen in a moment."
+            ? t("OpenMausBot will reopen in a moment.")
             : friendlyError(s.message);
 
   return (
@@ -87,7 +90,7 @@ export function UpdateBanner() {
           <button
             onClick={() => setDismissed(key)}
             className="shrink-0 rounded-md p-1 text-ink-secondary hover:bg-control hover:text-ink"
-            title="Dismiss"
+            title={t("Dismiss")}
           >
             <X size={14} />
           </button>
@@ -114,7 +117,7 @@ export function UpdateBanner() {
             disabled
             className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-control py-1.5 text-[13px] font-medium text-ink-secondary"
           >
-            <Loader2 size={13} className="animate-spin" /> Restarting…
+            <Loader2 size={13} className="animate-spin" /> {t("Restarting…")}
           </button>
         </div>
       )}
@@ -132,11 +135,12 @@ export function UpdateBanner() {
             >
               {pending === "download" ? (
                 <>
-                  <Loader2 size={13} className="animate-spin" /> Starting…
+                  <Loader2 size={13} className="animate-spin" /> {t("Starting…")}
                 </>
               ) : (
                 <>
-                  <ArrowDownToLine size={13} /> Download
+                  <ArrowDownToLine size={13} />{" "}
+                  {t("Download")}
                 </>
               )}
             </button>
@@ -152,11 +156,12 @@ export function UpdateBanner() {
             >
               {pending === "install" ? (
                 <>
-                  <Loader2 size={13} className="animate-spin" /> Restarting…
+                  <Loader2 size={13} className="animate-spin" /> {t("Restarting…")}
                 </>
               ) : (
                 <>
-                  <RefreshCw size={13} /> Restart to update
+                  <RefreshCw size={13} />{" "}
+                  {t("Restart to update")}
                 </>
               )}
             </button>
@@ -172,10 +177,10 @@ export function UpdateBanner() {
             >
               {pending === "check" ? (
                 <>
-                  <Loader2 size={13} className="animate-spin" /> Checking…
+                  <Loader2 size={13} className="animate-spin" /> {t("Checking…")}
                 </>
               ) : (
-                "Try again"
+                t("Try again")
               )}
             </button>
           )}
@@ -184,7 +189,7 @@ export function UpdateBanner() {
             disabled={pending !== null}
             className="rounded-lg px-3 py-1.5 text-[13px] text-ink-secondary hover:bg-control hover:text-ink disabled:opacity-50 disabled:hover:bg-transparent"
           >
-            Later
+            {t("Later")}
           </button>
         </div>
       )}

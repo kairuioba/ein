@@ -2,21 +2,22 @@ import fs from "node:fs";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
+import { t } from "./i18n.cjs";
 
 function normalizeSourcePath(rawPath) {
   if (typeof rawPath !== "string" || !rawPath.trim()) {
-    throw new Error("A file path is required");
+    throw new Error(t("A file path is required"));
   }
 
   if (/^file:\/\//i.test(rawPath)) {
     try {
       return fileURLToPath(rawPath);
     } catch {
-      throw new Error("That file path is invalid");
+      throw new Error(t("That file path is invalid"));
     }
   }
 
-  if (!path.isAbsolute(rawPath)) throw new Error("That file path is invalid");
+  if (!path.isAbsolute(rawPath)) throw new Error(t("That file path is invalid"));
   return rawPath;
 }
 
@@ -30,12 +31,12 @@ async function canonicalPath(target, fsp, message) {
 
 function assertInside(root, target) {
   if (target !== root && !target.startsWith(root + path.sep)) {
-    throw new Error("Only files created by your bots can be saved");
+    throw new Error(t("Only files created by your bots can be saved"));
   }
 }
 
 function assertRegularFile(stats) {
-  if (!stats.isFile()) throw new Error("That path is not a file");
+  if (!stats.isFile()) throw new Error(t("That path is not a file"));
 }
 
 function isSameFile(left, right) {
@@ -50,15 +51,15 @@ async function resolveSource(rawPath, { home, fsp, platform }) {
   const root = await canonicalPath(
     path.join(home, ".openmausbot"),
     fsp,
-    "Only files created by your bots can be saved",
+    t("Only files created by your bots can be saved"),
   );
-  const filePath = await canonicalPath(target, fsp, "That file no longer exists");
+  const filePath = await canonicalPath(target, fsp, t("That file no longer exists"));
   assertInside(root, filePath);
 
   const stats = await fsp.stat(filePath, { bigint: true });
   assertRegularFile(stats);
   if (platform === "win32") {
-    const pathAfterStat = await canonicalPath(filePath, fsp, "That file no longer exists");
+    const pathAfterStat = await canonicalPath(filePath, fsp, t("That file no longer exists"));
     assertInside(root, pathAfterStat);
   }
   return { filePath, stats };
@@ -79,7 +80,7 @@ async function openSavableFile(rawPath, { home, fsp, platform }) {
     const openedStats = await handle.stat({ bigint: true });
     assertRegularFile(openedStats);
     if (platform === "win32" && !isSameFile(source.stats, openedStats)) {
-      throw new Error("That file changed while it was being opened");
+      throw new Error(t("That file changed while it was being opened"));
     }
     return { handle, filePath: source.filePath };
   } catch (error) {

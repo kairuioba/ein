@@ -11,6 +11,7 @@ import { memo } from "react";
 import { useStore, type Bot, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { SkillRequestPreview } from "@/components/SkillRequestPreview";
+import { t } from "@/lib/i18n";
 import { reviewedSkillSha256 } from "../../shared/skill-request";
 
 interface ApprovalLabels {
@@ -58,34 +59,46 @@ export function spokenApprovalPrompt(pending: Pending, requester: string): strin
   const isRoutineRequest = isRoutineApproval(pending);
   const isSkillRequest = isSkillApproval(pending);
   if (isSkillRequest) {
-    const title = pending.message.card?.title.trim() || "Enable this skill?";
-    return `${requester} asks: ${title}${/[.!?]$/.test(title) ? "" : "."} Review the skill on screen. Should I enable it?`;
+    const title = pending.message.card?.title.trim() || t("Enable this skill?");
+    return t("{name} asks: {title}{stop} Review the skill on screen. Should I enable it?", {
+      name: requester,
+      title,
+      stop: /[.!?。！？]$/.test(title) ? "" : ".",
+    });
   }
   if (!isRoutineRequest) {
-    return `${requester} wants to ${pending.tool}. ${pending.detail}. Should I allow it?`;
+    return t("{name} wants to {tool}. {detail}. Should I allow it?", {
+      name: requester,
+      tool: pending.tool,
+      detail: pending.detail,
+    });
   }
-  const title = pending.message.card?.title.trim() || "Confirm this routine?";
-  return `${requester} asks: ${title}${/[.!?]$/.test(title) ? "" : "."} Review the schedule and instructions on screen. Should I confirm it?`;
+  const title = pending.message.card?.title.trim() || t("Confirm this routine?");
+  return t("{name} asks: {title}{stop} Review the schedule and instructions on screen. Should I confirm it?", {
+    name: requester,
+    title,
+    stop: /[.!?。！？]$/.test(title) ? "" : ".",
+  });
 }
 
 function label(pending: Pending): string {
   if (isSkillApproval(pending)) {
-    return "Enable this learned skill";
+    return t("Enable this learned skill");
   }
   if (isRoutineApproval(pending)) {
     return pending.message.card?.routineRequest?.operation.action === "create"
-      ? "Confirm this routine"
-      : "Confirm this routine change";
+      ? t("Confirm this routine")
+      : t("Confirm this routine change");
   }
   const nice: ApprovalLabels = {
-    Bash: "Command approval requested",
-    shell: "Command approval requested",
-    Read: "File-read approval requested",
-    Write: "File-change approval requested",
-    Edit: "File-change approval requested",
-    edit: "File-change approval requested",
+    Bash: t("Command approval requested"),
+    shell: t("Command approval requested"),
+    Read: t("File-read approval requested"),
+    Write: t("File-change approval requested"),
+    Edit: t("File-change approval requested"),
+    edit: t("File-change approval requested"),
   };
-  return nice[pending.tool] ?? "Approval requested";
+  return nice[pending.tool] ?? t("Approval requested");
 }
 
 export const PendingApprovalPanel = memo(function PendingApprovalPanel({
@@ -100,14 +113,14 @@ export const PendingApprovalPanel = memo(function PendingApprovalPanel({
   return (
     <div
       role="region"
-      aria-label={isSkillApproval(pending) ? "Pending skill confirmation" : isRoutineApproval(pending) ? "Pending routine confirmation" : "Pending approval"}
+      aria-label={isSkillApproval(pending) ? t("Pending skill confirmation") : isRoutineApproval(pending) ? t("Pending routine confirmation") : t("Pending approval")}
       className="rounded-t-2xl border-b border-hairline/50 bg-control/40 px-4 py-3"
     >
       <div className="flex flex-wrap items-center gap-2" aria-live="polite">
-        <span className="text-[11px] uppercase tracking-[0.18em] text-ink-secondary">Pending approval</span>
+        <span className="text-[11px] uppercase tracking-[0.18em] text-ink-secondary">{t("Pending approval")}</span>
         {count > 1 && (
           <span className="rounded-full bg-control px-1.5 py-0.5 text-[11px] tabular-nums text-ink-secondary">
-            {index + 1} of {count}
+            {t("{index} of {count}", { index: index + 1, count })}
           </span>
         )}
         <span className="text-[13px] text-ink">{label(pending)}</span>
@@ -124,7 +137,7 @@ export const PendingApprovalPanel = memo(function PendingApprovalPanel({
       {/* never truncated — long commands wrap and scroll */}
       <pre
         tabIndex={0}
-        aria-label={isSkillApproval(pending) ? "Skill details to review" : isRoutineApproval(pending) ? "Routine details to review" : "Approval details to review"}
+        aria-label={isSkillApproval(pending) ? t("Skill details to review") : isRoutineApproval(pending) ? t("Routine details to review") : t("Approval details to review")}
         className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono text-[12px] leading-relaxed text-ink"
       >
         {pending.detail}
@@ -172,22 +185,22 @@ export function PendingApprovalActions({
     <div className="flex flex-wrap items-center justify-end gap-2 px-2 py-2">
       {!durableRequest && (
         <button onClick={onCancelTurn} className={cn(base, "text-ink-secondary hover:bg-control hover:text-ink")}>
-          Cancel turn
+          {t("Cancel turn")}
         </button>
       )}
       <button
         onClick={() => decide("deny")}
         className={cn(base, "border border-danger/40 text-danger hover:bg-danger/10")}
       >
-        {isRoutineRequest ? "Cancel" : "Deny"}
+        {isRoutineRequest ? t("Cancel") : t("Deny")}
       </button>
       {!durableRequest && bot && pending.allowKey && (
         <button
           onClick={() => decide("allow", true)}
-          title={`Stop asking ${bot.name} about ${pending.allowKey}`}
+          title={t("Stop asking {name} about {key}", { name: bot.name, key: pending.allowKey })}
           className={cn(base, "border border-hairline/50 text-ink hover:bg-control")}
         >
-          Always allow
+          {t("Always allow")}
         </button>
       )}
       <button
@@ -198,7 +211,7 @@ export function PendingApprovalActions({
           "bg-accent font-medium text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40",
         )}
       >
-        {isSkillRequest ? "Enable" : isRoutineRequest ? "Confirm" : "Allow once"}
+        {isSkillRequest ? t("Enable") : isRoutineRequest ? t("Confirm") : t("Allow once")}
       </button>
     </div>
   );

@@ -12,6 +12,7 @@ import { parse as parseYaml } from "yaml";
 
 import type { ModelCatalog } from "../../contracts.ts";
 import { decodeInjectId, hostApiKey, INJECT_SEP, localHost, mergeLocalInject } from "../local-inject.ts";
+import { t } from "../../../shared/i18n.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 
 const EMPTY: ModelCatalog = { default: "", options: [] };
@@ -387,7 +388,7 @@ async function applySetting(
   try {
     await request(method, params);
   } catch (e) {
-    throw new Error(`Hermes rejected ${what} via ${method}: ${(e as Error).message}`);
+    throw new Error(t("Hermes rejected {setting} via {method}: {error}", { setting: what, method, error: String((e as Error).message) }));
   }
 }
 
@@ -408,7 +409,9 @@ const support: AcpSupport = {
   },
   defaultCli: "hermes",
   nativeSource: "hermes.acp",
-  loginNote: "Hermes CLI is not installed",
+  get loginNote() {
+    return t("Hermes CLI is not installed");
+  },
   install: {
     command: {
       darwin: "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash",
@@ -439,7 +442,7 @@ const support: AcpSupport = {
       request,
       "session/set_model",
       { sessionId, modelId: native },
-      `model "${native}"`,
+      t('model "{model}"', { model: native }),
     );
   },
   buildPromptText: (turn) => (turn.system ? `${turn.system}\n\n${turn.text}` : turn.text),

@@ -7,6 +7,7 @@ import { z } from "zod";
 
 import type { ModelCatalog, ProviderDriver } from "../contracts.ts";
 import { createOpenAIChatRuntime } from "./openai-chat.ts";
+import { t } from "../../shared/i18n.ts";
 
 const DRIVER_KIND = "minimax";
 const API_KEY_ENV = "MINIMAX_API_KEY";
@@ -112,8 +113,12 @@ export const MinimaxDriver: ProviderDriver<MinimaxConfig> = {
         stream_options: stream ? { include_usage: true } : undefined,
       }),
       httpErrorLabel: "MiniMax",
-      missingKeyError: `no MiniMax key — set ${API_KEY_ENV} or run mmx auth login --api-key …`,
-      unavailableReason: `no MiniMax API key — run mmx auth login --api-key … or set ${API_KEY_ENV}`,
+      get missingKeyError() {
+        return t("no MiniMax key — set {env} or run mmx auth login --api-key …", { env: API_KEY_ENV });
+      },
+      get unavailableReason() {
+        return t("no MiniMax API key — run mmx auth login --api-key … or set {env}", { env: API_KEY_ENV });
+      },
       timeoutMs: 180_000,
       billing: "metered",
       includeUsageInCompleted: true,

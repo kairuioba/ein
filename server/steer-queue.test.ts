@@ -287,6 +287,7 @@ describe("steer-queue e2e (fake ACP fleet)", () => {
     );
 
     const env: NodeJS.ProcessEnv = {
+      OMB_LOCALE: "en", // the assertions read the English source strings
       HOME: home,
       USERPROFILE: home,
       OMB_PORT: String(PORT),

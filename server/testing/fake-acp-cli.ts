@@ -16,6 +16,11 @@
 //                     returns immediately, the peer runs after our turn)
 //                   | chief-delegate (delegates only for an ASSIGN_TO_PEER
 //                     prompt; ordinary follow-ups stay responsive)
+//                   | chief-plan (a Chief answers a DISPATCH_PLAN prompt by
+//                     calling submit_plan with a two-step plan; every other
+//                     prompt, including workers' briefs and the dispatcher's
+//                     synthesis request, gets a short scripted reply that
+//                     echoes the prompt's first line)
 //                   | create-peer (a Chief creates a specialist, then delegates
 //                     work to it through the returned id)
 //                   | echo-gated (reply by echoing the full prompt, and when
@@ -454,6 +459,39 @@ function handle(msg: any) {
             out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: `peer error: ${(e as Error).message}` } } } });
             complete();
           });
+        return;
+      }
+      if (mode === "chief-plan") {
+        const firstLine = promptText.split("\n").find((line) => line.trim() && !line.startsWith("You are")) ?? "";
+        if (agentsMcp && promptText.includes("DISPATCH_PLAN")) {
+          void driveMcp(agentsMcp, [
+            {
+              name: "submit_plan",
+              args: () => ({
+                goal: "Prepare the launch kit",
+                subtasks: [
+                  { id: "research", title: "Competitor research", brief: "List three competitor prices.", role: "Market analyst", needs: ["reasoning"], difficulty: 2 },
+                  { id: "copy", title: "Launch copy", brief: "Write the launch post from the research.", role: "Copywriter", needs: ["writing"], difficulty: 2, depends_on: ["research"] },
+                ],
+              }),
+            },
+          ])
+            .then((reply) => {
+              out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: `plan submitted: ${reply}` } } } });
+              complete();
+            })
+            .catch((e) => {
+              const message = e instanceof Error ? e.message : String(e);
+              out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: `plan error: ${message}` } } } });
+              complete();
+            });
+          return;
+        }
+        const reply = promptText.includes("[OpenMausBot dispatch finished]")
+          ? `SYNTHESIS: ${promptText.includes("RESULT:Competitor research") && promptText.includes("RESULT:Launch copy") ? "both results present" : "missing results"}`
+          : `RESULT:${/Your subtask: (.+)/.exec(promptText)?.[1] ?? firstLine.slice(0, 60)}`;
+        out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: reply } } } });
+        complete();
         return;
       }
       if (mode === "create-peer" && agentsMcp) {

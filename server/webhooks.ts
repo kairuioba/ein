@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import { writeFileAtomic } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
+import { msg, t } from "../shared/i18n.ts";
 import type { RoutineRunOn } from "./routines.ts";
 import { parseJson, schemaIssue, type JsonValue } from "./schema.ts";
 
@@ -176,9 +177,9 @@ function cleanInput(input: WebhookTriggerInput): CleanWebhookInput {
   const prompt = input.prompt.trim().slice(0, 20_000);
   const botId = input.botId.trim();
   const runOn = input.runOn ?? "maus";
-  if (!name) fail(400, "Give the webhook a name");
-  if (!botId) fail(400, "Choose a MAUS");
-  if (runOn !== "maus" && runOn !== "cloud") fail(400, "Choose where this webhook runs");
+  if (!name) fail(400, t("Give the webhook a name"));
+  if (!botId) fail(400, t("Choose a MAUS"));
+  if (runOn !== "maus" && runOn !== "cloud") fail(400, t("Choose where this webhook runs"));
   const eventTypes = Array.from(new Set(
     (input.eventTypes ?? [])
       .map((value) => value.trim().slice(0, 200))
@@ -306,7 +307,7 @@ export class WebhookManager {
 
   create(input: JsonValue): CreatedWebhook {
     const clean = cleanInput(parseTriggerInput(input));
-    if (this.options.botState(clean.botId) === "missing") fail(400, "That MAUS no longer exists");
+    if (this.options.botState(clean.botId) === "missing") fail(400, t("That MAUS no longer exists"));
     const now = this.now();
     const secret = newSecret();
     const trigger: StoredWebhookTrigger = {
@@ -337,11 +338,11 @@ export class WebhookManager {
       verificationPending: patch.verificationPending ?? trigger.verificationPending,
       eventTypes: patch.eventTypes ?? trigger.eventTypes,
     });
-    if (this.options.botState(clean.botId) === "missing") fail(400, "That MAUS no longer exists");
+    if (this.options.botState(clean.botId) === "missing") fail(400, t("That MAUS no longer exists"));
     Object.assign(trigger, clean, { updatedAt: this.now() });
     if (!clean.eventTypes?.length) delete trigger.eventTypes;
     if (patch.enabled === false) {
-      this.options.cancelQueued?.(trigger.id, "The webhook was paused before this delivery started");
+      this.options.cancelQueued?.(trigger.id, t("The webhook was paused before this delivery started"));
     }
     this.save();
     this.emit(trigger);
@@ -355,7 +356,7 @@ export class WebhookManager {
     this.deliveries = this.deliveries.filter((delivery) => !delivery.key.startsWith(`${trigger.endpointId}:`));
     this.attempts = this.attempts.filter((attempt) => attempt.webhookId !== trigger.id);
     this.rate.delete(trigger.endpointId);
-    this.options.cancelQueued?.(trigger.id, "The webhook was deleted before this delivery started");
+    this.options.cancelQueued?.(trigger.id, t("The webhook was deleted before this delivery started"));
     this.save();
     this.options.emit?.({ kind: "webhook.deleted", webhookId: id });
     return true;
@@ -378,7 +379,7 @@ export class WebhookManager {
       if (trigger.botId !== botId || !trigger.enabled) continue;
       trigger.enabled = false;
       trigger.updatedAt = this.now();
-      this.options.cancelQueued?.(trigger.id, "The assigned MAUS was deleted");
+      this.options.cancelQueued?.(trigger.id, t("The assigned MAUS was deleted"));
       this.emit(trigger);
       changed = true;
     }
@@ -408,13 +409,20 @@ export class WebhookManager {
     const trigger = this.webhooks.find((candidate) => candidate.id === id);
     if (!trigger) return null;
     const eventName = trigger.eventTypes?.[0] ?? "openmaus.test";
-    return this.dispatch(trigger, {
-      payload,
-      contentType: "application/json",
-      eventName,
-      userAgent: "OpenMausBot webhook tester",
-      deliveryId: `test-${randomUUID()}`,
-    });
+    try {
+      return this.dispatch(trigger, {
+        payload,
+        contentType: "application/json",
+        eventName,
+        userAgent: "OpenMausBot webhook tester",
+        deliveryId: `test-${randomUUID()}`,
+      });
+    } catch (error) {
+      // The in-app Test button shows this refusal; dispatch keeps English
+      // for external senders, so translate it here.
+      if (error instanceof Error) error.message = t(error.message);
+      throw error;
+    }
   }
 
   recordRejected(endpointId: string, statusCode: number, reason: string, event: Partial<WebhookEvent> = {}): WebhookAttempt | null {
@@ -424,8 +432,8 @@ export class WebhookManager {
   }
 
   private dispatch(trigger: StoredWebhookTrigger, event: WebhookEvent): WebhookReceiveResult {
-    if (!trigger.enabled) fail(409, "This webhook is paused");
-    if (this.options.botState(trigger.botId) === "missing") fail(410, "The assigned MAUS no longer exists");
+    if (!trigger.enabled) fail(409, msg("This webhook is paused"));
+    if (this.options.botState(trigger.botId) === "missing") fail(410, msg("The assigned MAUS no longer exists"));
 
     const allowed = trigger.eventTypes ?? [];
     if (allowed.length > 0 && (!event.eventName || !allowed.includes(event.eventName))) {
@@ -434,7 +442,9 @@ export class WebhookManager {
         outcome: "ignored",
         statusCode: 202,
         deliveryId,
-        reason: event.eventName ? `Event type “${event.eventName}” is not enabled` : "Event type is missing",
+        reason: event.eventName
+          ? t("Event type “{event}” is not enabled", { event: event.eventName })
+          : t("Event type is missing"),
       });
       this.save();
       return { deliveryId, duplicate: false, ignored: true };
@@ -451,7 +461,7 @@ export class WebhookManager {
           statusCode: 202,
           deliveryId: requestedDeliveryId,
           runId: duplicate.runId,
-          reason: "Duplicate delivery ignored",
+          reason: t("Duplicate delivery ignored"),
         });
         this.save();
         return { runId: duplicate.runId, deliveryId: requestedDeliveryId, duplicate: true };
@@ -461,11 +471,11 @@ export class WebhookManager {
     // A sender retrying an already-accepted delivery must remain idempotent
     // even while this webhook's queue is full. Only new work consumes a slot.
     if ((this.options.pendingRuns?.(trigger.id) ?? 0) >= MAX_PENDING_RUNS) {
-      fail(429, "This webhook already has too many unfinished tasks");
+      fail(429, msg("This webhook already has too many unfinished tasks"));
     }
 
     const recent = (this.rate.get(trigger.endpointId) ?? []).filter((at) => now - at < RATE_WINDOW_MS);
-    if (recent.length >= RATE_LIMIT) fail(429, "Webhook rate limit exceeded");
+    if (recent.length >= RATE_LIMIT) fail(429, msg("Webhook rate limit exceeded"));
     recent.push(now);
     this.rate.set(trigger.endpointId, recent);
 
@@ -516,7 +526,7 @@ export class WebhookManager {
       outcome: "captured",
       statusCode: 202,
       deliveryId,
-      reason: "Test event captured; enable the webhook to start MAUS tasks",
+      reason: t("Test event captured; enable the webhook to start MAUS tasks"),
     });
     this.save();
     this.emit(trigger);
@@ -527,7 +537,8 @@ export class WebhookManager {
     const attempt = this.appendAttempt(trigger, event, {
       outcome: "rejected",
       statusCode,
-      reason: reason.slice(0, 500),
+      // Shown in the app's activity list; the sender got the English text.
+      reason: t(reason).slice(0, 500),
       deliveryId: event.deliveryId,
     });
     this.save();

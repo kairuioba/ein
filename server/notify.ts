@@ -10,6 +10,8 @@
 // listening decides what to do with it — desktop and paired-phone local
 // notifications today, and closed-app APNs delivery once a relay exists.
 
+import { t } from "../shared/i18n.ts";
+
 export type NotifyKind = "approval" | "question" | "done" | "routine-failed" | "takeover";
 
 export interface Notification {
@@ -57,14 +59,14 @@ export function buildNotification(
   const body = summarize(detail);
   const title =
     kind === "approval"
-      ? `${bot.name} needs approval`
+      ? t("{name} needs approval", { name: bot.name })
       : kind === "question"
-        ? `${bot.name} has a question`
+        ? t("{name} has a question", { name: bot.name })
         : kind === "takeover"
-          ? `${bot.name} needs your hands`
+          ? t("{name} needs your hands", { name: bot.name })
           : kind === "routine-failed"
-            ? `${bot.name}'s routine failed`
-            : `${bot.name} finished`;
+            ? t("{name}'s routine failed", { name: bot.name })
+            : t("{name} finished", { name: bot.name });
 
   // A "finished" with nothing to say is not worth a notification — the
   // badge in the sidebar already carries that much.

@@ -1,3 +1,5 @@
+import { t } from "@/lib/i18n";
+
 export type ScreenPreviewFailurePhase = "cancelled" | "unavailable" | "error";
 
 export type ScreenPreviewStartResult =
@@ -19,7 +21,7 @@ export function screenPreviewFailure(error: unknown): Exclude<ScreenPreviewStart
     return {
       ok: false,
       phase: "cancelled",
-      message: "Screen selection was cancelled. Nothing is being shared.",
+      message: t("Screen selection was cancelled. Nothing is being shared."),
     };
   }
   if (
@@ -31,10 +33,10 @@ export function screenPreviewFailure(error: unknown): Exclude<ScreenPreviewStart
     return {
       ok: false,
       phase: "unavailable",
-      message: "Screen preview isn't available right now.",
+      message: t("Screen preview isn't available right now."),
     };
   }
-  return { ok: false, phase: "error", message: "Couldn't start screen preview." };
+  return { ok: false, phase: "error", message: t("Couldn't start screen preview.") };
 }
 
 export async function requestScreenPreview({
@@ -48,7 +50,7 @@ export async function requestScreenPreview({
       return {
         ok: false,
         phase: "unavailable",
-        message: "Screen preview isn't available from this window.",
+        message: t("Screen preview isn't available from this window."),
       };
     }
     const stream = await getDisplayMedia({ video: true, audio: false });
@@ -57,7 +59,7 @@ export async function requestScreenPreview({
       return {
         ok: false,
         phase: "unavailable",
-        message: "The selected source did not provide a video stream.",
+        message: t("The selected source did not provide a video stream."),
       };
     }
     return { ok: true, stream };

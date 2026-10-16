@@ -11,6 +11,7 @@ import { memo, useEffect, useState, type ReactNode } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Check, Copy } from "lucide-react";
+import { t } from "@/lib/i18n";
 
 // tiny highlight cache so revisiting a thread doesn't re-tokenize settled
 // blocks; keys are content-hashed and capped. Streamed partials may land here
@@ -113,11 +114,11 @@ function CodeBlock({ code, lang, streaming }: { code: string; lang: string; stre
   return (
     <div className="my-2 overflow-hidden rounded-lg border border-hairline/40 bg-inset">
       <div className="flex items-center justify-between border-b border-hairline/30 px-3 py-1">
-        <span className="text-[11px] uppercase tracking-wide text-ink-secondary">{lang || "code"}</span>
+        <span className="text-[11px] uppercase tracking-wide text-ink-secondary">{lang || t("code")}</span>
         <button
           onClick={copy}
           className="rounded p-1 text-ink-secondary hover:bg-raised hover:text-ink"
-          title="Copy code"
+          title={t("Copy code")}
         >
           {copied ? <Check size={13} className="text-success" /> : <Copy size={13} />}
         </button>
@@ -151,7 +152,7 @@ function LocalFileLink({ filePath, children }: { filePath: string; children?: Re
     if (!saveFile) {
       // an older shell has no save bridge; saying so beats the silent click
       // this change exists to remove
-      setReason("Saving files needs a newer version of the desktop app");
+      setReason(t("Saving files needs a newer version of the desktop app"));
       setState("failed");
       return;
     }
@@ -166,7 +167,7 @@ function LocalFileLink({ filePath, children }: { filePath: string; children?: Re
     } catch (error) {
       // the bug being fixed here was a click that failed silently, so a
       // failed save says why rather than doing nothing
-      setReason(error instanceof Error ? error.message : "That file could not be saved");
+      setReason(error instanceof Error ? error.message : t("That file could not be saved"));
       setState("failed");
     }
   };
@@ -176,14 +177,14 @@ function LocalFileLink({ filePath, children }: { filePath: string; children?: Re
       <button
         type="button"
         onClick={() => void save()}
-        title={`Save a copy — ${filePath}`}
+        title={t("Save a copy — {path}", { path: filePath })}
         className="break-words text-left text-accent underline decoration-accent/40 hover:decoration-accent"
       >
         {children}
       </button>
       {state !== "idle" && (
         <span className={`ml-1.5 text-[12px] ${state === "saved" ? "text-success" : "text-danger"}`}>
-          {state === "saved" ? `Saved to ${savedTo}` : reason}
+          {state === "saved" ? t("Saved to {path}", { path: savedTo }) : reason}
         </span>
       )}
     </>
@@ -208,8 +209,8 @@ function Spoiler({ children }: { children?: ReactNode }) {
         </span>
         <button
           type="button"
-          aria-label="Reveal spoiler"
-          title="Reveal spoiler"
+          aria-label={t("Reveal spoiler")}
+          title={t("Reveal spoiler")}
           onClick={() => setRevealed(true)}
           className="absolute inset-0 rounded bg-raised/90"
         />
@@ -221,12 +222,12 @@ function Spoiler({ children }: { children?: ReactNode }) {
       {children}
       <button
         type="button"
-        aria-label="Hide spoiler"
-        title="Hide spoiler"
+        aria-label={t("Hide spoiler")}
+        title={t("Hide spoiler")}
         onClick={() => setRevealed(false)}
         className="ml-1 rounded px-0.5 text-[11px] text-ink-secondary hover:text-ink"
       >
-        Hide
+        {t("Hide")}
       </button>
     </span>
   );

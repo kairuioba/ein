@@ -11,13 +11,14 @@ import { cn } from "@/lib/cn";
 import { COMPACT_BUBBLE } from "@/lib/compact-chip";
 import { formatTaskTokens } from "@/lib/usage";
 import { nextRename } from "@/lib/rename";
+import { msg, t } from "@/lib/i18n";
 
 /** Click-to-switch used to close this menu immediately, which unmounted the
  * row before a double-click (or right-click) could start a rename. Linger
  * just long enough for the second click to land; rename cancels the close. */
 export const TASK_PICKER_DISMISS_MS = 500;
 
-export const TASK_RENAME_HINT = "Click to switch · double-click or right-click to rename";
+export const TASK_RENAME_HINT = msg("Click to switch · double-click or right-click to rename");
 
 /** Decide what a pointer event on a task row should do. The click that
  * accompanies a dblclick (detail >= 2) must not switch/close — that is
@@ -35,13 +36,19 @@ export function taskPickerPointerIntent(
 /** Filter the task switcher. Prefix matches float first so a few letters
  * still find the right row in a long list; within a tier the caller's
  * order (newest first) is preserved. */
+/** The harness stores the default task title in English ("New task", see
+ * server/store.ts UNTITLED_TASK) because it compares it; show it translated. */
+export function shownTaskTitle(title: string): string {
+  return title === "New task" ? t("New task") : title;
+}
+
 export function filterTasks<T extends { title: string }>(tasks: readonly T[], query: string): T[] {
   const needle = query.trim().toLowerCase();
   if (!needle) return [...tasks];
   const prefix: T[] = [];
   const substring: T[] = [];
   for (const task of tasks) {
-    const title = task.title.toLowerCase();
+    const title = shownTaskTitle(task.title).toLowerCase();
     if (title.startsWith(needle)) prefix.push(task);
     else if (title.includes(needle)) substring.push(task);
   }
@@ -55,7 +62,7 @@ function TaskUsage({ usage }: { usage: Task["usage"] }) {
   const label = formatTaskTokens(usage.input + usage.output);
   if (!label) return null;
   return (
-    <span title={`${usage.input.toLocaleString()} in · ${usage.output.toLocaleString()} out`}>
+    <span title={t("{input} in · {output} out", { input: usage.input.toLocaleString(), output: usage.output.toLocaleString() })}>
       {" · "}
       {label}
     </span>
@@ -172,14 +179,14 @@ function ConversationTaskPicker({
         type="button"
         onClick={onNew}
         disabled={busy}
-        title={busy ? "Let this turn finish first" : "New task — a fresh conversation"}
+        title={busy ? t("Let this turn finish first") : t("New task — a fresh conversation")}
         className={cn(
           "flex items-center gap-1 rounded-full border border-hairline/40 px-2.5 py-1 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-40",
           COMPACT_BUBBLE,
         )}
       >
         <Plus size={12} className="@max-4xl/chathead:size-[14px]" />
-        <span className="@max-4xl/chathead:hidden">Task</span>
+        <span className="@max-4xl/chathead:hidden">{t("Task")}</span>
       </button>
     );
   }
@@ -201,8 +208,12 @@ function ConversationTaskPicker({
   const currentLabel = u ? formatTaskTokens(u.input + u.output) : null;
   const switchTitle =
     u && currentLabel
-      ? `Switch task · ${currentLabel} (${u.input.toLocaleString()} in · ${u.output.toLocaleString()} out)`
-      : "Switch task";
+      ? t("Switch task · {tokens} ({input} in · {output} out)", {
+          tokens: currentLabel,
+          input: u.input.toLocaleString(),
+          output: u.output.toLocaleString(),
+        })
+      : t("Switch task");
   const visible = filterTasks(tasks, query);
   const looking = query.trim();
 
@@ -220,7 +231,7 @@ function ConversationTaskPicker({
           COMPACT_BUBBLE,
         )}
       >
-        <span className="truncate @max-4xl/chathead:hidden">{current?.title ?? "Task"}</span>
+        <span className="truncate @max-4xl/chathead:hidden">{current ? shownTaskTitle(current.title) : t("Task")}</span>
         {/* folded: just the count in the bubble — the title rides the tooltip */}
         <span className="shrink-0 tabular-nums opacity-60 @max-4xl/chathead:opacity-100">{tasks.length}</span>
         <ChevronDown size={12} className="shrink-0 @max-4xl/chathead:hidden" />
@@ -253,16 +264,16 @@ function ConversationTaskPicker({
                     closeMenu();
                   }
                 }}
-                placeholder="Search tasks"
-                aria-label="Search tasks"
+                placeholder={t("Search tasks")}
+                aria-label={t("Search tasks")}
                 className="w-full bg-transparent text-[12.5px] text-ink placeholder:text-ink-secondary focus:outline-none"
               />
             </div>
           </div>
-          <div className="max-h-[320px] overflow-y-auto" role="group" aria-label={looking ? `${visible.length} matching tasks` : "Tasks"}>
+          <div className="max-h-[320px] overflow-y-auto" role="group" aria-label={looking ? t("{count} matching tasks", { count: visible.length }) : t("Tasks")}>
             {visible.length === 0 ? (
               <div className="px-3 py-6 text-center text-[13px] text-ink-secondary">
-                Nothing matches “{looking}”
+                {t("Nothing matches “{query}”", { query: looking })}
               </div>
             ) : visible.map((task) => {
               const active = task.threadId === threadId;
@@ -277,7 +288,7 @@ function ConversationTaskPicker({
                       autoFocus
                       value={draft}
                       maxLength={80}
-                      aria-label="Rename task"
+                      aria-label={t("Rename task")}
                       onFocus={(e) => e.currentTarget.select()}
                       onChange={(e) => setDraft(e.target.value)}
                       onClick={(e) => e.stopPropagation()}
@@ -316,9 +327,9 @@ function ConversationTaskPicker({
                         startRename(task);
                       }}
                       className="min-w-0 flex-1 text-left"
-                      title={TASK_RENAME_HINT}
+                      title={t(TASK_RENAME_HINT)}
                     >
-                      <div className="truncate text-[13px] text-ink">{task.title}</div>
+                      <div className="truncate text-[13px] text-ink">{shownTaskTitle(task.title)}</div>
                       <div className="text-[11px] text-ink-secondary">
                         {formatTime(task.createdAt)}
                         <TaskUsage usage={task.usage} />
@@ -329,8 +340,8 @@ function ConversationTaskPicker({
                     <button
                       type="button"
                       onClick={() => startRename(task)}
-                      aria-label={`Rename ${task.title}`}
-                      title="Rename this task"
+                      aria-label={t("Rename {name}", { name: shownTaskTitle(task.title) })}
+                      title={t("Rename this task")}
                       className="rounded p-1 text-ink-secondary opacity-0 hover:bg-raised hover:text-ink focus-visible:opacity-100 group-hover:opacity-100"
                     >
                       <Pencil size={13} />
@@ -340,8 +351,8 @@ function ConversationTaskPicker({
                     type="button"
                     onClick={() => onDelete(task.threadId)}
                     disabled={busy && active}
-                    aria-label="Delete task"
-                    title="Delete this task and its conversation"
+                    aria-label={t("Delete task")}
+                    title={t("Delete this task and its conversation")}
                     className="rounded p-1 text-ink-secondary opacity-0 hover:bg-raised hover:text-danger group-hover:opacity-100 disabled:opacity-20"
                   >
                     <Trash2 size={13} />
@@ -359,7 +370,7 @@ function ConversationTaskPicker({
             disabled={busy}
             className="mt-1 flex w-full items-center gap-2 border-t border-hairline/40 px-3 py-2 text-left text-[13px] text-ink hover:bg-raised/50 disabled:opacity-40"
           >
-            <Plus size={13} className="text-ink-secondary" /> New task
+            <Plus size={13} className="text-ink-secondary" /> {t("New task")}
           </button>
         </div>
       )}

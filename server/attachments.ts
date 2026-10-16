@@ -15,6 +15,7 @@ import {
 import { link, open, unlink } from "node:fs/promises";
 import { join, extname } from "node:path";
 import { DATA_DIR } from "./config.ts";
+import { t } from "../shared/i18n.ts";
 
 export const ATTACHMENTS_DIR = join(DATA_DIR, "attachments");
 
@@ -161,7 +162,7 @@ class AttachmentReservation {
     if (available < required) {
       throw statusError(
         507,
-        `attachments storage is full (limit ${ATTACHMENTS_MAX_BYTES} bytes)`,
+        t("attachments storage is full (limit {limit} bytes)", { limit: ATTACHMENTS_MAX_BYTES }),
       );
     }
     // Unknown-length HTTP bodies reserve in bounded chunks. Taking whatever
@@ -259,7 +260,7 @@ export function extensionForFileMime(mime: string | undefined): string | null {
  * remain visible as bad requests. */
 export function sanitizeSharedFileName(name: string, mime: string): string {
   const extension = extensionForFileMime(mime);
-  if (!extension) throw statusError(400, "content-type must be a supported document type");
+  if (!extension) throw statusError(400, t("content-type must be a supported document type"));
 
   const normalized = name.normalize("NFKC").trim();
   if (!normalized) throw statusError(400, "name is required");
@@ -295,7 +296,7 @@ export async function saveFile(
 ): Promise<SavedFile> {
   const normalized = normalizedMime(mime);
   if (!normalized || !extensionForFileMime(normalized)) {
-    throw statusError(400, "content-type must be a supported document type");
+    throw statusError(400, t("content-type must be a supported document type"));
   }
   const name = sanitizeSharedFileName(originalName, normalized);
   const extension = extensionForFileMime(normalized)!;
@@ -305,7 +306,7 @@ export async function saveFile(
     throw statusError(400, "content-length must be a non-negative integer");
   }
   if (expectedBytes !== undefined && expectedBytes > FILE_MAX_BYTES) {
-    throw statusError(413, `file exceeds ${FILE_MAX_BYTES} bytes`);
+    throw statusError(413, t("file exceeds {limit} bytes", { limit: FILE_MAX_BYTES }));
   }
 
   return withUploadLock(uploadId, async () => {
@@ -321,12 +322,12 @@ export async function saveFile(
           : Buffer.from(value.buffer, value.byteOffset, value.byteLength);
         if (chunk.byteLength === 0) continue;
         if (bytes + chunk.byteLength > FILE_MAX_BYTES) {
-          throw statusError(413, `file exceeds ${FILE_MAX_BYTES} bytes`);
+          throw statusError(413, t("file exceeds {limit} bytes", { limit: FILE_MAX_BYTES }));
         }
         incomingHash.update(chunk);
         bytes += chunk.byteLength;
       }
-      if (bytes === 0) throw statusError(400, "empty file");
+      if (bytes === 0) throw statusError(400, t("empty file"));
       if (statSync(existing).size !== bytes || await digestFile(existing) !== incomingHash.digest("hex")) {
         throw statusError(409, "uploadId was already used for different file bytes");
       }
@@ -351,7 +352,7 @@ export async function saveFile(
           : Buffer.from(value.buffer, value.byteOffset, value.byteLength);
         if (chunk.byteLength === 0) continue;
         if (bytes + chunk.byteLength > FILE_MAX_BYTES) {
-          throw statusError(413, `file exceeds ${FILE_MAX_BYTES} bytes`);
+          throw statusError(413, t("file exceeds {limit} bytes", { limit: FILE_MAX_BYTES }));
         }
         reservation.ensure(bytes + chunk.byteLength);
         let offset = 0;
@@ -362,7 +363,7 @@ export async function saveFile(
         }
         bytes += chunk.byteLength;
       }
-      if (bytes === 0) throw statusError(400, "empty file");
+      if (bytes === 0) throw statusError(400, t("empty file"));
       await file.close();
       closed = true;
       try {
@@ -392,10 +393,10 @@ export async function saveFile(
  * the format the sender claimed. */
 export function saveImage(bytes: Buffer, mime: string, requestedUploadId?: string): SavedAttachment {
   const ext = extensionForMime(mime);
-  if (!ext) throw Object.assign(new Error("unsupported image type"), { status: 400 });
-  if (bytes.byteLength === 0) throw Object.assign(new Error("empty image"), { status: 400 });
+  if (!ext) throw Object.assign(new Error(t("unsupported image type")), { status: 400 });
+  if (bytes.byteLength === 0) throw Object.assign(new Error(t("empty image")), { status: 400 });
   if (bytes.byteLength > IMAGE_MAX_BYTES) {
-    throw Object.assign(new Error(`image exceeds ${IMAGE_MAX_BYTES} bytes`), { status: 413 });
+    throw Object.assign(new Error(t("image exceeds {limit} bytes", { limit: IMAGE_MAX_BYTES })), { status: 413 });
   }
   const uploadId = validateAttachmentUploadId(requestedUploadId);
   ensureAttachmentsDir();

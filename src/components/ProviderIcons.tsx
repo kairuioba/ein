@@ -1,5 +1,6 @@
-// Provider brand marks, keyed by driver kind. Official logos only.
-import { Monitor } from "lucide-react";
+// Provider brand marks, keyed by driver kind. Official logos only — except
+// WorkBuddy, whose logo is not bundled: a neutral glyph stands in for it.
+import { Handshake, Monitor } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { HermesMark } from "./HermesMark";
 import { CursorMark } from "./CursorMark";
@@ -124,6 +125,11 @@ export function PiMark({ size = 16, className }: IconProps) {
   );
 }
 
+/** WorkBuddy (Tencent). Not the official logo — a neutral "work buddy" glyph. */
+export function WorkBuddyMark({ size = 16, className }: IconProps) {
+  return <Handshake size={size} strokeWidth={2} aria-hidden className={cn("text-[#3b82f6]", className)} />;
+}
+
 export function ProviderMark({ driverKind, size, className }: IconProps & { driverKind: string }) {
   switch (driverKind) {
     case "grok":
@@ -151,6 +157,8 @@ export function ProviderMark({ driverKind, size, className }: IconProps & { driv
       return <ComputerMark size={size} className={className} />;
     case "piAgent":
       return <PiMark size={size} className={className} />;
+    case "workbuddyAgent":
+      return <WorkBuddyMark size={size} className={className} />;
     default:
       return (
         <span className="flex size-full items-center justify-center text-[10px] font-semibold tracking-tight text-ink-secondary">

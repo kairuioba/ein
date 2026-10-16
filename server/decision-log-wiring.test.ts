@@ -131,6 +131,7 @@ posixOnly("authorization decisions are logged", () => {
     child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
       cwd: join(SERVER_DIR, ".."),
       env: {
+        OMB_LOCALE: "en", // the assertions read the English source strings
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
         ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
         HOME: home,

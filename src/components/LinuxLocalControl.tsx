@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 
 import { cn } from "@/lib/cn";
+import { t, tRich } from "@/lib/i18n";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 
 const LINUX_GUIDE_URL =
@@ -35,7 +36,7 @@ export function LinuxLocalControl() {
     try {
       if (action === "disable" || action === "retry") {
         const response = await fetch("/api/local-computer/interrupt", { method: "POST" });
-        if (!response.ok) throw new Error("Could not stop active local computer turns.");
+        if (!response.ok) throw new Error(t("Could not stop active local computer turns."));
       }
       await window.ogb.localControl[action]();
     } catch (reason) {
@@ -51,10 +52,10 @@ export function LinuxLocalControl() {
         <div>
           <div id="linux-local-control-title" className="flex items-center gap-2 text-[15px] font-medium text-ink">
             <MonitorCog size={16} className={ready ? "text-success" : "text-ink-secondary"} />
-            Local control
+            {t("Local control")}
           </div>
           <div className="mt-1 text-[12px] leading-relaxed text-ink-secondary">
-            Beta · Ubuntu 24.04 GNOME/{wayland ? "Wayland" : "Xorg"} · Cua Driver 0.19.3
+            {t("Beta")} · Ubuntu 24.04 GNOME/{wayland ? "Wayland" : "Xorg"} · Cua Driver 0.19.3
           </div>
         </div>
         <span
@@ -69,7 +70,7 @@ export function LinuxLocalControl() {
                   : "bg-raised text-ink-secondary",
           )}
         >
-          {ready ? "Ready" : waylandSafetyBlocked ? "Unavailable on Wayland" : local.enabled ? "Needs attention" : "Off"}
+          {ready ? t("Ready") : waylandSafetyBlocked ? t("Unavailable on Wayland") : local.enabled ? t("Needs attention") : t("Off")}
         </span>
       </div>
 
@@ -78,9 +79,10 @@ export function LinuxLocalControl() {
           <div className="flex gap-2 text-[12px] leading-relaxed text-ink-secondary">
             <AlertTriangle size={15} className="mt-0.5 shrink-0 text-danger" />
             <span>
-              Local control is available on Ubuntu Xorg. It remains disabled on Wayland until its input-safety
-              boundary is validated. Sign out and choose <strong className="font-medium text-ink">Ubuntu on Xorg</strong>
-              {" "}to use This computer; Chat, Cloud, Local VM, and screen preview still work here.
+              {tRich(
+                "Local control is available on Ubuntu Xorg. It remains disabled on Wayland until its input-safety boundary is validated. Sign out and choose <strong>Ubuntu on Xorg</strong> to use This computer; Chat, Cloud, Local VM, and screen preview still work here.",
+                { strong: (chunk) => <strong className="font-medium text-ink">{chunk}</strong> },
+              )}
             </span>
           </div>
         </div>
@@ -89,9 +91,11 @@ export function LinuxLocalControl() {
           <div className="flex gap-2 text-[12px] leading-relaxed text-ink-secondary">
             <AlertTriangle size={15} className="mt-0.5 shrink-0 text-warning" />
             <span>
-              Enabling lets bots you explicitly assign to <strong className="font-medium text-ink">This computer</strong>{" "}
-              inspect the active desktop and request mouse or keyboard actions. Every local action asks you first.
-              {wayland && " GNOME may also ask you to allow foreground input for this desktop session."}
+              {tRich(
+                "Enabling lets bots you explicitly assign to <strong>This computer</strong> inspect the active desktop and request mouse or keyboard actions. Every local action asks you first.",
+                { strong: (chunk) => <strong className="font-medium text-ink">{chunk}</strong> },
+              )}
+              {wayland && t(" GNOME may also ask you to allow foreground input for this desktop session.")}
             </span>
           </div>
         </div>
@@ -107,13 +111,13 @@ export function LinuxLocalControl() {
             )}
             <span aria-live="polite">
               {ready
-                ? "Ready for bots explicitly assigned to this computer. Bot actions use a private cursor, so your pointer stays under your control."
-                : local.message ?? "Checking the driver and desktop session…"}
+                ? t("Ready for bots explicitly assigned to this computer. Bot actions use a private cursor, so your pointer stays under your control.")
+                : local.message ?? t("Checking the driver and desktop session…")}
             </span>
           </div>
           {local.driverPath && (
             <div className="mt-2 break-all font-mono text-[10px] text-ink-secondary/80" title={local.driverPath}>
-              {bundledDriver ? "Bundled Cua Driver" : local.driverPath}
+              {bundledDriver ? t("Bundled Cua Driver") : local.driverPath}
               {local.driverVersion ? ` · ${local.driverVersion}` : ""}
             </div>
           )}
@@ -131,7 +135,7 @@ export function LinuxLocalControl() {
             className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-accent py-2 text-[13px] font-medium text-white hover:opacity-90 disabled:opacity-50"
           >
             {pending === "enable" ? <Loader2 size={14} className="animate-spin" /> : <Power size={14} />}
-            Enable local control (Beta)
+            {t("Enable local control (Beta)")}
           </button>
         ) : (
           <>
@@ -143,7 +147,7 @@ export function LinuxLocalControl() {
                 className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-raised py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50"
               >
                 {pending === "retry" ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}
-                Try again
+                {t("Try again")}
               </button>
             )}
             <button
@@ -153,7 +157,7 @@ export function LinuxLocalControl() {
               className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-raised py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50"
             >
               {pending === "disable" ? <Loader2 size={14} className="animate-spin" /> : <Power size={14} />}
-              Disable local control
+              {t("Disable local control")}
             </button>
           </>
         )}
@@ -164,7 +168,7 @@ export function LinuxLocalControl() {
         onClick={() => window.open(LINUX_GUIDE_URL, "_blank", "noopener,noreferrer")}
         className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg py-1.5 text-[11px] text-ink-secondary hover:bg-raised hover:text-ink"
       >
-        {capabilities.host.packaged ? "Local control guide" : "Driver setup and troubleshooting"}{" "}
+        {capabilities.host.packaged ? t("Local control guide") : t("Driver setup and troubleshooting")}{" "}
         <ExternalLink size={11} />
       </button>
     </section>

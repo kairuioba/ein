@@ -9,11 +9,14 @@ import posthog from "posthog-js";
 
 const TOKEN = "phc_m2hP39w8y2gLPvHgDvSXAu6xcZ3agjf4ruL56rGcMZEe";
 
-// Analytics are on by default; Settings → General turns them off. The choice
+// This edition starts with analytics OFF: the events go to the upstream
+// OpenMausBot project's PostHog in the United States, which nobody installing
+// the Chinese build agreed to. Settings → General can turn them on. The choice
 // lives in localStorage because it has to be readable BEFORE init() runs: an
-// opted-out install must never call posthog.init(), so no request — not even
-// the library's own — leaves the machine. Once running, opting out routes
-// through opt_out_capturing(), which also drops anything already queued.
+// install that has not opted in must never call posthog.init(), so no
+// request — not even the library's own — leaves the machine. Once running,
+// opting out routes through opt_out_capturing(), which also drops anything
+// already queued. Stored values: "0" = on (opted in), "1" = off.
 const OPT_OUT_KEY = "omb-analytics-opt-out";
 
 let ready = false;
@@ -25,13 +28,13 @@ let ready = false;
 // Storage is how the choice survives a restart, not where it lives.
 let choice: boolean | undefined;
 
-/** False once the user has opted out on this machine. */
+/** True only once the user has opted in on this machine. */
 export function analyticsEnabled(): boolean {
   if (choice !== undefined) return choice;
   try {
-    return localStorage.getItem(OPT_OUT_KEY) !== "1";
+    return localStorage.getItem(OPT_OUT_KEY) === "0";
   } catch {
-    return true; // storage unreadable → behave like a fresh install
+    return false; // storage unreadable → behave like a fresh install: quiet
   }
 }
 

@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { t } from "../shared/i18n.ts";
 import { schemaIssue, type JsonValue } from "./schema.ts";
 import type { MausColor } from "./store.ts";
 
@@ -52,12 +53,12 @@ const memberSchema = z.object({
 
 const membersSchema = z
   .array(memberSchema)
-  .min(1, { message: "A team needs at least one member" })
-  .max(MAX_TEAM_MEMBERS, { message: `A team can have at most ${MAX_TEAM_MEMBERS} members` });
+  .min(1, { error: () => t("A team needs at least one member") })
+  .max(MAX_TEAM_MEMBERS, { error: () => t("A team can have at most {max} members", { max: MAX_TEAM_MEMBERS }) });
 
 const manifestSchema = z.discriminatedUnion("version", [
   z.object({
-    format: z.literal(TEAM_MANIFEST_FORMAT, { error: "This is not an OpenMaus team file" }),
+    format: z.literal(TEAM_MANIFEST_FORMAT, { error: () => t("This is not an OpenMaus team file") }),
     version: z.literal(LEGACY_TEAM_MANIFEST_VERSION),
     team: z.object({
       name: requiredText(100),
@@ -71,7 +72,7 @@ const manifestSchema = z.discriminatedUnion("version", [
     }),
   }),
   z.object({
-    format: z.literal(TEAM_MANIFEST_FORMAT, { error: "This is not an OpenMaus team file" }),
+    format: z.literal(TEAM_MANIFEST_FORMAT, { error: () => t("This is not an OpenMaus team file") }),
     version: z.literal(TEAM_MANIFEST_VERSION),
     team: z.object({
       name: requiredText(100),
@@ -150,13 +151,13 @@ export function parseTeamManifest(value: TeamManifestInput): ParsedTeamManifest 
     const formatIssue = parsed.error.issues.find((issue) => issue.path[0] === "format");
     if (formatIssue) throw new Error(formatIssue.message);
     const versionIssue = parsed.error.issues.find((issue) => issue.path[0] === "version");
-    if (versionIssue) throw new Error("Team file version is not supported");
+    if (versionIssue) throw new Error(t("Team file version is not supported"));
     throw new Error(schemaIssue(parsed.error, "This is not a team file"));
   }
 
   const seenKeys = new Set<string>();
   const members = parsed.data.team.members.map((member): TeamManifestMember => {
-    if (seenKeys.has(member.key)) throw new Error(`Duplicate member key: ${member.key}`);
+    if (seenKeys.has(member.key)) throw new Error(t("Duplicate member key: {key}", { key: member.key }));
     seenKeys.add(member.key);
     const appearance: TeamManifestMember["appearance"] = { color: member.appearance.color };
     if (member.appearance.mascotExpression) appearance.mascotExpression = member.appearance.mascotExpression;
@@ -182,7 +183,7 @@ export function parseTeamManifest(value: TeamManifestInput): ParsedTeamManifest 
   if (parsed.data.version === LEGACY_TEAM_MANIFEST_VERSION) {
     const defaultResponder = parsed.data.team.room.defaultResponder;
     if (defaultResponder.kind === "member" && !seenKeys.has(defaultResponder.member)) {
-      throw new Error(`Unknown default responder: ${defaultResponder.member}`);
+      throw new Error(t("Unknown default responder: {member}", { member: defaultResponder.member }));
     }
     result.team.room = {
       name: parsed.data.team.room.name,
@@ -279,7 +280,7 @@ export function createTeamManifest(team: ExportableTeam, bots: ExportableBot[]):
   const usedKeys = new Set<string>();
   const members = team.memberIds.map((id, index): TeamManifestMember => {
     const bot = byId.get(id);
-    if (!bot) throw new Error(`Team member ${id} no longer exists`);
+    if (!bot) throw new Error(t("Team member {id} no longer exists", { id }));
     const key = memberKey(bot.name, index, usedKeys);
     const appearance: TeamManifestMember["appearance"] = { color: bot.color };
     if (bot.mascotExpression) appearance.mascotExpression = bot.mascotExpression;

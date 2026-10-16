@@ -14,6 +14,8 @@
 // transcripts, and keeping it in one place is the same reasoning as the
 // server-computed approval key.
 
+import { t } from "@/lib/i18n";
+
 export type SpeechStatus = "idle" | "preparing" | "speaking";
 
 export interface SpeechSnapshot {
@@ -149,7 +151,7 @@ export class Speaker {
       this.set({ status: "speaking", botId: opts.botId, messageId: opts.messageId, caption: utterances[i] });
       const finished = await this.play(rendered.blob, live);
       if (!finished || !live()) {
-        if (live()) this.set({ ...IDLE, error: "The generated voice clip couldn't be played." });
+        if (live()) this.set({ ...IDLE, error: t("The generated voice clip couldn't be played.") });
         if (this.request === controller) this.request = null;
         return;
       }
@@ -166,9 +168,9 @@ export class Speaker {
       signal,
     });
     const body: TtsPrepareBody = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(body.error ?? `the voice service returned ${res.status}`);
+    if (!res.ok) throw new Error(body.error ?? t("the voice service returned {status}", { status: res.status }));
     if (!body.ready) {
-      throw new Error("Add the shared ElevenLabs key in an agent profile on this computer, then pick a voice for the agent.");
+      throw new Error(t("Add the shared ElevenLabs key in an agent profile on this computer, then pick a voice for the agent."));
     }
     return body.utterances ?? [];
   }
@@ -182,7 +184,7 @@ export class Speaker {
     });
     if (!res.ok) {
       const body: TtsErrorBody = await res.json().catch(() => ({}));
-      throw new Error(body.error ?? `the voice service returned ${res.status}`);
+      throw new Error(body.error ?? t("the voice service returned {status}", { status: res.status }));
     }
     return res.blob();
   }

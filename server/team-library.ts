@@ -1,6 +1,7 @@
 import { parseJson, type JsonValue } from "./schema.ts";
 import { isBotPackage, parseBotPackage, type ParsedBotPackage } from "./bot-package.ts";
 import { parseTeamManifest, type ParsedTeamManifest } from "./team-manifest.ts";
+import { t } from "../shared/i18n.ts";
 
 export const TEAM_LIBRARY_REPOSITORY = "https://github.com/milind-soni/openmausbot-teams";
 export const TEAM_LIBRARY_RAW_ROOT = "https://raw.githubusercontent.com/milind-soni/openmausbot-teams/main";
@@ -66,10 +67,10 @@ function stringList(value: unknown, field: string, maxItems: number): string[] {
 /** Validate the remotely maintained index before any of it reaches the renderer. */
 export function parseTeamCatalog(value: unknown): TeamCatalog {
   if (!isRecord(value) || value.format !== "openmaus.catalog" || value.version !== 1) {
-    throw new Error("The team library catalog is not supported");
+    throw new Error(t("The team library catalog is not supported"));
   }
   if (!Array.isArray(value.teams) || value.teams.length > 100) {
-    throw new Error("The team library catalog is invalid");
+    throw new Error(t("The team library catalog is invalid"));
   }
   const slugs = new Set<string>();
   const teams = value.teams.map((raw, index): TeamCatalogEntry => {
@@ -124,17 +125,17 @@ async function fetchJson(url: string, maxBytes: number, fetcher: Fetcher): Promi
     signal: AbortSignal.timeout(10_000),
   });
   if (!response.ok) {
-    const error = Object.assign(new Error(`GitHub returned HTTP ${response.status}`), { status: response.status });
+    const error = Object.assign(new Error(t("GitHub returned HTTP {status}", { status: response.status })), { status: response.status });
     throw error;
   }
   const announced = Number(response.headers.get("content-length") ?? 0);
-  if (announced > maxBytes) throw new Error("The remote team file is too large");
+  if (announced > maxBytes) throw new Error(t("The remote team file is too large"));
   const raw = await response.text();
-  if (Buffer.byteLength(raw) > maxBytes) throw new Error("The remote team file is too large");
+  if (Buffer.byteLength(raw) > maxBytes) throw new Error(t("The remote team file is too large"));
   try {
     return parseJson(raw);
   } catch {
-    throw new Error("GitHub did not return valid JSON");
+    throw new Error(t("GitHub did not return valid JSON"));
   }
 }
 
@@ -144,11 +145,11 @@ async function fetchText(url: string, maxBytes: number, fetcher: Fetcher): Promi
     redirect: "error",
     signal: AbortSignal.timeout(10_000),
   });
-  if (!response.ok) throw Object.assign(new Error(`GitHub returned HTTP ${response.status}`), { status: response.status });
+  if (!response.ok) throw Object.assign(new Error(t("GitHub returned HTTP {status}", { status: response.status })), { status: response.status });
   const announced = Number(response.headers.get("content-length") ?? 0);
-  if (announced > maxBytes) throw new Error("The remote team file is too large");
+  if (announced > maxBytes) throw new Error(t("The remote team file is too large"));
   const raw = await response.text();
-  if (Buffer.byteLength(raw) > maxBytes) throw new Error("The remote team file is too large");
+  if (Buffer.byteLength(raw) > maxBytes) throw new Error(t("The remote team file is too large"));
   return raw;
 }
 
@@ -170,10 +171,10 @@ async function fetchShareable(url: string, fetcher: Fetcher): Promise<ParsedShar
 }
 
 export async function fetchLibraryTeam(slug: string, fetcher: Fetcher = fetch): Promise<ParsedShareableTeam> {
-  if (!/^[a-z0-9][a-z0-9-]*$/.test(slug)) throw new Error("That team name is invalid");
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(slug)) throw new Error(t("That team name is invalid"));
   const catalog = await fetchTeamCatalog(fetcher);
   const entry = catalog.teams.find((team) => team.slug === slug);
-  if (!entry) throw Object.assign(new Error("That library team was not found"), { status: 404 });
+  if (!entry) throw Object.assign(new Error(t("That library team was not found")), { status: 404 });
   return fetchShareable(`${TEAM_LIBRARY_RAW_ROOT}/${entry.package ?? entry.manifest}`, fetcher);
 }
 
@@ -188,13 +189,13 @@ export function githubManifestUrls(input: string): string[] {
   try {
     url = new URL(input.trim());
   } catch {
-    throw new Error("Enter a valid GitHub URL");
+    throw new Error(t("Enter a valid GitHub URL"));
   }
   if (url.protocol !== "https:" || url.username || url.password || url.port) {
-    throw new Error("Only public HTTPS GitHub links are supported");
+    throw new Error(t("Only public HTTPS GitHub links are supported"));
   }
   const parts = url.pathname.split("/").filter(Boolean).map((part) => decodeURIComponent(part));
-  if (!parts.every(safeSegment)) throw new Error("That GitHub path is not supported");
+  if (!parts.every(safeSegment)) throw new Error(t("That GitHub path is not supported"));
 
   if (url.hostname === "github.com" || url.hostname === "www.github.com") {
     if (parts.length === 2) {
@@ -210,17 +211,17 @@ export function githubManifestUrls(input: string): string[] {
     }
     if (parts.length >= 5 && (parts[2] === "blob" || parts[2] === "raw")) {
       const [owner, repo, , ref, ...file] = parts;
-      if (!file.at(-1)?.match(/\.(?:md|json)$/)) throw new Error("The GitHub link must point to a Markdown playbook or JSON team file");
+      if (!file.at(-1)?.match(/\.(?:md|json)$/)) throw new Error(t("The GitHub link must point to a Markdown playbook or JSON team file"));
       return [`https://raw.githubusercontent.com/${owner}/${repo}/${ref}/${file.join("/")}`];
     }
   }
 
   if (url.hostname === "raw.githubusercontent.com" && parts.length >= 4) {
-    if (!parts.at(-1)?.match(/\.(?:md|json)$/)) throw new Error("The GitHub link must point to a Markdown playbook or JSON team file");
+    if (!parts.at(-1)?.match(/\.(?:md|json)$/)) throw new Error(t("The GitHub link must point to a Markdown playbook or JSON team file"));
     return [`https://raw.githubusercontent.com/${parts.join("/")}`];
   }
 
-  throw new Error("Paste a GitHub repository, Markdown playbook, or legacy JSON team link");
+  throw new Error(t("Paste a GitHub repository, Markdown playbook, or legacy JSON team link"));
 }
 
 export async function fetchGithubTeam(input: string, fetcher: Fetcher = fetch): Promise<ParsedShareableTeam> {
@@ -234,5 +235,5 @@ export async function fetchGithubTeam(input: string, fetcher: Fetcher = fetch): 
       if ((error as { status?: number }).status !== 404) throw error;
     }
   }
-  throw lastError ?? new Error("No botmrr.md, team.md, or legacy team file was found in that repository");
+  throw lastError ?? new Error(t("No botmrr.md, team.md, or legacy team file was found in that repository"));
 }

@@ -15,6 +15,7 @@ import {
   validCompanionOriginTarget,
 } from "./companion-origin-gateway.mjs";
 import { minimalGuardianEnvironment } from "./managed-companion-guardian.mjs";
+import { t } from "./i18n.cjs";
 
 export const MANAGED_COMPANION_ENDPOINT_FIELD = "managedCompanionEndpointUrl";
 export const MANAGED_COMPANION_TOKEN_FIELD = "managedCompanionConnectorToken";
@@ -401,7 +402,7 @@ export function createManagedCompanionTunnel({
       publish({
         status: "unavailable",
         ready: false,
-        error: "The managed companion connector is missing from this build.",
+        error: t("The managed companion connector is missing from this build."),
       });
       return state;
     }
@@ -466,7 +467,7 @@ export function createManagedCompanionTunnel({
         if (child === spawned) child = null;
         removeTokenFile(attemptTokenFile);
         if (!expectedStop && desired && ownedGeneration === generation) {
-          scheduleRetry("The secure connection stopped unexpectedly.", ownedGeneration);
+          scheduleRetry(t("The secure connection stopped unexpectedly."), ownedGeneration);
         }
       };
       spawned.once("exit", onTerminated);
@@ -513,7 +514,7 @@ export function createManagedCompanionTunnel({
       }
       removeTokenFile(attemptTokenFile);
       if (desired && ownedGeneration === generation) {
-        scheduleRetry("The secure connection could not be verified.", ownedGeneration);
+        scheduleRetry(t("The secure connection could not be verified."), ownedGeneration);
       }
       return state;
     } catch {
@@ -522,7 +523,7 @@ export function createManagedCompanionTunnel({
       removeTokenFile(attemptTokenFile);
       if (spawned) await terminateChild(spawned, stopGraceMs);
       if (desired && ownedGeneration === generation) {
-        scheduleRetry("The secure connection could not start.", ownedGeneration);
+        scheduleRetry(t("The secure connection could not start."), ownedGeneration);
       }
       return state;
     } finally {
@@ -578,7 +579,7 @@ export function createManagedCompanionTunnel({
           return publish({
             status: "unconfigured",
             ready: false,
-            error: "Sign in to enable a secure connection from any network.",
+            error: t("Sign in to enable a secure connection from any network."),
           });
         }
         return attempt(generation);

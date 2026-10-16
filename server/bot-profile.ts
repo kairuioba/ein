@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { botAvatarCropSchema, botAvatarUrlSchema } from "../shared/bot-avatar.ts";
 import { BOT_PROFILE_LIMITS } from "../shared/bot-profile.ts";
+import { t } from "../shared/i18n.ts";
 
 import type { BotRecord } from "./store.ts";
 
@@ -19,16 +20,16 @@ export const BOT_PROFILE_PATCH_FIELDS = [
 const profilePatchSchema = z.object({
   name: z
     .string({ error: "name must be a string" })
-    .max(BOT_PROFILE_LIMITS.name, { error: "name must be at most 100 characters" })
-    .refine((value) => Boolean(value.trim()), { error: "name must not be empty" })
+    .max(BOT_PROFILE_LIMITS.name, { error: () => t("name must be at most 100 characters") })
+    .refine((value) => Boolean(value.trim()), { error: () => t("name must not be empty") })
     .optional(),
   title: z
     .string({ error: "title must be a string" })
-    .max(BOT_PROFILE_LIMITS.title, { error: "title must be at most 200 characters" })
+    .max(BOT_PROFILE_LIMITS.title, { error: () => t("title must be at most 200 characters") })
     .optional(),
   description: z
     .string({ error: "description must be a string" })
-    .max(BOT_PROFILE_LIMITS.description, { error: "description must be at most 4000 characters" })
+    .max(BOT_PROFILE_LIMITS.description, { error: () => t("description must be at most 4000 characters") })
     .optional(),
   notifications: z.boolean({ error: "notifications must be true or false" }).optional(),
   avatarUrl: z

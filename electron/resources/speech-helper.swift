@@ -51,6 +51,14 @@ let finishFile: String? = {
   return args[index + 1]
 }()
 
+// `--locale zh-CN`: the app's own language, tried before the Mac's list, so
+// a Chinese app on an English Mac still recognizes Chinese.
+let appLocale: Locale? = {
+  let args = CommandLine.arguments
+  guard let index = args.firstIndex(of: "--locale"), index + 1 < args.count else { return nil }
+  return Locale(identifier: args[index + 1])
+}()
+
 // LaunchServices gives the helper the bundle identity TCC needs, but it also
 // means the parent cannot terminate it by killing the `open -W` process. A
 // per-session stop marker keeps intentional mute/hang-up deterministic.
@@ -133,7 +141,8 @@ SFSpeechRecognizer.requestAuthorization { status in
   // transcribes everyone else into nonsense. First preference that has an
   // available recognizer wins, with en-US as the last resort.
   let candidates =
-    Locale.preferredLanguages.map { Locale(identifier: $0) }
+    (appLocale.map { [$0] } ?? [])
+    + Locale.preferredLanguages.map { Locale(identifier: $0) }
     + [Locale.current, Locale(identifier: "en-US")]
   guard
     let recognizer = candidates.lazy.compactMap({ SFSpeechRecognizer(locale: $0) })

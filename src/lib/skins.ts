@@ -4,6 +4,8 @@
 // that keeps the two halves from drifting apart, and it means adding a skin is
 // one CSS block plus one line in SKINS.
 
+import { msg } from "@/lib/i18n";
+
 export const SKIN_IDS = ["midnight", "atelier", "foundry", "lagoon"] as const;
 export type SkinId = (typeof SKIN_IDS)[number];
 
@@ -14,11 +16,13 @@ export type Skin = {
   tagline: string;
 };
 
+// Module-level table: msg() marks the copy; the picker renders t(skin.name)
+// and t(skin.tagline).
 export const SKINS: readonly Skin[] = [
-  { id: "midnight", name: "Midnight", tagline: "The original. Cool and dark." },
-  { id: "atelier", name: "Atelier", tagline: "Daylight on paper, warm and quiet." },
-  { id: "foundry", name: "Foundry", tagline: "Night shift. Dark, warm, lit in brass." },
-  { id: "lagoon", name: "Lagoon", tagline: "Cool daylight. Porcelain and deep teal." },
+  { id: "midnight", name: msg("Midnight"), tagline: msg("The original. Cool and dark.") },
+  { id: "atelier", name: msg("Atelier"), tagline: msg("Daylight on paper, warm and quiet.") },
+  { id: "foundry", name: msg("Foundry"), tagline: msg("Night shift. Dark, warm, lit in brass.") },
+  { id: "lagoon", name: msg("Lagoon"), tagline: msg("Cool daylight. Porcelain and deep teal.") },
 ];
 
 export const DEFAULT_SKIN: SkinId = "midnight";

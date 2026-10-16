@@ -7,6 +7,7 @@ import { Check, Loader2, RefreshCw, Search, TriangleAlert, X } from "lucide-reac
 import { api, useStore } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { readCachedInventory, writeCachedInventory } from "@/lib/connected-apps-cache";
+import { msg, t, tRich } from "@/lib/i18n";
 
 interface ToolkitCard {
   slug: string;
@@ -36,6 +37,14 @@ let cachedConnectorStatusAt = 0;
 let cachedConnectorStatusAuthoritative = true;
 let connectorStatusRequest: Promise<ConnectorInventory> | null = null;
 const CONNECTOR_STATUS_CACHE_MS = 30_000;
+
+/** Composio account statuses, shown lowercase under each account. */
+const ACCOUNT_STATUS_LABELS: Record<string, string> = {
+  active: msg("active"),
+  initiated: msg("initiated"),
+  expired: msg("expired"),
+  failed: msg("failed"),
+};
 
 export interface ConnectorInventory {
   services: Record<string, ConnectorStatus>;
@@ -80,7 +89,10 @@ export function disconnectAccountConfirmation(
   account: { id: string; alias?: string },
 ) {
   const identity = account.alias ? `“${account.alias}” (${account.id})` : `“${account.id}”`;
-  return `Disconnect ${identity} from ${service}? Only this ${service} account will be revoked. Your other ${service} accounts will stay connected.`;
+  return t(
+    "Disconnect {identity} from {service}? Only this {service} account will be revoked. Your other {service} accounts will stay connected.",
+    { identity, service },
+  );
 }
 
 export function requiresAccountAlias(message: string) {
@@ -94,27 +106,27 @@ export function connectorActionLabel(
   state: { busy: boolean; included: boolean; canContinue: boolean; hasAccounts: boolean; failed: boolean },
 ) {
   if (state.busy) return null;
-  if (state.included) return "Included";
-  if (phase === "loading") return "Checking…";
-  if (phase === "error") return "Unavailable";
-  if (state.canContinue) return "Continue";
-  if (state.hasAccounts) return "Add account";
-  if (state.failed) return "Retry";
-  return "Connect";
+  if (state.included) return t("Included");
+  if (phase === "loading") return t("Checking…");
+  if (phase === "error") return t("Unavailable");
+  if (state.canContinue) return t("Continue");
+  if (state.hasAccounts) return t("Add account");
+  if (state.failed) return t("Retry");
+  return t("Connect");
 }
 
 export function connectedInventoryCopy(phase: ConnectorInventoryPhase) {
   if (phase === "loading") return {
-    title: "Checking connected apps…",
-    description: "Your accounts will appear here as soon as the secure connection check finishes.",
+    title: t("Checking connected apps…"),
+    description: t("Your accounts will appear here as soon as the secure connection check finishes."),
   };
   if (phase === "error") return {
-    title: "Couldn’t load connected apps",
-    description: "Retry the connection check before adding another account.",
+    title: t("Couldn’t load connected apps"),
+    description: t("Retry the connection check before adding another account."),
   };
   return {
-    title: "No connected apps yet",
-    description: "Connect an app from Marketplace and it will appear here.",
+    title: t("No connected apps yet"),
+    description: t("Connect an app from Marketplace and it will appear here."),
   };
 }
 
@@ -387,7 +399,7 @@ export function PluginsPanel() {
     // asynchronous open, the visible Continue button retries from a direct
     // user gesture using the URL retained in pendingUrls.
     const opened = window.open("", "_blank");
-    if (!opened) throw new Error("Your browser blocked the connection page. Click Continue to open it.");
+    if (!opened) throw new Error(t("Your browser blocked the connection page. Click Continue to open it."));
     // Open a same-origin blank page first so the OAuth origin never receives
     // an opener reference, while a real null remains a reliable blocked signal.
     opened.opener = null;
@@ -439,7 +451,7 @@ export function PluginsPanel() {
         // button rendered. Show the label field and refresh only this app.
         setAliasSlug(slug);
         setAliasDraft("");
-        setError("This app already has an account. Add a label such as work or personal to connect another.");
+        setError(t("This app already has an account. Add a label such as work or personal to connect another."));
         void refreshStatus([slug]);
       } else {
         setError(message);
@@ -482,21 +494,21 @@ export function PluginsPanel() {
       >
         <header className="flex items-start justify-between gap-4 px-6 pb-3 pt-6 sm:px-8 sm:pt-7">
           <div>
-            <h2 id="connected-apps-title" className="text-[22px] font-semibold tracking-[-0.01em] text-ink">Connected apps</h2>
-            <p className="mt-1 text-[13px] text-ink-secondary">Connect the apps your bots can use.</p>
+            <h2 id="connected-apps-title" className="text-[22px] font-semibold tracking-[-0.01em] text-ink">{t("Connected apps")}</h2>
+            <p className="mt-1 text-[13px] text-ink-secondary">{t("Connect the apps your bots can use.")}</p>
           </div>
           <div className="flex items-center gap-1">
             <button
               onClick={() => void loadConnectionInventory(true)}
               disabled={refreshing}
               className="rounded-lg p-2 text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-50"
-              title="Refresh connection status"
+              title={t("Refresh connection status")}
             >
               <RefreshCw size={17} className={cn(refreshing && "animate-spin")} />
             </button>
             <button
               onClick={close}
-              aria-label="Close connected apps"
+              aria-label={t("Close connected apps")}
               className="rounded-lg p-2 text-ink-secondary hover:bg-raised hover:text-ink"
             >
               <X size={21} />
@@ -510,14 +522,13 @@ export function PluginsPanel() {
           <div className="mx-6 mb-1 flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12.5px] text-warning sm:mx-8">
             <TriangleAlert size={14} className="mt-px shrink-0" />
             <span>
-              Showing what was connected last time — this Mac's credential store could not be opened just now, so these
-              could not be re-checked. Your apps are still connected; restarting OpenMausBot usually clears this.
+              {t("Showing what was connected last time — this Mac's credential store could not be opened just now, so these could not be re-checked. Your apps are still connected; restarting OpenMausBot usually clears this.")}
             </span>
           </div>
         )}
 
         <div className="flex flex-col gap-3 px-6 pb-4 pt-5 sm:flex-row sm:items-center sm:justify-between sm:px-8">
-          <div className="flex w-fit rounded-xl bg-raised/70 p-1" role="tablist" aria-label="Connected apps view">
+          <div className="flex w-fit rounded-xl bg-raised/70 p-1" role="tablist" aria-label={t("Connected apps view")}>
             <button
               role="tab"
               aria-selected={tab === "marketplace"}
@@ -527,7 +538,7 @@ export function PluginsPanel() {
                 tab === "marketplace" ? "bg-card text-ink shadow-sm" : "text-ink-secondary hover:text-ink",
               )}
             >
-              Marketplace
+              {t("Marketplace")}
             </button>
             <button
               role="tab"
@@ -538,7 +549,7 @@ export function PluginsPanel() {
                 tab === "connected" ? "bg-card text-ink shadow-sm" : "text-ink-secondary hover:text-ink",
               )}
             >
-              Connected{connectedCount > 0 ? ` ${connectedCount}` : ""}
+              {t("Connected")}{connectedCount > 0 ? ` ${connectedCount}` : ""}
             </button>
           </div>
           <label className="flex h-11 w-full items-center gap-2.5 rounded-xl bg-raised/70 px-3.5 sm:w-[320px]">
@@ -546,8 +557,8 @@ export function PluginsPanel() {
             <input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search apps"
-              aria-label="Search apps"
+              placeholder={t("Search apps")}
+              aria-label={t("Search apps")}
               className="min-w-0 flex-1 bg-transparent text-[14px] text-ink placeholder:text-ink-secondary focus:outline-none"
             />
           </label>
@@ -558,7 +569,7 @@ export function PluginsPanel() {
             connection service" is advice for someone who never set one up. */}
         {!configured && !stale && (
           <div className="mx-6 mb-1 rounded-xl bg-warning/10 px-4 py-3 text-[13px] text-warning sm:mx-8">
-            Connected apps are temporarily unavailable. You can retry after restarting, or configure your own connection service.{" "}
+            {t("Connected apps are temporarily unavailable. You can retry after restarting, or configure your own connection service.")}{" "}
             <button
               className="font-medium underline underline-offset-2"
               onClick={() => {
@@ -566,23 +577,25 @@ export function PluginsPanel() {
                 dispatch({ type: "toggleAppSettings", open: true });
               }}
             >
-              Open settings
+              {t("Open settings")}
             </button>
           </div>
         )}
         {configured && source === "curated" && mode === "self-hosted" && (
           <div className="mx-6 mb-1 text-[12px] text-ink-secondary sm:mx-8">
-            Showing featured apps.{" "}
-            <button
-              className="underline underline-offset-2 hover:text-ink"
-              onClick={() => {
-                close();
-                dispatch({ type: "toggleAppSettings", open: true });
-              }}
-            >
-              Update your Composio key
-            </button>{" "}
-            for the full catalog.
+            {tRich("Showing featured apps. <link>Update your Composio key</link> for the full catalog.", {
+              link: (children) => (
+                <button
+                  className="underline underline-offset-2 hover:text-ink"
+                  onClick={() => {
+                    close();
+                    dispatch({ type: "toggleAppSettings", open: true });
+                  }}
+                >
+                  {children}
+                </button>
+              ),
+            })}
           </div>
         )}
         {error && <div role="alert" className="mx-6 mt-2 rounded-lg bg-danger/10 px-3 py-2 text-[12px] text-danger sm:mx-8">{error}</div>}
@@ -590,12 +603,12 @@ export function PluginsPanel() {
         <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-7 pt-5 sm:px-8">
           {cards === null ? (
             <div className="flex items-center justify-center gap-2 py-24 text-[13px] text-ink-secondary">
-              <Loader2 size={14} className="animate-spin" /> Loading catalog…
+              <Loader2 size={14} className="animate-spin" /> {t("Loading catalog…")}
             </div>
           ) : (
             <div>
               <div className="mb-3 text-[12px] font-medium text-ink-secondary">
-                {tab === "connected" ? "Your connections" : search ? "Search results" : "Available apps"}
+                {tab === "connected" ? t("Your connections") : search ? t("Search results") : t("Available apps")}
               </div>
               <div className="grid grid-cols-1 gap-x-10 md:grid-cols-2">
               {visible.map((card) => {
@@ -620,7 +633,7 @@ export function PluginsPanel() {
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-[14px] font-medium text-ink">{card.label}</div>
                       <div className="mt-0.5 truncate text-[12.5px] text-ink-secondary">
-                        {pending ? "Finish setup in your browser" : failed && !accounts.length ? "Authorization expired — try again" : card.blurb}
+                        {pending ? t("Finish setup in your browser") : failed && !accounts.length ? t("Authorization expired — try again") : t(card.blurb)}
                       </div>
                     </div>
                     <button
@@ -662,7 +675,7 @@ export function PluginsPanel() {
                                 <span className="truncate">{account.alias || account.id}</span>
                               </div>
                               <div className="mt-0.5 truncate text-[10.5px] text-ink-secondary">
-                                {account.alias ? `${account.id} · ` : ""}{account.status.toLowerCase()}
+                                {account.alias ? `${account.id} · ` : ""}{t(ACCOUNT_STATUS_LABELS[account.status.toLowerCase()] ?? account.status.toLowerCase())}
                               </div>
                             </div>
                             <button
@@ -673,9 +686,9 @@ export function PluginsPanel() {
                                 disconnectAccount(card.slug, account.id);
                               }}
                               className="rounded-md px-2 py-1 text-[11px] text-ink-secondary transition-colors hover:bg-danger/10 hover:text-danger disabled:opacity-40"
-                              aria-label={`Disconnect ${account.alias || account.id} from ${card.label}`}
+                              aria-label={t("Disconnect {account} from {service}", { account: account.alias || account.id, service: card.label })}
                             >
-                              Disconnect
+                              {t("Disconnect")}
                             </button>
                           </div>
                         );
@@ -689,7 +702,7 @@ export function PluginsPanel() {
                         event.preventDefault();
                         const alias = aliasDraft.trim();
                         if (!alias) {
-                          setError("Enter a label for the account, such as work or personal.");
+                          setError(t("Enter a label for the account, such as work or personal."));
                           return;
                         }
                         void connect(card.slug, alias);
@@ -700,8 +713,8 @@ export function PluginsPanel() {
                         value={aliasDraft}
                         maxLength={64}
                         onChange={(event) => setAliasDraft(event.target.value)}
-                        placeholder="Account label (work, personal…)"
-                        aria-label={`Label for another ${card.label} account`}
+                        placeholder={t("Account label (work, personal…)")}
+                        aria-label={t("Label for another {service} account", { service: card.label })}
                         className="min-w-0 flex-1 rounded-lg bg-raised px-3 py-2 text-[12px] text-ink placeholder:text-ink-secondary focus:outline-none focus:ring-1 focus:ring-accent"
                       />
                       <button
@@ -709,7 +722,7 @@ export function PluginsPanel() {
                         disabled={busy || !aliasDraft.trim()}
                         className="rounded-lg bg-accent px-3 py-2 text-[12px] font-medium text-white disabled:opacity-40"
                       >
-                        Continue
+                        {t("Continue")}
                       </button>
                     </form>
                   )}
@@ -722,10 +735,10 @@ export function PluginsPanel() {
           {cards !== null && visible.length === 0 && (
             <div className="flex min-h-56 flex-col items-center justify-center text-center">
               <div className="text-[14px] font-medium text-ink">
-                {tab === "connected" ? connectedEmptyCopy.title : "No apps found"}
+                {tab === "connected" ? connectedEmptyCopy.title : t("No apps found")}
               </div>
               <div className="mt-1 text-[12.5px] text-ink-secondary">
-                {tab === "connected" ? connectedEmptyCopy.description : "Try a different search."}
+                {tab === "connected" ? connectedEmptyCopy.description : t("Try a different search.")}
               </div>
               {tab === "connected" && inventoryPhase === "error" && (
                 <button
@@ -735,7 +748,7 @@ export function PluginsPanel() {
                   className="mt-4 flex items-center gap-1.5 rounded-lg bg-raised px-3 py-2 text-[12.5px] text-ink transition-colors hover:bg-raised-hover disabled:opacity-50"
                 >
                   <RefreshCw size={13} className={cn(refreshing && "animate-spin")} />
-                  Retry
+                  {t("Retry")}
                 </button>
               )}
             </div>

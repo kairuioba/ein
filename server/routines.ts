@@ -7,6 +7,7 @@ import { DATA_DIR } from "./config.ts";
 import type { RuntimeEvent } from "./contracts.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { redactSecretsInText } from "./redact.ts";
+import { msg, t } from "../shared/i18n.ts";
 import type { RoutineRequestOperation } from "../shared/routine-request.ts";
 
 export type RoutineSchedule =
@@ -196,15 +197,15 @@ function cleanDays(days: unknown): number[] {
 function cleanAttachments(value: unknown): RoutineContextAttachment[] {
   if (value == null) return [];
   if (!Array.isArray(value) || value.length > MAX_ATTACHMENTS) {
-    throw new Error(`Add no more than ${MAX_ATTACHMENTS} attachments`);
+    throw new Error(t("Add no more than {max} attachments", { max: MAX_ATTACHMENTS }));
   }
   const ids = new Set<string>();
   return value.map((candidate) => {
     const parsed = attachmentSchema.safeParse(candidate);
     if (!parsed.success || parsed.data.name.includes("\0") || parsed.data.path.includes("\0")) {
-      throw new Error("Choose a valid attachment");
+      throw new Error(t("Choose a valid attachment"));
     }
-    if (ids.has(parsed.data.id)) throw new Error("Each attachment must be unique");
+    if (ids.has(parsed.data.id)) throw new Error(t("Each attachment must be unique"));
     ids.add(parsed.data.id);
     return { ...parsed.data };
   });
@@ -270,15 +271,15 @@ function composeExecutionPrompt(prompt: string, attachments: readonly RoutineCon
 function cleanSchedule(schedule: RoutineSchedule): RoutineSchedule {
   if (schedule?.type === "once") {
     const at = Number(schedule.at);
-    if (!Number.isFinite(at)) throw new Error("Choose a valid date and time");
+    if (!Number.isFinite(at)) throw new Error(t("Choose a valid date and time"));
     return { type: "once", at };
   }
   if (schedule?.type === "daily") {
     const time = String(schedule.time ?? "");
-    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) throw new Error("Time must use HH:MM");
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) throw new Error(t("Time must use HH:MM"));
     return { type: "daily", time, weekdays: cleanDays(schedule.weekdays) };
   }
-  throw new Error("Choose a supported schedule");
+  throw new Error(t("Choose a supported schedule"));
 }
 
 /** Next wall-clock occurrence in this computer's timezone, strictly after `after`. */
@@ -299,14 +300,14 @@ function sanitizeInput(input: RoutineInput): Omit<Routine, "id" | "createdAt" | 
   const name = String(input.name ?? "").trim().slice(0, 80);
   const prompt = String(input.prompt ?? "").trim().slice(0, 20_000);
   const botId = String(input.botId ?? "").trim();
-  if (!name) throw new Error("Give the routine a name");
-  if (!prompt) throw new Error("Tell the bot what to do");
-  if (!botId) throw new Error("Choose a bot");
+  if (!name) throw new Error(t("Give the routine a name"));
+  if (!prompt) throw new Error(t("Tell the bot what to do"));
+  if (!botId) throw new Error(t("Choose a bot"));
   const runOn = input.runOn ?? "maus";
-  if (runOn !== "maus" && runOn !== "cloud") throw new Error("Choose where this routine runs");
+  if (runOn !== "maus" && runOn !== "cloud") throw new Error(t("Choose where this routine runs"));
   const attachments = cleanAttachments(input.attachments);
   if (runOn === "cloud" && attachments.length > 0) {
-    throw new Error("Attachments can only run on this computer until cloud file staging is available");
+    throw new Error(t("Attachments can only run on this computer until cloud file staging is available"));
   }
   return {
     name,
@@ -375,7 +376,7 @@ export class RoutineManager {
     for (const run of this.runs) {
       if (run.status === "running" || run.status === "waiting") {
         run.status = "failed";
-        run.error = "OpenMausBot restarted while this routine was running";
+        run.error = t("OpenMausBot restarted while this routine was running");
         run.attention = undefined;
         run.finishedAt = this.now();
         recovered.push(cloneRun(run));
@@ -474,11 +475,11 @@ export class RoutineManager {
       if (receipt) {
         const committed = this.routines.find((routine) => routine.id === receipt.resultId);
         if (committed) return cloneRoutine(committed);
-        throw new Error("This routine request was already applied");
+        throw new Error(t("This routine request was already applied"));
       }
     }
     const clean = sanitizeInput(input);
-    if (this.options.botState(clean.botId) === "missing") throw new Error("That bot no longer exists");
+    if (this.options.botState(clean.botId) === "missing") throw new Error(t("That bot no longer exists"));
     const at = this.now();
     const routine: Routine = {
       id: randomUUID(),
@@ -523,7 +524,7 @@ export class RoutineManager {
       durationMinutes: patch.durationMinutes ?? routine.durationMinutes,
       attachments: patch.attachments ?? routine.attachments,
     });
-    if (this.options.botState(clean.botId) === "missing") throw new Error("That bot no longer exists");
+    if (this.options.botState(clean.botId) === "missing") throw new Error(t("That bot no longer exists"));
     const cancelledRuns: RoutineRun[] = [];
     this.commitMutation(() => {
       Object.assign(routine, clean, {
@@ -538,7 +539,7 @@ export class RoutineManager {
           run.status = "cancelled";
           run.attention = undefined;
           run.finishedAt = this.now();
-          run.error = "The routine was paused before this run started";
+          run.error = t("The routine was paused before this run started");
           cancelledRuns.push(run);
         }
       }
@@ -590,7 +591,7 @@ export class RoutineManager {
       run.status = "cancelled";
       run.attention = undefined;
       run.finishedAt = this.now();
-      run.error = "The assigned bot was deleted";
+      run.error = t("The assigned bot was deleted");
       this.emitRun(run);
       if (run.threadId) void this.options.interruptTurn?.(run.botId, run.threadId, run.runOn ?? "maus").catch(() => {});
       changed = true;
@@ -635,7 +636,7 @@ export class RoutineManager {
     receivedAt: number;
   }): RoutineRun {
     if (this.options.botState(input.botId) === "missing") {
-      throw Object.assign(new Error("The assigned MAUS no longer exists"), { status: 410 });
+      throw Object.assign(new Error(msg("The assigned MAUS no longer exists")), { status: 410 });
     }
     const run: RoutineRun = {
       id: randomUUID(),
@@ -732,7 +733,7 @@ export class RoutineManager {
           const missed = this.newRun(routine, scheduledFor, false);
           missed.status = "missed";
           missed.finishedAt = now;
-          missed.error = "This computer was offline for more than 12 hours after the scheduled time";
+          missed.error = t("This computer was offline for more than 12 hours after the scheduled time");
           this.emitRun(missed);
           missedRuns.push(cloneRun(missed));
         } else {
@@ -754,14 +755,14 @@ export class RoutineManager {
         const state = this.options.botState(run.botId);
         if (state === "busy") continue;
         if (state === "missing") {
-          this.failRun(run, "The assigned bot no longer exists");
+          this.failRun(run, t("The assigned bot no longer exists"));
           continue;
         }
         // A webhook is an incoming message, so make its task the bot's live
         // chat immediately. Scheduled work remains detached and unobtrusive.
         const task = this.options.createTask(run.botId, run.routineName, run.triggerSource === "webhook");
         if (!task) {
-          this.failRun(run, "Could not create a task for this run");
+          this.failRun(run, t("Could not create a task for this run"));
           continue;
         }
         run.threadId = task.threadId;
@@ -772,7 +773,7 @@ export class RoutineManager {
         try {
           const prompt = run.prompt ?? this.routines.find((r) => r.id === run.routineId)?.prompt;
           if (!prompt) {
-            this.failThread(task.threadId, "The routine was deleted before it could start");
+            this.failThread(task.threadId, t("The routine was deleted before it could start"));
             continue;
           }
           const triggerSource = run.triggerSource ?? (run.manual ? "manual" : "schedule");
@@ -814,7 +815,7 @@ export class RoutineManager {
       run.cost = event.cost;
       run.denials = event.denials;
       if (!event.ok) {
-        this.failRun(run, event.stopReason ?? run.error ?? "The bot did not complete this run");
+        this.failRun(run, event.stopReason ?? run.error ?? t("The bot did not complete this run"));
         queueMicrotask(() => void this.tick());
         return cloneRun(run);
       }

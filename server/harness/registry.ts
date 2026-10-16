@@ -5,6 +5,7 @@
 // compatible — do not remove it); dispose tears an instance down without
 // touching its siblings.
 import { findCliCandidates } from "../env-path.ts";
+import { t } from "../../shared/i18n.ts";
 import type {
   AnyProviderDriver,
   InstanceConfigMap,
@@ -69,7 +70,7 @@ export class ProviderRegistry {
             displayName: entry.displayName,
             cli: cliOfRaw(entry.config),
             shadow: true,
-            reason: `unknown driver "${entry.driver}" — kept as configured, unavailable here`,
+            reason: t('unknown driver "{driver}" — kept as configured, unavailable here', { driver: String(entry.driver) }),
           },
         });
         continue;

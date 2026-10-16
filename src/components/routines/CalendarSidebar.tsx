@@ -1,6 +1,7 @@
 import { useMemo, useState, type DragEvent } from "react";
 import { GripVertical, Plus, Search, UsersRound } from "lucide-react";
 import { BotAvatar } from "@/components/Avatar";
+import { getLocale, t } from "@/lib/i18n";
 import type { Bot } from "@/state/store";
 import { MiniMonth } from "./MiniMonth";
 
@@ -31,7 +32,7 @@ export function CalendarSidebar({ bots, anchor, onSelectDate, onCreate }: Calend
 
   return (
     <aside
-      aria-label="Calendar sidebar"
+      aria-label={t("Calendar sidebar")}
       className="flex h-full w-[320px] shrink-0 flex-col overflow-hidden border-r border-hairline/40 bg-panel"
     >
       <div className="px-4 pb-2 pt-4">
@@ -41,7 +42,7 @@ export function CalendarSidebar({ bots, anchor, onSelectDate, onCreate }: Calend
           className="group flex h-11 w-full items-center justify-center gap-2 rounded-full bg-accent px-5 text-[13px] font-semibold text-white shadow-lg shadow-accent/15 transition hover:-translate-y-px hover:brightness-110 hover:shadow-xl hover:shadow-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-offset-2 focus-visible:ring-offset-panel active:translate-y-0"
         >
           <Plus size={17} strokeWidth={2.5} aria-hidden="true" />
-          Create
+          {t("Create")}
         </button>
       </div>
 
@@ -53,7 +54,7 @@ export function CalendarSidebar({ bots, anchor, onSelectDate, onCreate }: Calend
         <div className="mb-2 flex items-center justify-between px-1">
           <div id="calendar-bots-heading" className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.11em] text-ink-secondary">
             <UsersRound size={13} aria-hidden="true" />
-            My bots
+            {t("My bots")}
           </div>
           <span className="rounded-full bg-raised px-1.5 py-0.5 text-[9px] tabular-nums text-ink-secondary">
             {bots.length}
@@ -61,7 +62,7 @@ export function CalendarSidebar({ bots, anchor, onSelectDate, onCreate }: Calend
         </div>
 
         <label className="relative mb-2 block">
-          <span className="sr-only">Search bots</span>
+          <span className="sr-only">{t("Search bots")}</span>
           <Search
             size={13}
             className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-secondary/70"
@@ -71,12 +72,12 @@ export function CalendarSidebar({ bots, anchor, onSelectDate, onCreate }: Calend
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             type="search"
-            placeholder="Search bots"
+            placeholder={t("Search bots")}
             className="h-8 w-full rounded-lg border border-hairline/45 bg-control/55 pl-8 pr-2.5 text-[11.5px] text-ink outline-none placeholder:text-ink-secondary/55 focus:border-accent/60 focus:bg-control"
           />
         </label>
 
-        <div role="list" aria-label="Bots available to schedule" className="min-h-0 flex-1 space-y-0.5 overflow-y-auto pr-0.5">
+        <div role="list" aria-label={t("Bots available to schedule")} className="min-h-0 flex-1 space-y-0.5 overflow-y-auto pr-0.5">
           {filteredBots.map((bot) => (
             <div
               key={bot.id}
@@ -84,8 +85,8 @@ export function CalendarSidebar({ bots, anchor, onSelectDate, onCreate }: Calend
               onDragStart={(event) => beginBotDrag(event, bot)}
               role="listitem"
               className="group flex cursor-grab items-center gap-2 rounded-xl px-2 py-2 transition-colors hover:bg-raised/80 active:cursor-grabbing"
-              aria-label={`Drag ${bot.name} onto the calendar`}
-              title={`Drag ${bot.name} onto a time slot`}
+              aria-label={t("Drag {name} onto the calendar", { name: bot.name })}
+              title={t("Drag {name} onto a time slot", { name: bot.name })}
             >
               <GripVertical
                 size={13}
@@ -96,24 +97,24 @@ export function CalendarSidebar({ bots, anchor, onSelectDate, onCreate }: Calend
               <div className="min-w-0 flex-1">
                 <div className="truncate text-[11.5px] font-medium text-ink">{bot.name}</div>
                 <div className="truncate text-[9.5px] text-ink-secondary/75">
-                  {bot.title || "BotAgent"}
+                  {bot.title || (getLocale() === "en" ? "BotAgent" : t("Bot"))}
                 </div>
               </div>
               <span className="shrink-0 rounded-full border border-hairline/50 px-1.5 py-0.5 text-[8.5px] text-ink-secondary/70 opacity-0 transition-opacity group-hover:opacity-100">
-                Drag
+                {t("Drag")}
               </span>
             </div>
           ))}
 
           {filteredBots.length === 0 && (
             <div className="px-3 py-8 text-center text-[11px] leading-relaxed text-ink-secondary">
-              {bots.length === 0 ? "Create a bot to schedule work." : "No bots match your search."}
+              {bots.length === 0 ? t("Create a bot to schedule work.") : t("No bots match your search.")}
             </div>
           )}
         </div>
 
         <p className="mt-2 px-2 text-[9.5px] leading-relaxed text-ink-secondary/65">
-          Drag a bot onto any time to schedule it.
+          {t("Drag a bot onto any time to schedule it.")}
         </p>
       </section>
     </aside>

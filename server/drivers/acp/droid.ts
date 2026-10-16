@@ -20,6 +20,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { decodeInjectId, hostApiKey, localHost, mergeLocalInject } from "../local-inject.ts";
+import { t } from "../../../shared/i18n.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 
 // FACTORY_HOME_OVERRIDE replaces the HOME the CLI resolves, NOT the data root:
@@ -184,8 +185,10 @@ async function applySetting(
     await request(method, params);
   } catch (e) {
     throw new Error(
-      `Droid rejected ${what} via ${method}: ${(e as Error).message}. ` +
-        `Check that \`droid\` is current (0.196.0+ supports it) and that this account can use that value.`,
+      t(
+        "Droid rejected {setting} via {method}: {error}. Check that `droid` is current (0.196.0+ supports it) and that this account can use that value.",
+        { setting: what, method, error: String((e as Error).message) },
+      ),
     );
   }
 }
@@ -223,7 +226,9 @@ const support: AcpSupport = {
   models: MODELS,
   defaultCli: "droid",
   nativeSource: "droid.acp",
-  loginNote: "Droid CLI is not signed in — run `droid` once and log in, or set FACTORY_API_KEY",
+  get loginNote() {
+    return t("Droid CLI is not signed in — run `droid` once and log in, or set FACTORY_API_KEY");
+  },
 
   install: {
     command: {
@@ -257,12 +262,12 @@ const support: AcpSupport = {
 
   async configureSession({ request, sessionId, config, turn }) {
     const modeId = config.fullAuto ? MODE_FULL_AUTO : MODE_DEFAULT;
-    await applySetting(request, "session/set_mode", { sessionId, modeId }, `autonomy mode "${modeId}"`);
+    await applySetting(request, "session/set_mode", { sessionId, modeId }, t('autonomy mode "{mode}"', { mode: modeId }));
     // Pin the model for the same reason as the mode: with no set_model the
     // session runs whatever ~/.factory/settings.json selected, which can be a
     // `custom:` provider pointing at its own endpoint and key.
     const modelId = turn.model ?? MODELS.default;
-    await applySetting(request, "session/set_model", { sessionId, modelId }, `model "${modelId}"`);
+    await applySetting(request, "session/set_model", { sessionId, modelId }, t('model "{model}"', { model: modelId }));
   },
 
   // House convention for ACP harnesses (grok, gemini, kimi all do this): the

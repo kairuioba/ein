@@ -139,6 +139,7 @@ beforeAll(async () => {
   harness = spawn(process.execPath, [join(ROOT, "server", "index.ts")], {
     cwd: ROOT,
     env: {
+      OMB_LOCALE: "en", // the assertions read the English source strings
       ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
       ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
       HOME: home,

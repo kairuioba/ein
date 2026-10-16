@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { z } from "zod";
 
+import { msg } from "../shared/i18n.ts";
 import { parseJson, type JsonValue } from "./schema.ts";
 import type { WebhookManager } from "./webhooks.ts";
 
@@ -32,14 +33,14 @@ async function readRawBody(req: IncomingMessage): Promise<string> {
       const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       bytes += buffer.length;
       if (bytes > MAX_WEBHOOK_BODY_BYTES) {
-        throw Object.assign(new Error("Webhook body is too large"), { status: 413 });
+        throw Object.assign(new Error(msg("Webhook body is too large")), { status: 413 });
       }
       chunks.push(buffer);
     }
   } catch (error) {
     const parsed = statusErrorSchema.safeParse(error);
     if (parsed.success && parsed.data.status === 413) throw error;
-    throw Object.assign(new Error("Could not read webhook body"), { status: 400 });
+    throw Object.assign(new Error(msg("Could not read webhook body")), { status: 400 });
   }
   return Buffer.concat(chunks, bytes).toString("utf8");
 }
@@ -50,7 +51,7 @@ function parsePayload(raw: string, contentType: string): JsonValue {
     try {
       return parseJson(raw);
     } catch {
-      throw Object.assign(new Error("Invalid JSON webhook body"), { status: 400 });
+      throw Object.assign(new Error(msg("Invalid JSON webhook body")), { status: 400 });
     }
   }
   if (contentType.includes("application/x-www-form-urlencoded")) {
@@ -103,7 +104,7 @@ export function createWebhookIngressHandler(manager: WebhookManager) {
       const secret = pathSecret || bearerSecret(req);
       // Reject bad capability URLs before buffering or parsing attacker input.
       if (!manager.authorize(match[1], secret)) {
-        manager.recordRejected(match[1], 401, "Invalid webhook URL or secret", {
+        manager.recordRejected(match[1], 401, msg("Invalid webhook URL or secret"), {
           contentType: header(req, "content-type"),
           eventName: eventName(req),
           deliveryId: deliveryId(req),

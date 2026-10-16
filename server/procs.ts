@@ -17,6 +17,7 @@ import {
 } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
 import { join } from "node:path";
+import { t } from "../shared/i18n.ts";
 import { resolveCliSpawn, type ResolvedSpawn } from "./env-path.ts";
 
 export function resolveCli(cli: string, args: string[] = []): ResolvedSpawn {
@@ -74,10 +75,10 @@ type SpawnFailure = { message: string; setup: boolean };
 
 export function describeSpawnFailure(err: NodeJS.ErrnoException, cli: string): SpawnFailure {
   if (err.code === "ENOENT")
-    return { message: `\`${cli}\` isn't installed, or isn't on this app's PATH`, setup: true };
+    return { message: t("`{cli}` isn't installed, or isn't on this app's PATH", { cli }), setup: true };
   if (err.code === "EACCES" || err.code === "EPERM")
-    return { message: `\`${cli}\` isn't executable — check its file permissions`, setup: true };
-  return { message: `spawn failed: ${err.message}`, setup: false };
+    return { message: t("`{cli}` isn't executable — check its file permissions", { cli }), setup: true };
+  return { message: t("spawn failed: {error}", { error: err.message }), setup: false };
 }
 
 /** Stop a CLI and every process it spawned (MCP proxies included). */

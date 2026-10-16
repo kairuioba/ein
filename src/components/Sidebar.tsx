@@ -1,4 +1,5 @@
 import { track } from "@/lib/analytics";
+import { t, tn } from "@/lib/i18n";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -118,20 +119,20 @@ function UpdateButton() {
     pending || status === "checking" || status === "downloading" || status === "installing";
   const label =
     status === "available"
-      ? `Version ${s?.version ?? ""} available — download`
+      ? t("Version {version} available — download", { version: s?.version ?? "" })
       : status === "downloading"
         ? s?.percent == null
-          ? "Starting download…"
-          : `Downloading… ${Math.round(s.percent)}%`
+          ? t("Starting download…")
+          : t("Downloading… {percent}%", { percent: Math.round(s.percent) })
         : status === "downloaded"
-          ? `Version ${s?.version ?? ""} ready — restart to update`
+          ? t("Version {version} ready — restart to update", { version: s?.version ?? "" })
           : status === "installing"
-            ? "Restarting to update…"
+            ? t("Restarting to update…")
             : status === "checking"
-              ? "Checking for updates…"
+              ? t("Checking for updates…")
               : upToDate
-                ? "You're up to date"
-                : "Check for updates";
+                ? t("You're up to date")
+                : t("Check for updates");
 
   return (
     <button
@@ -169,15 +170,15 @@ function UpdateButton() {
 }
 
 function preview(bot: Bot): string {
-  if (bot.activity === "waiting-on-you") return "Waiting for you…";
-  if (bot.busy) return "Working…";
+  if (bot.activity === "waiting-on-you") return t("Waiting for you…");
+  if (bot.busy) return t("Working…");
   // the visible branch's tail — bot.messages holds every fork, so its last
   // entry can belong to a version the user switched away from
   const last = visibleMessages(bot).at(-1);
   if (!last) return "";
   if (last.kind === "options" && last.card) return last.card.title;
   if (last.kind === "activity" && last.tool) return last.tool.name;
-  if (last.kind === "screen") return "Screen frame";
+  if (last.kind === "screen") return t("Screen frame");
   return last.text ?? "";
 }
 
@@ -189,12 +190,12 @@ interface MenuState {
 
 function groupPreview(group: Group, bots: Bot[]): string {
   if (group.busyBotId) {
-    return `${bots.find((b) => b.id === group.busyBotId)?.name ?? "A bot"} is working…`;
+    return t("{name} is working…", { name: bots.find((b) => b.id === group.busyBotId)?.name ?? t("A bot") });
   }
   const last = group.messages.at(-1);
-  if (!last) return "No messages yet";
+  if (!last) return t("No messages yet");
   const text = last.kind === "activity" && last.tool ? last.tool.name : (last.text ?? "");
-  if (last.role === "user") return `You: ${text}`;
+  if (last.role === "user") return t("You: {text}", { text });
   return last.from ? `${last.from.name}: ${text}` : text;
 }
 
@@ -336,7 +337,7 @@ function RoomContextMenu({
             autoFocus
             value={draft}
             maxLength={100}
-            aria-label={`Rename ${group.name}`}
+            aria-label={t("Rename {name}", { name: group.name })}
             onFocus={(event) => event.currentTarget.select()}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
@@ -354,8 +355,8 @@ function RoomContextMenu({
           <button
             type="button"
             onClick={saveRename}
-            aria-label={isBotChat ? "Save chat name" : "Save channel name"}
-            title="Save"
+            aria-label={isBotChat ? t("Save chat name") : t("Save channel name")}
+            title={t("Save")}
             className="flex size-8 shrink-0 items-center justify-center rounded-lg text-ink-secondary hover:bg-raised hover:text-ink"
           >
             <Check size={15} />
@@ -363,8 +364,8 @@ function RoomContextMenu({
           <button
             type="button"
             onClick={onClose}
-            aria-label={isBotChat ? "Cancel chat rename" : "Cancel channel rename"}
-            title="Cancel"
+            aria-label={isBotChat ? t("Cancel chat rename") : t("Cancel channel rename")}
+            title={t("Cancel")}
             className="flex size-8 shrink-0 items-center justify-center rounded-lg text-ink-secondary hover:bg-raised hover:text-ink"
           >
             <X size={15} />
@@ -379,7 +380,7 @@ function RoomContextMenu({
           className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
         >
           <Pencil size={16} className="text-ink-secondary" />
-          {isBotChat ? "Rename chat" : "Rename Channel"}
+          {isBotChat ? t("Rename chat") : t("Rename Channel")}
         </button>
       )}
       {!isBotChat && (
@@ -391,7 +392,7 @@ function RoomContextMenu({
           className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
         >
           <FolderPlus size={16} className="text-ink-secondary" />
-          Move to context
+          {t("Move to context")}
         </button>
       )}
       <button
@@ -402,7 +403,7 @@ function RoomContextMenu({
         className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
       >
         <ClipboardCopy size={16} className="text-ink-secondary" />
-        Copy conversation ID
+        {t("Copy conversation ID")}
       </button>
       <button
         onClick={() => {
@@ -412,7 +413,7 @@ function RoomContextMenu({
         className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-danger hover:bg-raised/70"
       >
         <Trash2 size={16} />
-        {isBotChat ? "Delete chat" : "Delete Channel"}
+        {isBotChat ? t("Delete chat") : t("Delete Channel")}
       </button>
     </div>,
     document.body,
@@ -450,7 +451,7 @@ function NewRoomPanel({ onClose }: { onClose: () => void }) {
       onMouseDown={(e) => e.target === e.currentTarget && onClose()}
     >
       <div className="w-[340px] rounded-2xl border border-hairline/50 bg-card p-4 shadow-2xl">
-        <div className="mb-3 text-[15px] font-semibold text-ink">New Channel</div>
+        <div className="mb-3 text-[15px] font-semibold text-ink">{t("New Channel")}</div>
         <input
           autoFocus
           maxLength={100}
@@ -460,7 +461,7 @@ function NewRoomPanel({ onClose }: { onClose: () => void }) {
             if (e.key === "Enter") create();
             if (e.key === "Escape") onClose();
           }}
-          placeholder="Channel name (for example, Website launch)"
+          placeholder={t("Channel name (for example, Website launch)")}
           className="mb-3 w-full rounded-lg bg-raised/70 px-3 py-2 text-[14px] text-ink placeholder:text-ink-secondary focus:outline-none"
         />
         <input
@@ -471,22 +472,24 @@ function NewRoomPanel({ onClose }: { onClose: () => void }) {
             if (e.key === "Enter") create();
             if (e.key === "Escape") onClose();
           }}
-          placeholder="Context (optional): Work, Personal, Client…"
-          aria-label="Channel context"
+          placeholder={t("Context (optional): Work, Personal, Client…")}
+          aria-label={t("Channel context")}
           className="mb-3 w-full rounded-lg bg-raised/70 px-3 py-2 text-[14px] text-ink placeholder:text-ink-secondary focus:outline-none"
         />
         <BotPickerList
           bots={bots}
           picked={picked}
           onToggle={toggle}
-          emptyHint="Create a bot first — channels are made of bots."
+          emptyHint={t("Create a bot first — channels are made of bots.")}
         />
         <button
           onClick={create}
           disabled={!picked.size}
           className="mt-3 w-full rounded-lg bg-accent py-2 text-[14px] font-medium text-white hover:brightness-110 disabled:opacity-40"
         >
-          Create Channel{picked.size ? ` · ${picked.size} ${picked.size === 1 ? "bot" : "bots"}` : ""}
+          {picked.size
+            ? tn(picked.size, "Create Channel · {count} bot", "Create Channel · {count} bots")
+            : t("Create Channel")}
         </button>
       </div>
     </div>
@@ -553,7 +556,7 @@ function SectionPicker({
       className="fixed z-40 w-[236px] overflow-hidden rounded-xl border border-hairline/50 bg-card py-2 shadow-2xl shadow-black/60"
     >
       <div className="px-3.5 pb-1 text-[10px] font-medium uppercase tracking-[0.08em] text-ink-secondary">
-        Move to context
+        {t("Move to context")}
       </div>
       {sections.length > 0 && (
         <div className="flex flex-col gap-0.5 px-1.5 py-1">
@@ -585,8 +588,8 @@ function SectionPicker({
           maxLength={60}
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="New context…"
-          aria-label="New context name"
+          placeholder={t("New context…")}
+          aria-label={t("New context name")}
           className="w-full rounded-lg bg-raised/70 px-2.5 py-1.5 text-[13px] text-ink placeholder:text-ink-secondary focus:outline-none"
         />
         <button
@@ -597,7 +600,7 @@ function SectionPicker({
             trimmed ? "bg-accent text-panel" : "bg-raised/70 text-ink-secondary",
           )}
         >
-          Add
+          {t("Add")}
         </button>
       </form>
       {current && (
@@ -608,7 +611,7 @@ function SectionPicker({
             className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[13px] text-danger hover:bg-raised/70"
           >
             <FolderMinus size={15} />
-            Remove from context
+            {t("Remove from context")}
           </button>
         </>
       )}
@@ -651,9 +654,9 @@ function BotContextMenu({
   const visibleBotCount = state.bots.filter((candidate) => !candidate.hidden).length;
   const archiveBlocked = Boolean(bot.chiefOfStaff) || visibleBotCount <= 1;
   const archiveHint = bot.chiefOfStaff
-    ? "Choose another Chief of Staff first"
+    ? t("Choose another Chief of Staff first")
     : visibleBotCount <= 1
-      ? "Keep at least one active bot"
+      ? t("Keep at least one active bot")
       : undefined;
   // keep the menu on-screen near the click
   const top = Math.max(8, Math.min(menu.y, window.innerHeight - 380));
@@ -694,50 +697,53 @@ function BotContextMenu({
       {[
         item(
           bot.pinned ? <PinOff size={16} className="text-ink-secondary" /> : <Pin size={16} className="text-ink-secondary" />,
-          bot.pinned ? "Unpin" : "Pin",
+          bot.pinned ? t("Unpin") : t("Pin"),
           () => dispatch({ type: "updateBot", botId: bot.id, patch: { pinned: !bot.pinned } }),
         ),
         item(
           <Crown size={16} className={bot.chiefOfStaff ? "text-accent" : "text-ink-secondary"} />,
-          bot.chiefOfStaff ? "Remove Chief of Staff" : "Make Chief of Staff",
+          bot.chiefOfStaff ? t("Remove Chief of Staff") : t("Make Chief of Staff"),
           () => dispatch({ type: "updateBot", botId: bot.id, patch: { chiefOfStaff: !bot.chiefOfStaff } }),
           {
             disabled: !bot.chiefOfStaff && !canCoordinate,
-            hint: !bot.chiefOfStaff && !canCoordinate ? "Choose a Claude or ACP engine first" : undefined,
+            hint: !bot.chiefOfStaff && !canCoordinate ? t("Choose a Claude or ACP engine first") : undefined,
           },
         ),
-        item(<FolderPlus size={16} className="text-ink-secondary" />, "Move to section", () => {
+        item(<FolderPlus size={16} className="text-ink-secondary" />, t("Move to section"), () => {
           onClose();
           onMoveToSection(bot.id);
         }),
-        item(<BellDot size={16} className="text-ink-secondary" />, "Mark as Unread", () =>
+        item(<BellDot size={16} className="text-ink-secondary" />, t("Mark as Unread"), () =>
           dispatch({ type: "markUnread", botId: bot.id }),
         ),
         divider("d1"),
-        item(<Pencil size={16} className="text-ink-secondary" />, "Edit Profile", () => {
+        item(<Pencil size={16} className="text-ink-secondary" />, t("Edit Profile"), () => {
           dispatch({ type: "select", id: bot.id });
           dispatch({ type: "toggleSettings", open: true });
         }),
-        item(<Copy size={16} className="text-ink-secondary" />, "Duplicate", () =>
+        item(<Copy size={16} className="text-ink-secondary" />, t("Duplicate"), () =>
           dispatch({ type: "duplicateBot", botId: bot.id }),
         ),
         divider("d2"),
-        item(<ClipboardCopy size={16} className="text-ink-secondary" />, "Copy conversation ID", () => {
+        item(<ClipboardCopy size={16} className="text-ink-secondary" />, t("Copy conversation ID"), () => {
           void navigator.clipboard?.writeText(bot.threadId);
         }),
         divider("d3"),
         item(
           <Archive size={16} className="text-ink-secondary" />,
-          "Archive",
+          t("Archive"),
           () => onArchive(bot),
           {
             disabled: archiveBlocked,
             hint: archiveHint,
           },
         ),
-        item(<Trash2 size={16} />, "Delete", () => dispatch({ type: "deleteBot", botId: bot.id }), {
-          danger: true,
-        }),
+        item(
+          <Trash2 size={16} />,
+          t("Delete"),
+          () => dispatch({ type: "deleteBot", botId: bot.id }),
+          { danger: true },
+        ),
       ]}
     </div>
   );
@@ -820,7 +826,8 @@ function BotListItem({
           <span className="flex min-w-0 items-center gap-1.5 truncate text-[13px] text-ink-secondary">
             {bot.chiefOfStaff && (
               <span className="flex shrink-0 items-center gap-1 text-[11.5px] font-medium text-accent">
-                <Crown size={11} /> Chief of Staff
+                <Crown size={11} />
+                {" "}{t("Chief of Staff")}
               </span>
             )}
             {bot.chiefOfStaff && preview(bot) && <span className="shrink-0 text-ink-secondary/60">·</span>}
@@ -873,13 +880,13 @@ function BotListItem({
         type="button"
         disabled={archiveDisabled}
         onClick={() => onArchive(bot)}
-        aria-label={`Archive ${bot.name}`}
+        aria-label={t("Archive {name}", { name: bot.name })}
         title={
           bot.chiefOfStaff
-            ? "Choose another Chief of Staff first"
+            ? t("Choose another Chief of Staff first")
             : archiveDisabled
-              ? "Keep at least one active bot"
-              : `Archive ${bot.name}`
+              ? t("Keep at least one active bot")
+              : t("Archive {name}", { name: bot.name })
         }
         className="absolute right-1 top-1/2 flex size-10 -translate-y-1/2 items-center justify-center rounded-lg bg-card/90 text-ink-secondary opacity-0 shadow-sm transition hover:bg-raised hover:text-ink focus:opacity-100 disabled:cursor-default disabled:opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100"
       >
@@ -923,7 +930,7 @@ function ArchivedBotsPanel({
       });
       dispatch({ type: "botPatched", bot: response.bot });
       dispatch({ type: "select", id: bot.id });
-      onRestored(`${bot.name} restored`);
+      onRestored(t("{name} restored", { name: bot.name }));
       if (bots.length === 1) onClose();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -947,7 +954,7 @@ function ArchivedBotsPanel({
       for (const response of responses) dispatch({ type: "botPatched", bot: response.bot });
       const first = bots[0];
       if (first) dispatch({ type: "select", id: first.id });
-      onRestored(`${bots.length} ${bots.length === 1 ? "bot" : "bots"} restored`);
+      onRestored(tn(bots.length, "{count} bot restored", "{count} bots restored"));
       onClose();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -971,8 +978,8 @@ function ArchivedBotsPanel({
       >
         <header className="flex items-start justify-between gap-4 px-6 pb-4 pt-6 sm:px-8 sm:pt-7">
           <div>
-            <h2 id="archived-bots-title" className="text-[22px] font-semibold tracking-[-0.01em] text-ink">Archived bots</h2>
-            <p className="mt-1 text-[13px] text-ink-secondary">Conversations are kept until you choose to delete a bot.</p>
+            <h2 id="archived-bots-title" className="text-[22px] font-semibold tracking-[-0.01em] text-ink">{t("Archived bots")}</h2>
+            <p className="mt-1 text-[13px] text-ink-secondary">{t("Conversations are kept until you choose to delete a bot.")}</p>
           </div>
           <div className="flex items-center gap-1">
             {bots.length > 1 && (
@@ -982,28 +989,28 @@ function ArchivedBotsPanel({
                 className="flex items-center gap-1.5 rounded-full bg-raised px-3.5 py-2 text-[12.5px] text-ink hover:bg-raised-hover disabled:opacity-40"
               >
                 {restoringAll && <Loader2 size={13} className="animate-spin" />}
-                Restore all
+                {t("Restore all")}
               </button>
             )}
             <button
               onClick={onClose}
               disabled={restoringAll || Boolean(busyId)}
               className="flex size-10 items-center justify-center rounded-lg text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-40"
-              aria-label="Close archived bots"
+              aria-label={t("Close archived bots")}
             >
               <X size={21} />
             </button>
           </div>
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-7 pt-3 sm:px-8">
-          <div className="mb-3 text-[12px] font-medium text-ink-secondary">{bots.length} archived</div>
+          <div className="mb-3 text-[12px] font-medium text-ink-secondary">{t("{count} archived", { count: bots.length })}</div>
           <div className="grid grid-cols-1 gap-x-8 md:grid-cols-2">
             {bots.map((bot) => (
               <div key={bot.id} className="flex min-h-[82px] items-center gap-3 border-b border-hairline/35 px-1 py-3">
                 <BotAvatar bot={bot} state="happy" size={42} animated={false} />
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-[14px] font-medium text-ink">{bot.name}</div>
-                  <div className="mt-0.5 truncate text-[12.5px] text-ink-secondary">{bot.title || "Bot"}</div>
+                  <div className="mt-0.5 truncate text-[12.5px] text-ink-secondary">{bot.title || t("Bot")}</div>
                 </div>
                 <button
                   onClick={() => void restore(bot)}
@@ -1011,7 +1018,7 @@ function ArchivedBotsPanel({
                   className="flex min-w-[78px] items-center justify-center gap-1.5 rounded-full bg-raised px-3.5 py-2 text-[12.5px] text-ink hover:bg-raised-hover disabled:opacity-40"
                 >
                   {busyId === bot.id && <Loader2 size={13} className="animate-spin" />}
-                  Restore
+                  {t("Restore")}
                 </button>
               </div>
             ))}
@@ -1120,7 +1127,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     try {
       const exported = await downloadAllBots();
       track("team_exported", { members: exported.members, scope: "all_visible" });
-      setTeamFeedback({ error: false, text: `${exported.members} bots exported` });
+      setTeamFeedback({ error: false, text: t("{count} bots exported", { count: exported.members }) });
     } catch (cause) {
       setTeamFeedback({
         error: true,
@@ -1179,7 +1186,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
       for (const response of restoredChiefs) dispatch({ type: "botPatched", bot: response.bot });
       const first = result.archived[0];
       if (first) dispatch({ type: "select", id: first.id });
-      setTeamFeedback({ error: false, text: "Previous team restored" });
+      setTeamFeedback({ error: false, text: t("Previous team restored") });
     } catch (cause) {
       setTeamFeedback({ error: true, text: cause instanceof Error ? cause.message : String(cause) });
     }
@@ -1201,7 +1208,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
       }
       setTeamFeedback({
         error: false,
-        text: `${bot.name} archived`,
+        text: t("{name} archived", { name: bot.name }),
         restoreBot: { id: bot.id, name: bot.name },
       });
     } catch (cause) {
@@ -1218,7 +1225,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
       });
       dispatch({ type: "botPatched", bot: response.bot });
       dispatch({ type: "select", id: bot.id });
-      setTeamFeedback({ error: false, text: `${bot.name} restored` });
+      setTeamFeedback({ error: false, text: t("{name} restored", { name: bot.name }) });
     } catch (cause) {
       setTeamFeedback({ error: true, text: cause instanceof Error ? cause.message : String(cause) });
     }
@@ -1305,7 +1312,11 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     const position = visibleOrder.indexOf(id);
     if (position < 0) return;
     setReorderAnnouncement(
-      `${sidebarSectionLabel(id)} moved to position ${position + 1} of ${visibleOrder.length}`,
+      t("{name} moved to position {position} of {total}", {
+        name: sidebarSectionLabel(id),
+        position: position + 1,
+        total: visibleOrder.length,
+      }),
     );
   };
 
@@ -1356,7 +1367,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
 
   return (
     <aside
-      aria-label="Bots and navigation"
+      aria-label={t("Bots and navigation")}
       data-native-view-overlay
       className={cn(
         "flex h-full shrink-0 flex-col border-r border-hairline/40 bg-panel transition-[width] duration-200",
@@ -1394,9 +1405,9 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           <button
             type="button"
             onClick={toggleCollapsed}
-            aria-label={density === "icons" ? "Expand sidebar" : "Collapse sidebar to avatars"}
+            aria-label={density === "icons" ? t("Expand sidebar") : t("Collapse sidebar to avatars")}
             className="flex size-10 items-center justify-center rounded-md text-ink-secondary hover:bg-raised hover:text-ink"
-            title={density === "icons" ? "Expand sidebar" : "Collapse to avatars"}
+            title={density === "icons" ? t("Expand sidebar") : t("Collapse to avatars")}
           >
             {density === "icons" ? <PanelLeftOpen size={20} /> : <PanelLeftClose size={20} />}
           </button>
@@ -1404,10 +1415,10 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
             <button
               type="button"
               onClick={() => setDensityOpen((value) => !value)}
-              aria-label="Choose sidebar density"
+              aria-label={t("Choose sidebar density")}
               aria-expanded={densityOpen}
               className="flex size-10 items-center justify-center rounded-md text-ink-secondary hover:bg-raised hover:text-ink"
-              title="Sidebar density"
+              title={t("Sidebar density")}
             >
               <span aria-hidden="true" className="flex size-5 flex-col items-center justify-center gap-[3px]">
                 <span className="h-px w-3.5 rounded-full bg-current" />
@@ -1432,7 +1443,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                         density === option ? "text-accent" : "text-ink",
                       )}
                     >
-                      {option === "icons" ? "Avatars only" : option}
+                      {option === "icons" ? t("Avatars only") : option === "compact" ? t("Compact") : t("Comfortable")}
                       {density === option && <Check size={14} />}
                     </button>
                   ))}
@@ -1443,9 +1454,9 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           <button
             ref={importReturnRef}
             onClick={() => setPlusOpen((o) => !o)}
-            aria-label="New or share"
+            aria-label={t("New or share")}
             className="flex size-10 items-center justify-center rounded-md text-ink-secondary hover:bg-raised hover:text-ink"
-            title="New or share"
+            title={t("New or share")}
           >
             <Plus size={20} strokeWidth={2} />
           </button>
@@ -1465,7 +1476,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                   className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
                 >
                   <BotIcon size={16} className="text-ink-secondary" />
-                  New Bot
+                  {t("New Bot")}
                 </button>
                 <button
                   onClick={() => {
@@ -1475,7 +1486,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                   className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
                 >
                   <Users size={16} className="text-ink-secondary" />
-                  New Channel
+                  {t("New Channel")}
                 </button>
                 <button
                   onClick={() => {
@@ -1486,7 +1497,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                   className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
                 >
                   {exportingTeam ? <Loader2 size={16} className="animate-spin text-ink-secondary" /> : <ArrowDownToLine size={16} className="text-ink-secondary" />}
-                  {exportingTeam ? "Exporting…" : "Export all bots"}
+                  {exportingTeam ? t("Exporting…") : t("Export all bots")}
                 </button>
                 <button
                   onClick={() => {
@@ -1496,7 +1507,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                   className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
                 >
                   <Library size={16} className="text-ink-secondary" />
-                  Teams
+                  {t("Teams")}
                 </button>
                 {archivedBots.length > 0 && (
                   <button
@@ -1507,7 +1518,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                     className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
                   >
                     <Archive size={16} className="text-ink-secondary" />
-                    <span className="flex-1">Archived bots</span>
+                    <span className="flex-1">{t("Archived bots")}</span>
                     <span className="text-[11.5px] text-ink-secondary">{archivedBots.length}</span>
                   </button>
                 )}
@@ -1525,8 +1536,8 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => e.key === "Escape" && setQuery("")}
-            placeholder="Search"
-            aria-label="Search bots and messages"
+            placeholder={t("Search")}
+            aria-label={t("Search bots and messages")}
             className="w-full bg-transparent text-[14px] text-ink placeholder:text-ink-secondary focus:outline-none"
           />
         </div>
@@ -1536,7 +1547,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
       <div className="flex-1 overflow-y-auto px-2">
         <div className="flex flex-col gap-0.5">
           {matchingBots.length === 0 && visibleGroups.length === 0 && q && q.length < MIN_QUERY && (
-            <div className="px-3 py-6 text-center text-[13px] text-ink-secondary">Nothing matches “{query}”</div>
+            <div className="px-3 py-6 text-center text-[13px] text-ink-secondary">{t("Nothing matches “{query}”", { query })}</div>
           )}
           {unsectionedChief && (
             <div className="mb-1.5">
@@ -1659,8 +1670,8 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
       <div className={cn("pb-3 pt-2", density === "icons" ? "px-2" : "px-3")}>
         <button
           onClick={() => dispatch({ type: "showTeamMap" })}
-          aria-label={density === "icons" ? "Team map" : undefined}
-          title={density === "icons" ? "Team map" : undefined}
+          aria-label={density === "icons" ? t("Team map") : undefined}
+          title={density === "icons" ? t("Team map") : undefined}
           className={cn(
             "flex min-h-10 w-full items-center rounded-xl py-2 text-left transition-colors",
             density === "icons" ? "justify-center px-2" : "gap-3 px-3",
@@ -1668,13 +1679,13 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           )}
         >
           <Network size={20} className={state.activeView === "team-map" ? "text-accent" : "text-ink-secondary"} />
-          <span className={cn("flex-1 text-[14px]", density === "icons" && "hidden")}>Team map</span>
+          <span className={cn("flex-1 text-[14px]", density === "icons" && "hidden")}>{t("Team map")}</span>
         </button>
         {skillRecorderEnabled(state.config) && (
           <button
             onClick={() => dispatch({ type: "showSkillRecorder" })}
-            aria-label={density === "icons" ? "Teach a skill" : undefined}
-            title={density === "icons" ? "Teach a skill" : undefined}
+            aria-label={density === "icons" ? t("Teach a skill") : undefined}
+            title={density === "icons" ? t("Teach a skill") : undefined}
             className={cn(
               "flex min-h-10 w-full items-center rounded-xl py-2 text-left transition-colors",
               density === "icons" ? "justify-center px-2" : "gap-3 px-3",
@@ -1682,13 +1693,13 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
             )}
           >
             <Sparkles size={20} className={state.activeView === "skill-recorder" ? "text-accent" : "text-ink-secondary"} />
-            <span className={cn("flex-1 text-[14px]", density === "icons" && "hidden")}>Teach a skill</span>
+            <span className={cn("flex-1 text-[14px]", density === "icons" && "hidden")}>{t("Teach a skill")}</span>
           </button>
         )}
         <button
           onClick={() => dispatch({ type: "showRoutines" })}
-          aria-label={density === "icons" ? "Calendar" : undefined}
-          title={density === "icons" ? "Calendar" : undefined}
+          aria-label={density === "icons" ? t("Calendar") : undefined}
+          title={density === "icons" ? t("Calendar") : undefined}
           className={cn(
             "flex min-h-10 w-full items-center rounded-xl py-2 text-left transition-colors",
             density === "icons" ? "justify-center px-2" : "gap-3 px-3",
@@ -1696,7 +1707,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           )}
         >
           <CalendarDays size={20} className={state.activeView === "routines" ? "text-accent" : "text-ink-secondary"} />
-          <span className={cn("flex-1 text-[14px]", density === "icons" && "hidden")}>Calendar</span>
+          <span className={cn("flex-1 text-[14px]", density === "icons" && "hidden")}>{t("Calendar")}</span>
           {state.routineRuns.some((run) => ["failed", "missed"].includes(run.status) && !run.seenAt) && (
             <span className="size-2 rounded-full bg-danger" />
           )}
@@ -1704,11 +1715,11 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         <button
           onClick={() => dispatch({ type: "togglePlugins", open: true })}
           className={cn("flex min-h-10 w-full items-center rounded-xl py-2 text-left hover:bg-raised/50", density === "icons" ? "justify-center px-2" : "gap-3 px-3")}
-          aria-label={density === "icons" ? "Connected apps" : undefined}
-          title={density === "icons" ? "Connected apps" : undefined}
+          aria-label={density === "icons" ? t("Connected apps") : undefined}
+          title={density === "icons" ? t("Connected apps") : undefined}
         >
           <Puzzle size={20} className="text-ink-secondary" />
-          <span className={cn("text-[14px] text-ink", density === "icons" && "hidden")}>Connected apps</span>
+          <span className={cn("text-[14px] text-ink", density === "icons" && "hidden")}>{t("Connected apps")}</span>
         </button>
         {density === "icons" && (
           <SidebarPhoneButton
@@ -1720,12 +1731,12 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           <button
             onClick={() => dispatch({ type: "toggleAppSettings" })}
             className={cn("flex min-w-0 items-center rounded-xl py-2 text-left hover:bg-raised/50", density === "icons" ? "justify-center px-2" : "flex-1 gap-3 px-3")}
-            aria-label={density === "icons" ? "App settings" : undefined}
-            title={density === "icons" ? (state.config?.profile?.name?.trim() || "App settings") : undefined}
+            aria-label={density === "icons" ? t("App settings") : undefined}
+            title={density === "icons" ? (state.config?.profile?.name?.trim() || t("App settings")) : undefined}
           >
             <InitialsAvatar initials={profileInitials(state.config?.profile)} size={28} />
             <span className={cn("truncate text-[14px] text-ink", density === "icons" && "hidden")}>
-              {state.config?.profile?.name?.trim() || state.config?.profile?.email?.trim() || "You"}
+              {state.config?.profile?.name?.trim() || state.config?.profile?.email?.trim() || t("You")}
             </span>
           </button>
           {density !== "icons" && (
@@ -1738,7 +1749,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           {density !== "icons" && <button
             onClick={() => dispatch({ type: "toggleAppSettings" })}
             className="flex size-10 items-center justify-center rounded-md text-ink-secondary hover:bg-raised hover:text-ink"
-            title="App settings"
+            title={t("App settings")}
           >
             <Settings size={18} />
           </button>}
@@ -1802,12 +1813,12 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
               result.archived.length > 0
                 ? {
                     error: false,
-                    text: `${result.name} loaded · ${result.members} ${result.members === 1 ? "bot" : "bots"}`,
+                    text: tn(result.members, "{name} loaded · {count} bot", "{name} loaded · {count} bots", { name: result.name }),
                     undo: result,
                   }
                 : {
                     error: false,
-                    text: `${result.name} loaded · ${result.members} ${result.members === 1 ? "bot" : "bots"}`,
+                    text: tn(result.members, "{name} loaded · {count} bot", "{name} loaded · {count} bots", { name: result.name }),
                   },
             );
           }}
@@ -1831,7 +1842,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                   onClick={() => void undoTeamLoad(pendingTeamUndo)}
                   className="rounded-md px-1.5 py-0.5 font-medium text-accent hover:bg-raised"
                 >
-                  Undo
+                  {t("Undo")}
                 </button>
               )}
               {pendingBotUndo && (
@@ -1839,7 +1850,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                   onClick={() => void undoBotArchive(pendingBotUndo)}
                   className="rounded-md px-1.5 py-0.5 font-medium text-accent hover:bg-raised"
                 >
-                  Undo
+                  {t("Undo")}
                 </button>
               )}
             </div>

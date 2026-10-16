@@ -1,4 +1,5 @@
 import { CURSOR_STATES, type CursorState } from "@/components/CursorAvatar";
+import { msg } from "@/lib/i18n";
 
 /** The mascot's behaviour vocabulary — CursorAvatar's 39 states, under the
  * app's historical names. */
@@ -45,17 +46,18 @@ export const STATE_GROUPS = {
   ],
 } satisfies Record<string, MausState[]>;
 
+// Stored identifiers; msg() only marks them so the picker can show t(color).
 export const MAUS_COLOR_NAMES = [
-  "green",
-  "blue",
-  "red",
-  "orange",
-  "purple",
-  "cyan",
-  "pink",
-  "yellow",
-  "teal",
-  "coral",
+  msg("green"),
+  msg("blue"),
+  msg("red"),
+  msg("orange"),
+  msg("purple"),
+  msg("cyan"),
+  msg("pink"),
+  msg("yellow"),
+  msg("teal"),
+  msg("coral"),
 ] as const;
 
 export type MausColor = (typeof MAUS_COLOR_NAMES)[number];
@@ -136,16 +138,17 @@ export function normalizeState(value: string | null | undefined): MausState | nu
  * state per face, chosen for the clearest name. Every swatch looks different.
  */
 export const PICKABLE_STATES: MausState[] = [
-  "idle", // expression 0
-  "happy", // 2
-  "curious", // 3
-  "drowsy", // 4
-  "working", // 7
-  "thinking", // 8
-  "listening", // 10
-  "sleeping", // 13
-  "suspicious", // 14
-  "proud", // 15
+  // stored identifiers; msg() only marks them for the picker's t(state)
+  msg("idle"), // expression 0
+  msg("happy"), // 2
+  msg("curious"), // 3
+  msg("drowsy"), // 4
+  msg("working"), // 7
+  msg("thinking"), // 8
+  msg("listening"), // 10
+  msg("sleeping"), // 13
+  msg("suspicious"), // 14
+  msg("proud"), // 15
 ];
 
 type MascotMessage = {

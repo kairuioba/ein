@@ -49,6 +49,7 @@ import { z } from "zod";
 import { writeFileAtomic } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
 import { redactSecretsInText } from "./redact.ts";
+import { t } from "../shared/i18n.ts";
 import { LEARN_SOURCE_PREFIX } from "./skill-learn.ts";
 import { workspaceDir } from "./workspace.ts";
 
@@ -118,15 +119,15 @@ export function parseSkillMd(raw: string): ParsedSkill | { error: string } {
 export function scanSkillText(raw: string): string[] {
   const warnings: string[] = [];
   if (/[A-Za-z0-9+/]{120,}={0,2}/.test(raw)) {
-    warnings.push("contains a long base64-looking blob — a common wrapper for hidden instructions or payloads");
+    warnings.push(t("contains a long base64-looking blob — a common wrapper for hidden instructions or payloads"));
   }
   if (/\b(curl|wget)\b[^\n]{0,200}\|\s*(ba|z|da)?sh\b/.test(raw)) {
-    warnings.push("pipes a download straight into a shell (curl|sh) — never enable without understanding why");
+    warnings.push(t("pipes a download straight into a shell (curl|sh) — never enable without understanding why"));
   }
   // zero-width and bidi-control characters hide text from the reviewer while
   // the model still reads it — the invisible-instruction trick
   if (/[\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]/.test(raw)) {
-    warnings.push("contains invisible Unicode characters (zero-width or bidi controls) — text you cannot see");
+    warnings.push(t("contains invisible Unicode characters (zero-width or bidi controls) — text you cannot see"));
   }
   return warnings;
 }
@@ -507,7 +508,7 @@ function skillListing(botId: string, name: string, entry: SkillManifestEntry): S
     enabled: entry.enabled && intact,
     warnings: intact
       ? visible.warnings
-      : [...visible.warnings, "stored SKILL.md changed after review — enablement is blocked"],
+      : [...visible.warnings, t("stored SKILL.md changed after review — enablement is blocked")],
   };
 }
 
@@ -565,12 +566,12 @@ export function installSkill(
 }
 
 export function setSkillEnabled(botId: string, name: string, enabled: boolean): SkillListing | { error: string } {
-  if (!isSkillName(name)) return { error: "invalid skill name" };
+  if (!isSkillName(name)) return { error: t("invalid skill name") };
   const manifest = readManifest(botId);
   const entry = manifest[name];
-  if (!entry) return { error: `no imported skill named "${name}"` };
+  if (!entry) return { error: t('no imported skill named "{name}"', { name }) };
   if (enabled && !skillContentMatches(botId, name, entry.sha256)) {
-    return { error: "stored SKILL.md changed after review — remove and import or learn it again" };
+    return { error: t("stored SKILL.md changed after review — remove and import or learn it again") };
   }
   entry.enabled = enabled;
   writeManifest(botId, manifest);
@@ -579,12 +580,12 @@ export function setSkillEnabled(botId: string, name: string, enabled: boolean): 
 }
 
 export function removeSkill(botId: string, name: string): { removed: true } | { error: string } {
-  if (!isSkillName(name)) return { error: "invalid skill name" };
+  if (!isSkillName(name)) return { error: t("invalid skill name") };
   const manifest = readManifest(botId);
-  if (!manifest[name]) return { error: `no imported skill named "${name}"` };
+  if (!manifest[name]) return { error: t('no imported skill named "{name}"', { name }) };
   const root = skillsDir(botId);
   if (directoryEntryState(root) === "unsafe") {
-    return { error: "the workspace skills path is a symlink or file; refusing to remove through it" };
+    return { error: t("the workspace skills path is a symlink or file; refusing to remove through it") };
   }
   const target = join(root, name);
   const targetState = directoryEntryState(target);
@@ -700,7 +701,7 @@ function preparedSkillFiles(
   ];
   const warnings = [
     ...scanSkillText(skillMd.content),
-    ...skippedFiles.map((path) => `skipped supporting file "${path}" — v1 imports only SKILL.md`),
+    ...skippedFiles.map((path) => t('skipped supporting file "{path}" — v1 imports only SKILL.md', { path })),
   ];
   return { files: [{ path: "SKILL.md", content: skillMd.content }], parsed, warnings, skippedFiles };
 }
@@ -775,12 +776,12 @@ function installPreparedSkill(
   if (existing) {
     if (options.appliedStageId && existing.appliedStageId === options.appliedStageId) {
       if (existing.sha256 !== sha256 || !installedLearnedSkillMatches(botId, name, sha256)) {
-        return { error: "the installed learned skill no longer matches the reviewed content" };
+        return { error: t("the installed learned skill no longer matches the reviewed content") };
       }
       syncSkillLinks(botId);
       return skillListing(botId, name, existing);
     }
-    return { error: `a skill named "${name}" is already imported — choose a different name` };
+    return { error: t('a skill named "{name}" is already imported — choose a different name', { name }) };
   }
   const entry: SkillManifestEntry = {
     description: prepared.parsed.description,
@@ -914,12 +915,12 @@ export function applyStagedSkillWrite(
 ): SkillListing | { error: string } {
   const store = readStaged(botId);
   const staged = store.writes[id];
-  if (!staged) return { error: "no such staged skill" };
+  if (!staged) return { error: t("no such staged skill") };
   const prepared = preparedLearnedSkill(staged.files);
   if ("error" in prepared) return prepared;
   const sha256 = createHash("sha256").update(prepared.files[0]!.content).digest("hex");
   if (sha256 !== staged.sha256 || (options.expectedSha256 && sha256 !== options.expectedSha256)) {
-    return { error: "the staged skill changed after review — create a new proposal" };
+    return { error: t("the staged skill changed after review — create a new proposal") };
   }
   const installed = installPreparedSkill(botId, staged.source, prepared, {
     enabled: true,

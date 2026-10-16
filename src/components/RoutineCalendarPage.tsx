@@ -47,6 +47,7 @@ import {
   intakeFiles,
   type Attachment,
 } from "@/lib/composer-attachments";
+import { intlLocale, msg, t, tn } from "@/lib/i18n";
 import { MAUS_COLORS, type MausState } from "@/lib/mascot";
 import {
   addDays,
@@ -75,11 +76,20 @@ import type {
 import { api, useStore, type Bot } from "@/state/store";
 
 const HOUR_HEIGHT = 64;
-const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
 const WEEKDAYS = [1, 2, 3, 4, 5];
 const BOT_DRAG_TYPE = "application/x-openmaus-bot";
 const EVENT_DRAG_TYPE = "application/x-openmaus-calendar-event";
+/** Run status as shown on event cards and details ("waiting" reads as "needs you"). */
+const RUN_STATUS_TEXT: Record<RoutineRunStatus, string> = {
+  queued: msg("queued"),
+  running: msg("running"),
+  waiting: msg("needs you"),
+  completed: msg("completed"),
+  failed: msg("failed"),
+  cancelled: msg("cancelled"),
+  missed: msg("missed"),
+};
 
 type EventKind = "routine" | "call";
 type RecurrenceChoice = "none" | "daily" | "weekdays" | "weekly" | "custom";
@@ -114,24 +124,30 @@ function nextHour(): number {
 }
 
 function niceTime(at: number): string {
-  return new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return new Date(at).toLocaleTimeString(intlLocale(), { hour: "numeric", minute: "2-digit" });
 }
 
 function niceDate(at: number): string {
-  return new Date(at).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
+  return new Date(at).toLocaleDateString(intlLocale(), { weekday: "long", month: "long", day: "numeric" });
+}
+
+/** Localized weekday name for a getDay() index (0 = Sunday). */
+function weekdayName(day: number, width: "short" | "narrow" = "short"): string {
+  // 1 January 2023 was a Sunday.
+  return new Intl.DateTimeFormat(intlLocale(), { weekday: width }).format(new Date(2023, 0, 1 + day));
 }
 
 function scheduleLabel(schedule: RoutineSchedule | CalendarCall["schedule"]): string {
-  if (schedule.type === "once") return `${niceDate(schedule.at)}, ${niceTime(schedule.at)}`;
+  if (schedule.type === "once") return t("{date}, {time}", { date: niceDate(schedule.at), time: niceTime(schedule.at) });
   const days = schedule.weekdays;
   const label = days.length === 7
-    ? "Every day"
+    ? t("Every day")
     : days.join(",") === "1,2,3,4,5"
-      ? "Every weekday"
+      ? t("Every weekday")
       : days.length === 1
-        ? `Weekly on ${DAY_NAMES[days[0]!]}`
-        : days.map((day) => DAY_NAMES[day]).join(", ");
-  return `${label} at ${niceTime(atLocalTime(Date.now(), schedule.time))}`;
+        ? t("Weekly on {day}", { day: weekdayName(days[0]!) })
+        : new Intl.ListFormat(intlLocale(), { style: "narrow", type: "conjunction" }).format(days.map((day) => weekdayName(day)));
+  return t("{schedule} at {time}", { schedule: label, time: niceTime(atLocalTime(Date.now(), schedule.time)) });
 }
 
 function recurrenceFor(schedule: RoutineSchedule | CalendarCall["schedule"], at: number): RecurrenceChoice {
@@ -197,7 +213,7 @@ function AttachmentChips({
         <div key={attachment.id} className="flex max-w-[260px] items-center gap-2 rounded-lg border border-hairline/50 bg-inset px-2.5 py-2 text-[12px] text-ink">
           <FileText size={14} className="shrink-0 text-accent" />
           <span className="min-w-0 flex-1 truncate">{attachment.name}</span>
-          {onRemove && <button type="button" onClick={() => onRemove(attachment.id)} className="rounded p-0.5 text-ink-secondary hover:bg-raised hover:text-ink" aria-label={`Remove ${attachment.name}`}><X size={12} /></button>}
+          {onRemove && <button type="button" onClick={() => onRemove(attachment.id)} className="rounded p-0.5 text-ink-secondary hover:bg-raised hover:text-ink" aria-label={t("Remove {name}", { name: attachment.name })}><X size={12} /></button>}
         </div>
       ))}
     </div>
@@ -224,7 +240,7 @@ function BotPicker({
       {!locked && bots.length > 5 && (
         <label className="mb-2 flex items-center gap-2 rounded-lg bg-panel px-2.5 py-2 text-ink-secondary">
           <Search size={14} />
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Find a bot" className="min-w-0 flex-1 bg-transparent text-[12px] text-ink outline-none placeholder:text-ink-secondary/60" />
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("Find a bot")} className="min-w-0 flex-1 bg-transparent text-[12px] text-ink outline-none placeholder:text-ink-secondary/60" />
         </label>
       )}
       <div className="grid max-h-48 grid-cols-1 gap-1 overflow-y-auto sm:grid-cols-2">
@@ -372,23 +388,23 @@ function EventEditor({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-3 backdrop-blur-sm" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <div role="dialog" aria-modal="true" aria-label={existingRoutine || existingCall ? "Edit calendar event" : "Create calendar event"} className="max-h-[94vh] w-full max-w-[760px] overflow-y-auto rounded-2xl border border-hairline/60 bg-panel shadow-2xl">
+      <div role="dialog" aria-modal="true" aria-label={existingRoutine || existingCall ? t("Edit calendar event") : t("Create calendar event")} className="max-h-[94vh] w-full max-w-[760px] overflow-y-auto rounded-2xl border border-hairline/60 bg-panel shadow-2xl">
         <div className="sticky top-0 z-20 flex items-center justify-between border-b border-hairline/40 bg-panel/95 px-5 py-3.5 backdrop-blur">
-          <div className="text-[15px] font-semibold text-ink">{existingRoutine || existingCall ? "Edit event" : "New event"}</div>
-          <button onClick={onClose} className="rounded-full p-2 text-ink-secondary hover:bg-raised hover:text-ink" aria-label="Close"><X size={18} /></button>
+          <div className="text-[15px] font-semibold text-ink">{existingRoutine || existingCall ? t("Edit event") : t("New event")}</div>
+          <button onClick={onClose} className="rounded-full p-2 text-ink-secondary hover:bg-raised hover:text-ink" aria-label={t("Close")}><X size={18} /></button>
         </div>
 
         <div className="space-y-5 px-5 py-5 sm:px-8">
           {canSwitchKind && (
             <div className="ml-10 inline-flex rounded-lg bg-inset p-1">
-              <button type="button" onClick={() => { setKind("routine"); setBotIds((ids) => ids.slice(0, 1)); }} className={cn("rounded-md px-4 py-1.5 text-[12.5px] font-medium", kind === "routine" ? "bg-raised text-ink shadow" : "text-ink-secondary")}>Routine</button>
-              <button type="button" onClick={() => setKind("call")} className={cn("rounded-md px-4 py-1.5 text-[12.5px] font-medium", kind === "call" ? "bg-raised text-ink shadow" : "text-ink-secondary")}>Call</button>
+              <button type="button" onClick={() => { setKind("routine"); setBotIds((ids) => ids.slice(0, 1)); }} className={cn("rounded-md px-4 py-1.5 text-[12.5px] font-medium", kind === "routine" ? "bg-raised text-ink shadow" : "text-ink-secondary")}>{t("Routine")}</button>
+              <button type="button" onClick={() => setKind("call")} className={cn("rounded-md px-4 py-1.5 text-[12.5px] font-medium", kind === "call" ? "bg-raised text-ink shadow" : "text-ink-secondary")}>{t("Call")}</button>
             </div>
           )}
 
           <div className="flex items-start gap-4">
             <span className="mt-3 size-4 shrink-0 rounded bg-accent" />
-            <input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder={kind === "routine" ? "Add title" : "Add call title"} className="min-w-0 flex-1 border-b border-hairline/60 bg-transparent px-1 pb-2 text-[22px] font-medium text-ink outline-none placeholder:text-ink-secondary/55 focus:border-accent" />
+            <input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder={kind === "routine" ? t("Add title") : t("Add call title")} className="min-w-0 flex-1 border-b border-hairline/60 bg-transparent px-1 pb-2 text-[22px] font-medium text-ink outline-none placeholder:text-ink-secondary/55 focus:border-accent" />
           </div>
 
           <div className="flex items-start gap-4">
@@ -397,25 +413,25 @@ function EventEditor({
               <div className="flex flex-wrap items-center gap-2">
                 <input type="date" value={date} onChange={(event) => setDate(event.target.value)} className="rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[13px] text-ink outline-none focus:border-accent [color-scheme:dark]" />
                 <input type="time" step={900} value={startTime} onChange={(event) => setStartTime(event.target.value)} className="rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[13px] text-ink outline-none focus:border-accent [color-scheme:dark]" />
-                <span className="text-[12px] text-ink-secondary">to</span>
+                <span className="text-[12px] text-ink-secondary">{t("to")}</span>
                 <span className="rounded-lg border border-hairline/40 bg-inset/60 px-3 py-2 text-[13px] text-ink">{niceTime(endAt)}</span>
                 <select value={durationMinutes} onChange={(event) => setDurationMinutes(Number(event.target.value))} className="rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[12px] text-ink outline-none focus:border-accent">
-                  {[15, 30, 45, 60, 90, 120, 180, 240].map((minutes) => <option key={minutes} value={minutes}>{minutes < 60 ? `${minutes} min` : `${minutes / 60} hr`}</option>)}
+                  {[15, 30, 45, 60, 90, 120, 180, 240].map((minutes) => <option key={minutes} value={minutes}>{minutes < 60 ? t("{minutes} min", { minutes }) : t("{hours} hr", { hours: minutes / 60 })}</option>)}
                 </select>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <Repeat2 size={14} className="text-ink-secondary" />
                 <select value={recurrence} onChange={(event) => setRecurrence(event.target.value as RecurrenceChoice)} className="rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[12.5px] text-ink outline-none focus:border-accent">
-                  <option value="none">Does not repeat</option>
-                  <option value="daily">Daily</option>
-                  <option value="weekdays">Every weekday (Monday to Friday)</option>
-                  <option value="weekly">Weekly on {DAY_NAMES[new Date(at).getDay()]}</option>
-                  <option value="custom">Custom…</option>
+                  <option value="none">{t("Does not repeat")}</option>
+                  <option value="daily">{t("Daily")}</option>
+                  <option value="weekdays">{t("Every weekday (Monday to Friday)")}</option>
+                  <option value="weekly">{t("Weekly on {day}", { day: weekdayName(new Date(at).getDay()) })}</option>
+                  <option value="custom">{t("Custom…")}</option>
                 </select>
               </div>
               {recurrence === "custom" && (
                 <div className="flex flex-wrap gap-1.5">
-                  {DAY_NAMES.map((label, day) => <button key={label} type="button" onClick={() => setWeekdays((current) => current.includes(day) ? (current.length === 1 ? current : current.filter((value) => value !== day)) : [...current, day].sort())} className={cn("size-8 rounded-full text-[10px] font-semibold", weekdays.includes(day) ? "bg-accent text-white" : "bg-inset text-ink-secondary hover:bg-raised hover:text-ink")}>{label[0]}</button>)}
+                  {ALL_DAYS.map((day) => <button key={day} type="button" onClick={() => setWeekdays((current) => current.includes(day) ? (current.length === 1 ? current : current.filter((value) => value !== day)) : [...current, day].sort())} className={cn("size-8 rounded-full text-[10px] font-semibold", weekdays.includes(day) ? "bg-accent text-white" : "bg-inset text-ink-secondary hover:bg-raised hover:text-ink")}>{weekdayName(day, "narrow")}</button>)}
                 </div>
               )}
             </div>
@@ -424,16 +440,16 @@ function EventEditor({
           <div className="flex items-start gap-4">
             <UserRoundPlus size={18} className="mt-2.5 shrink-0 text-ink-secondary" />
             <div className="min-w-0 flex-1">
-              <div className="mb-2 text-[12.5px] font-medium text-ink">{kind === "routine" ? "Assign a bot" : "Add guests"}</div>
+              <div className="mb-2 text-[12.5px] font-medium text-ink">{kind === "routine" ? t("Assign a bot") : t("Add guests")}</div>
               {bots.length > 0 ? (
                 <>
                   <BotPicker bots={bots} selected={botIds} multiple={kind === "call"} locked={Boolean(lockedBotId)} onChange={setBotIds} />
-                  <div className="mt-2 text-[11.5px] text-ink-secondary">{kind === "routine" ? "This bot owns each scheduled run." : `${selectedBots.length || "No"} bot${selectedBots.length === 1 ? "" : "s"} invited to the call.`}</div>
+                  <div className="mt-2 text-[11.5px] text-ink-secondary">{kind === "routine" ? t("This bot owns each scheduled run.") : selectedBots.length ? tn(selectedBots.length, "{count} bot invited to the call.", "{count} bots invited to the call.") : t("No bots invited to the call.")}</div>
                 </>
               ) : (
                 <button type="button" onClick={() => { dispatch({ type: "newBot" }); onClose(); }} className="w-full rounded-xl border border-dashed border-accent/45 bg-accent/[0.06] px-4 py-4 text-left hover:bg-accent/10">
-                  <div className="text-[12.5px] font-medium text-accent">Create your first bot</div>
-                  <div className="mt-1 text-[11.5px] text-ink-secondary">A calendar event needs at least one bot.</div>
+                  <div className="text-[12.5px] font-medium text-accent">{t("Create your first bot")}</div>
+                  <div className="mt-1 text-[11.5px] text-ink-secondary">{t("A calendar event needs at least one bot.")}</div>
                 </button>
               )}
             </div>
@@ -441,21 +457,21 @@ function EventEditor({
 
           <div className="flex items-start gap-4">
             <FileText size={18} className="mt-2.5 shrink-0 text-ink-secondary" />
-            <textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={5} placeholder={kind === "routine" ? "Add instructions for the bot" : "Add description or agenda"} className="min-w-0 flex-1 resize-y rounded-xl border border-hairline/50 bg-inset px-3.5 py-3 text-[13px] leading-relaxed text-ink outline-none placeholder:text-ink-secondary/55 focus:border-accent" />
+            <textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={5} placeholder={kind === "routine" ? t("Add instructions for the bot") : t("Add description or agenda")} className="min-w-0 flex-1 resize-y rounded-xl border border-hairline/50 bg-inset px-3.5 py-3 text-[13px] leading-relaxed text-ink outline-none placeholder:text-ink-secondary/55 focus:border-accent" />
           </div>
 
           <div className="flex items-start gap-4">
             <Paperclip size={18} className="mt-2.5 shrink-0 text-ink-secondary" />
             <div className="min-w-0 flex-1 space-y-2">
               <input ref={fileInput} type="file" multiple className="hidden" onChange={(event) => { void pickFiles(event.target.files); event.target.value = ""; }} />
-              <button type="button" onClick={() => fileInput.current?.click()} className="rounded-lg border border-hairline/50 px-3 py-2 text-[12.5px] font-medium text-ink hover:bg-raised">Add attachment</button>
+              <button type="button" onClick={() => fileInput.current?.click()} className="rounded-lg border border-hairline/50 px-3 py-2 text-[12.5px] font-medium text-ink hover:bg-raised">{t("Add attachment")}</button>
               <AttachmentChips attachments={attachments} onRemove={(id) => setAttachments((current) => current.filter((attachment) => attachment.id !== id))} />
               <div className="text-[11px] leading-relaxed text-ink-secondary">
                 {kind === "routine"
-                  ? "Attachments are passed to each local routine run and excluded from shared team files."
+                  ? t("Attachments are passed to each local routine run and excluded from shared team files.")
                   : selectedBots.length > 1
-                    ? "References will be shared in the room when the event starts."
-                    : "References stay with the event and are available when you join the room."}
+                    ? t("References will be shared in the room when the event starts.")
+                    : t("References stay with the event and are available when you join the room.")}
               </div>
               {attachmentNotice && <div className="text-[11.5px] text-warning">{attachmentNotice}</div>}
             </div>
@@ -466,8 +482,8 @@ function EventEditor({
               {runOn === "cloud" ? <Cloud size={18} className="mt-2.5 shrink-0 text-ink-secondary" /> : <Laptop size={18} className="mt-2.5 shrink-0 text-ink-secondary" />}
               <div className="min-w-0 flex-1">
                 <div className="grid grid-cols-2 gap-2">
-                  <button type="button" onClick={() => setRunOn("maus")} className={cn("rounded-xl border p-3 text-left", runOn === "maus" ? "border-accent/60 bg-accent/10" : "border-hairline/50 bg-inset hover:bg-raised")}><div className="text-[12.5px] font-medium text-ink">This computer</div><div className="mt-1 text-[11px] text-ink-secondary">Uses the bot’s current model and tools.</div></button>
-                  <button type="button" disabled={!cloudReady || attachments.length > 0} onClick={() => setRunOn("cloud")} className={cn("rounded-xl border p-3 text-left disabled:cursor-not-allowed disabled:opacity-45", runOn === "cloud" ? "border-accent/60 bg-accent/10" : "border-hairline/50 bg-inset hover:bg-raised")}><div className="text-[12.5px] font-medium text-ink">Cloud VM</div><div className="mt-1 text-[11px] text-ink-secondary">Uses your connected cloud VM; OpenMausBot must stay running to launch it.</div></button>
+                  <button type="button" onClick={() => setRunOn("maus")} className={cn("rounded-xl border p-3 text-left", runOn === "maus" ? "border-accent/60 bg-accent/10" : "border-hairline/50 bg-inset hover:bg-raised")}><div className="text-[12.5px] font-medium text-ink">{t("This computer")}</div><div className="mt-1 text-[11px] text-ink-secondary">{t("Uses the bot’s current model and tools.")}</div></button>
+                  <button type="button" disabled={!cloudReady || attachments.length > 0} onClick={() => setRunOn("cloud")} className={cn("rounded-xl border p-3 text-left disabled:cursor-not-allowed disabled:opacity-45", runOn === "cloud" ? "border-accent/60 bg-accent/10" : "border-hairline/50 bg-inset hover:bg-raised")}><div className="text-[12.5px] font-medium text-ink">{t("Cloud VM")}</div><div className="mt-1 text-[11px] text-ink-secondary">{t("Uses your connected cloud VM; OpenMausBot must stay running to launch it.")}</div></button>
                 </div>
               </div>
             </div>
@@ -477,8 +493,8 @@ function EventEditor({
         </div>
 
         <div className="sticky bottom-0 flex items-center justify-end gap-2 border-t border-hairline/40 bg-panel/95 px-5 py-3.5 backdrop-blur">
-          <button onClick={onClose} className="rounded-lg px-4 py-2 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink">Cancel</button>
-          <button onClick={save} disabled={saving || !valid} className="flex items-center gap-2 rounded-lg bg-accent px-5 py-2 text-[12.5px] font-semibold text-white hover:brightness-110 disabled:opacity-40">{saving && <Loader2 size={14} className="animate-spin" />}{existingRoutine || existingCall ? "Save" : kind === "call" ? "Schedule call" : "Schedule routine"}</button>
+          <button onClick={onClose} className="rounded-lg px-4 py-2 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink">{t("Cancel")}</button>
+          <button onClick={save} disabled={saving || !valid} className="flex items-center gap-2 rounded-lg bg-accent px-5 py-2 text-[12.5px] font-semibold text-white hover:brightness-110 disabled:opacity-40">{saving && <Loader2 size={14} className="animate-spin" />}{existingRoutine || existingCall ? t("Save") : kind === "call" ? t("Schedule call") : t("Schedule routine")}</button>
         </div>
       </div>
     </div>
@@ -576,16 +592,16 @@ function QuickComposer({
 
   const valid = Boolean(name.trim() && botIds.length && (kind === "call" || description.trim()));
   return (
-    <div ref={dialogRef} role="dialog" aria-label="Quick create" style={dialogPosition ?? undefined} className={cn("fixed z-50 max-h-[calc(100vh-24px)] w-[min(430px,calc(100vw-24px))] overflow-y-auto rounded-2xl border border-hairline/60 bg-panel shadow-2xl", !dialogPosition && "left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2")}>
+    <div ref={dialogRef} role="dialog" aria-label={t("Quick create")} style={dialogPosition ?? undefined} className={cn("fixed z-50 max-h-[calc(100vh-24px)] w-[min(430px,calc(100vw-24px))] overflow-y-auto rounded-2xl border border-hairline/60 bg-panel shadow-2xl", !dialogPosition && "left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2")}>
       <div className="flex items-center justify-between bg-raised/70 px-4 py-2.5">
-        <div className="text-[12px] font-medium text-ink-secondary">New calendar event</div>
-        <button onClick={onClose} className="rounded-full p-1.5 text-ink-secondary hover:bg-inset hover:text-ink" aria-label="Close"><X size={16} /></button>
+        <div className="text-[12px] font-medium text-ink-secondary">{t("New calendar event")}</div>
+        <button onClick={onClose} className="rounded-full p-1.5 text-ink-secondary hover:bg-inset hover:text-ink" aria-label={t("Close")}><X size={16} /></button>
       </div>
       <div className="space-y-3 p-4">
-        <input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="Add title" onKeyDown={(event) => { if (event.key === "Enter" && valid) void save(); }} className="w-full border-b border-hairline/60 bg-transparent pb-2 text-[18px] font-medium text-ink outline-none placeholder:text-ink-secondary/55 focus:border-accent" />
+        <input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder={t("Add title")} onKeyDown={(event) => { if (event.key === "Enter" && valid) void save(); }} className="w-full border-b border-hairline/60 bg-transparent pb-2 text-[18px] font-medium text-ink outline-none placeholder:text-ink-secondary/55 focus:border-accent" />
         <div className="flex items-center gap-1 border-b border-hairline/35 pb-2">
-          <button type="button" onClick={() => { setKind("routine"); setBotIds((ids) => ids.slice(0, 1)); }} className={cn("rounded-lg px-3 py-1.5 text-[12px] font-medium", kind === "routine" ? "bg-accent/15 text-accent" : "text-ink-secondary hover:bg-raised hover:text-ink")}>Routine</button>
-          <button type="button" onClick={() => setKind("call")} className={cn("rounded-lg px-3 py-1.5 text-[12px] font-medium", kind === "call" ? "bg-accent/15 text-accent" : "text-ink-secondary hover:bg-raised hover:text-ink")}>Call</button>
+          <button type="button" onClick={() => { setKind("routine"); setBotIds((ids) => ids.slice(0, 1)); }} className={cn("rounded-lg px-3 py-1.5 text-[12px] font-medium", kind === "routine" ? "bg-accent/15 text-accent" : "text-ink-secondary hover:bg-raised hover:text-ink")}>{t("Routine")}</button>
+          <button type="button" onClick={() => setKind("call")} className={cn("rounded-lg px-3 py-1.5 text-[12px] font-medium", kind === "call" ? "bg-accent/15 text-accent" : "text-ink-secondary hover:bg-raised hover:text-ink")}>{t("Call")}</button>
         </div>
         <div className="flex items-start gap-3 text-[12.5px] text-ink">
           <Clock3 size={16} className="mt-0.5 shrink-0 text-ink-secondary" />
@@ -595,12 +611,12 @@ function QuickComposer({
           <UserRoundPlus size={16} className="mt-2.5 shrink-0 text-ink-secondary" />
           {bots.length === 0 ? (
             <button type="button" onClick={() => { dispatch({ type: "newBot" }); onClose(); }} className="min-w-0 flex-1 rounded-xl border border-dashed border-accent/45 bg-accent/[0.06] px-3 py-3 text-left hover:bg-accent/10">
-              <div className="text-[12px] font-medium text-accent">Create your first bot</div>
-              <div className="mt-0.5 text-[10.5px] text-ink-secondary">Then come back to schedule it.</div>
+              <div className="text-[12px] font-medium text-accent">{t("Create your first bot")}</div>
+              <div className="mt-0.5 text-[10.5px] text-ink-secondary">{t("Then come back to schedule it.")}</div>
             </button>
           ) : kind === "routine" ? (
             <select value={botIds[0] ?? ""} onChange={(event) => setBotIds([event.target.value])} className="min-w-0 flex-1 rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[12.5px] text-ink outline-none focus:border-accent">
-              <option value="">Assign a bot</option>
+              <option value="">{t("Assign a bot")}</option>
               {bots.map((bot) => <option key={bot.id} value={bot.id}>{bot.name}</option>)}
             </select>
           ) : (
@@ -609,13 +625,13 @@ function QuickComposer({
         </div>
         <div className="flex items-start gap-3">
           <FileText size={16} className="mt-2.5 shrink-0 text-ink-secondary" />
-          <textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3} placeholder={kind === "routine" ? "What should the bot do?" : "Add a description (optional)"} className="min-w-0 flex-1 resize-none rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[12.5px] leading-relaxed text-ink outline-none placeholder:text-ink-secondary/55 focus:border-accent" />
+          <textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3} placeholder={kind === "routine" ? t("What should the bot do?") : t("Add a description (optional)")} className="min-w-0 flex-1 resize-none rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[12.5px] leading-relaxed text-ink outline-none placeholder:text-ink-secondary/55 focus:border-accent" />
         </div>
         {error && <div className="rounded-lg bg-danger/10 px-3 py-2 text-[11.5px] text-danger">{error}</div>}
       </div>
       <div className="flex items-center justify-end gap-2 border-t border-hairline/40 px-4 py-3">
-        <button onClick={() => onMore({ ...seed, kind, botIds, name, description })} className="rounded-lg px-3 py-2 text-[12px] font-medium text-accent hover:bg-accent/10">More options</button>
-        <button onClick={save} disabled={!valid || working} className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-2 text-[12px] font-semibold text-white hover:brightness-110 disabled:opacity-40">{working && <Loader2 size={13} className="animate-spin" />}Save</button>
+        <button onClick={() => onMore({ ...seed, kind, botIds, name, description })} className="rounded-lg px-3 py-2 text-[12px] font-medium text-accent hover:bg-accent/10">{t("More options")}</button>
+        <button onClick={save} disabled={!valid || working} className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-2 text-[12px] font-semibold text-white hover:brightness-110 disabled:opacity-40">{working && <Loader2 size={13} className="animate-spin" />}{t("Save")}</button>
       </div>
     </div>
   );
@@ -642,7 +658,7 @@ function CalendarEventCard({
   const ownerIds = isCall ? item.call.botIds : [routine?.botId ?? run?.botId ?? ""];
   const ownerBots = ownerIds.flatMap((id) => bots.find((bot) => bot.id === id) ?? []);
   const primary = ownerBots[0];
-  const name = isCall ? item.call.name : routine?.name ?? run?.routineName ?? "Routine";
+  const name = isCall ? item.call.name : routine?.name ?? run?.routineName ?? t("Routine");
   const color = isCall ? "#6d7cff" : primary ? MAUS_COLORS[primary.color] : "#666";
   const [previewDuration, setPreviewDuration] = useState(item.durationMinutes);
   useEffect(() => setPreviewDuration(item.durationMinutes), [item.durationMinutes]);
@@ -664,7 +680,7 @@ function CalendarEventCard({
       document.removeEventListener("pointermove", move);
       document.removeEventListener("pointerup", up);
       if (next === item.durationMinutes) return;
-      if (recurring && !window.confirm("Resize this entire recurring series?")) {
+      if (recurring && !window.confirm(t("Resize this entire recurring series?"))) {
         setPreviewDuration(item.durationMinutes);
         return;
       }
@@ -699,11 +715,11 @@ function CalendarEventCard({
         {previewDuration >= 30 && (isCall ? <Video size={compact ? 11 : 13} className="mt-0.5 shrink-0" /> : primary ? <BotAvatar bot={primary} state={status ? statusState(status) : "idle"} size={compact ? 22 : 26} animated={status === "running" || status === "waiting"} /> : null)}
         <div className="min-w-0 flex-1">
           <div className={cn("truncate text-[11px] font-semibold", previewDuration < 30 ? "leading-none" : "leading-tight")}>{name}</div>
-          {previewDuration >= 30 && <div className="mt-0.5 truncate text-[9.5px] text-white/75">{niceTime(item.at)} · {isCall ? `${ownerBots.length} bot${ownerBots.length === 1 ? "" : "s"}` : status?.replace("waiting", "needs you") ?? primary?.name}</div>}
+          {previewDuration >= 30 && <div className="mt-0.5 truncate text-[9.5px] text-white/75">{niceTime(item.at)} · {isCall ? tn(ownerBots.length, "{count} bot", "{count} bots") : status ? t(RUN_STATUS_TEXT[status]) : primary?.name}</div>}
         </div>
         {previewDuration >= 30 && ownerBots.length > 1 && <span className="rounded bg-black/20 px-1 py-0.5 text-[8px]">+{ownerBots.length - 1}</span>}
       </div>
-      {canMove && <div onPointerDown={beginResize} className="absolute inset-x-1 bottom-0 h-1.5 cursor-ns-resize rounded-full opacity-0 transition group-hover:opacity-100" aria-label="Resize event"><div className="mx-auto mt-0.5 h-0.5 w-5 rounded-full bg-white/55" /></div>}
+      {canMove && <div onPointerDown={beginResize} className="absolute inset-x-1 bottom-0 h-1.5 cursor-ns-resize rounded-full opacity-0 transition group-hover:opacity-100" aria-label={t("Resize event")}><div className="mx-auto mt-0.5 h-0.5 w-5 rounded-full bg-white/55" /></div>}
     </button>
   );
 }
@@ -798,12 +814,12 @@ function CalendarGrid({
         {starts.map((start) => {
           const date = new Date(start);
           const isToday = start === today;
-          return <div key={start} role="columnheader" className={cn("border-b border-r border-hairline/40 px-2 py-2 text-center last:border-r-0", isToday && "bg-accent/[0.035]")}><div className={cn("text-[10px] font-medium uppercase tracking-[0.14em]", isToday ? "text-accent" : "text-ink-secondary")}>{DAY_NAMES[date.getDay()]}</div><div className={cn("mx-auto mt-1 flex size-8 items-center justify-center rounded-full text-[15px] font-medium", isToday ? "bg-accent text-white" : "text-ink")}>{date.getDate()}</div></div>;
+          return <div key={start} role="columnheader" className={cn("border-b border-r border-hairline/40 px-2 py-2 text-center last:border-r-0", isToday && "bg-accent/[0.035]")}><div className={cn("text-[10px] font-medium uppercase tracking-[0.14em]", isToday ? "text-accent" : "text-ink-secondary")}>{weekdayName(date.getDay())}</div><div className={cn("mx-auto mt-1 flex size-8 items-center justify-center rounded-full text-[15px] font-medium", isToday ? "bg-accent text-white" : "text-ink")}>{date.getDate()}</div></div>;
         })}
       </div>
-      <div role="grid" aria-label="Routine and call calendar" onDragEnd={() => setDragPreview(null)} className="relative grid" style={{ height: HOUR_HEIGHT * 24, gridTemplateColumns, minWidth }}>
+      <div role="grid" aria-label={t("Routine and call calendar")} onDragEnd={() => setDragPreview(null)} className="relative grid" style={{ height: HOUR_HEIGHT * 24, gridTemplateColumns, minWidth }}>
         <div className="relative border-r border-hairline/40">
-          {Array.from({ length: 24 }, (_, hour) => <div key={hour} className="absolute right-2 -translate-y-1/2 text-[9.5px] tabular-nums text-ink-secondary/70" style={{ top: hour * HOUR_HEIGHT }}>{hour === 0 ? "" : new Date(2000, 0, 1, hour).toLocaleTimeString([], { hour: "numeric" })}</div>)}
+          {Array.from({ length: 24 }, (_, hour) => <div key={hour} className="absolute right-2 -translate-y-1/2 text-[9.5px] tabular-nums text-ink-secondary/70" style={{ top: hour * HOUR_HEIGHT }}>{hour === 0 ? "" : new Date(2000, 0, 1, hour).toLocaleTimeString(intlLocale(), { hour: "numeric" })}</div>)}
         </div>
         {starts.map((start) => {
           const now = new Date();
@@ -813,7 +829,7 @@ function CalendarGrid({
           const selected = selection?.day === start ? selection : null;
           const preview = dragPreview?.day === start ? dragPreview : null;
           return (
-            <div key={start} role="gridcell" aria-label={`${niceDate(start)} calendar`} onPointerDown={(event) => beginSelection(event, start)} onDragOver={(event) => previewDrop(event, start)} onDragLeave={(event) => { if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) setDragPreview(null); }} onDrop={(event) => drop(event, start)} className={cn("relative border-r border-hairline/40 last:border-r-0", start === today && "bg-accent/[0.025]")}>
+            <div key={start} role="gridcell" aria-label={t("{date} calendar", { date: niceDate(start) })} onPointerDown={(event) => beginSelection(event, start)} onDragOver={(event) => previewDrop(event, start)} onDragLeave={(event) => { if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) setDragPreview(null); }} onDrop={(event) => drop(event, start)} className={cn("relative border-r border-hairline/40 last:border-r-0", start === today && "bg-accent/[0.025]")}>
               {Array.from({ length: 48 }, (_, half) => <div key={half} className={cn("pointer-events-none absolute inset-x-0 border-t", half % 2 === 0 ? "border-hairline/30" : "border-hairline/10")} style={{ top: (half / 2) * HOUR_HEIGHT }} />)}
               {start === today && <div className="pointer-events-none absolute inset-x-0 z-20 flex items-center" style={{ top: nowTop }}><span className="-ml-1 size-2 rounded-full bg-danger" /><span className="h-px flex-1 bg-danger/80" /></div>}
               {selected && <div className="pointer-events-none absolute inset-x-1 z-10 rounded-md border border-accent/70 bg-accent/20" style={{ top: ((new Date(selected.start).getHours() * 60 + new Date(selected.start).getMinutes()) / 60) * HOUR_HEIGHT, height: Math.max(16, ((selected.end - selected.start) / 3_600_000) * HOUR_HEIGHT) }} />}
@@ -852,7 +868,7 @@ function EventDetails({
   const botIds = call?.botIds ?? [routine?.botId ?? run?.botId ?? ""];
   const invited = botIds.flatMap((id) => bots.find((bot) => bot.id === id) ?? []);
   const primary = invited[0];
-  const title = call?.name ?? routine?.name ?? run?.routineName ?? "Routine";
+  const title = call?.name ?? routine?.name ?? run?.routineName ?? t("Routine");
   const description = call?.description ?? routine?.prompt ?? run?.prompt ?? "";
   const attachments = call?.attachments ?? routine?.attachments ?? run?.attachments ?? [];
   const roomId = call?.botIds.length === 1 ? primary?.id : undefined;
@@ -887,7 +903,7 @@ function EventDetails({
   };
 
   const deleteEvent = async () => {
-    if (!window.confirm(`Delete “${title}”?`)) return;
+    if (!window.confirm(t("Delete “{name}”?", { name: title }))) return;
     if (call) {
       await api(`/api/calendar-calls/${call.id}`, { method: "DELETE" });
       onCallChanged(call.id);
@@ -899,7 +915,7 @@ function EventDetails({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-3 backdrop-blur-[2px]" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <div role="dialog" aria-modal="true" aria-label="Calendar event details" className="w-full max-w-[520px] overflow-hidden rounded-2xl border border-hairline/60 bg-panel shadow-2xl">
+      <div role="dialog" aria-modal="true" aria-label={t("Calendar event details")} className="w-full max-w-[520px] overflow-hidden rounded-2xl border border-hairline/60 bg-panel shadow-2xl">
         <div className="flex items-start gap-4 border-b border-hairline/40 px-5 py-4">
           <span className={cn("mt-1 size-4 shrink-0 rounded", isCall ? "bg-[#6d7cff]" : "bg-accent")} />
           <div className="min-w-0 flex-1">
@@ -907,38 +923,38 @@ function EventDetails({
             <div className="mt-1 text-[12.5px] text-ink-secondary">{niceDate(item.at)} · {niceTime(item.at)} – {niceTime(item.at + item.durationMinutes * 60_000)}</div>
             {(routine || call) && <div className="mt-1 text-[11.5px] text-ink-secondary">{scheduleLabel((routine ?? call)!.schedule)}</div>}
           </div>
-          <button onClick={onClose} className="rounded-full p-2 text-ink-secondary hover:bg-raised hover:text-ink" aria-label="Close"><X size={17} /></button>
+          <button onClick={onClose} className="rounded-full p-2 text-ink-secondary hover:bg-raised hover:text-ink" aria-label={t("Close")}><X size={17} /></button>
         </div>
 
         <div className="max-h-[58vh] space-y-4 overflow-y-auto px-5 py-4">
           <div className="flex items-start gap-3">
             <UserRoundPlus size={17} className="mt-1 shrink-0 text-ink-secondary" />
             <div className="min-w-0 flex-1">
-              <div className="text-[11px] font-medium uppercase tracking-wider text-ink-secondary">{isCall ? "Bots invited" : "Assigned bot"}</div>
+              <div className="text-[11px] font-medium uppercase tracking-wider text-ink-secondary">{isCall ? t("Bots invited") : t("Assigned bot")}</div>
               <div className="mt-2 flex flex-wrap gap-2">
                 {invited.map((bot) => <div key={bot.id} className="flex items-center gap-2 rounded-full border border-hairline/50 bg-inset py-1 pl-1 pr-2.5"><BotAvatar bot={bot} state="idle" size={26} animated={false} /><span className="text-[11.5px] text-ink">{bot.name}</span></div>)}
               </div>
             </div>
           </div>
           {description && <div className="flex items-start gap-3"><FileText size={17} className="mt-1 shrink-0 text-ink-secondary" /><div className="whitespace-pre-wrap text-[12.5px] leading-relaxed text-ink">{description}</div></div>}
-          {attachments.length > 0 && <div className="flex items-start gap-3"><Paperclip size={17} className="mt-1 shrink-0 text-ink-secondary" /><div className="min-w-0 flex-1 space-y-2"><AttachmentChips attachments={attachments} />{call && <div className="text-[11px] leading-relaxed text-ink-secondary">{call.botIds.length > 1 ? "These references will be shared in the room when the event starts." : "These references stay with the event and are available when you join the room."}</div>}</div></div>}
-          {run && <div className="rounded-xl border border-hairline/40 bg-inset p-3"><div className="flex items-center gap-2 text-[12px] font-medium capitalize text-ink">{run.status === "running" && <Loader2 size={13} className="animate-spin text-accent" />}{run.status.replace("waiting", "needs you")}</div>{run.output && <div className="mt-2 whitespace-pre-wrap text-[11.5px] leading-relaxed text-ink-secondary">{run.output}</div>}{run.error && <div className="mt-2 text-[11.5px] text-danger">{run.error}</div>}</div>}
-          {run?.attention && <div className="flex items-start gap-2 rounded-xl border border-warning/30 bg-warning/10 px-3 py-2.5 text-warning"><CircleAlert size={15} className="mt-0.5 shrink-0" /><div className="min-w-0"><div className="text-[11.5px] font-semibold">Needs your attention</div><div className="mt-1 whitespace-pre-wrap text-[11.5px] leading-relaxed">{run.attention}</div></div></div>}
-          {run?.status === "waiting" && !run.attention && <div className="rounded-xl border border-warning/30 bg-warning/10 px-3 py-2.5 text-[11.5px] text-warning">This bot needs your answer. Open its task to continue the run.</div>}
+          {attachments.length > 0 && <div className="flex items-start gap-3"><Paperclip size={17} className="mt-1 shrink-0 text-ink-secondary" /><div className="min-w-0 flex-1 space-y-2"><AttachmentChips attachments={attachments} />{call && <div className="text-[11px] leading-relaxed text-ink-secondary">{call.botIds.length > 1 ? t("These references will be shared in the room when the event starts.") : t("These references stay with the event and are available when you join the room.")}</div>}</div></div>}
+          {run && <div className="rounded-xl border border-hairline/40 bg-inset p-3"><div className="flex items-center gap-2 text-[12px] font-medium capitalize text-ink">{run.status === "running" && <Loader2 size={13} className="animate-spin text-accent" />}{t(RUN_STATUS_TEXT[run.status])}</div>{run.output && <div className="mt-2 whitespace-pre-wrap text-[11.5px] leading-relaxed text-ink-secondary">{run.output}</div>}{run.error && <div className="mt-2 text-[11.5px] text-danger">{run.error}</div>}</div>}
+          {run?.attention && <div className="flex items-start gap-2 rounded-xl border border-warning/30 bg-warning/10 px-3 py-2.5 text-warning"><CircleAlert size={15} className="mt-0.5 shrink-0" /><div className="min-w-0"><div className="text-[11.5px] font-semibold">{t("Needs your attention")}</div><div className="mt-1 whitespace-pre-wrap text-[11.5px] leading-relaxed">{run.attention}</div></div></div>}
+          {run?.status === "waiting" && !run.attention && <div className="rounded-xl border border-warning/30 bg-warning/10 px-3 py-2.5 text-[11.5px] text-warning">{t("This bot needs your answer. Open its task to continue the run.")}</div>}
           {error && <div className="rounded-lg bg-danger/10 px-3 py-2 text-[11.5px] text-danger">{error}</div>}
         </div>
 
         <div className="flex flex-wrap items-center gap-2 border-t border-hairline/40 px-4 py-3">
-          {roomId && <button onClick={() => onOpenRoom(roomId)} className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-[12px] font-semibold text-white hover:brightness-110"><ExternalLink size={13} />Join room</button>}
-          {call && call.botIds.length > 1 && <button onClick={joinRoom} disabled={working} className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-[12px] font-semibold text-white hover:brightness-110 disabled:opacity-50"><ExternalLink size={13} />Join room</button>}
-          {routine && <button onClick={() => void invoke(`/api/routines/${routine.id}/run`)} disabled={working} className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-[12px] font-semibold text-white hover:brightness-110 disabled:opacity-50"><Play size={13} />Run now</button>}
-          {run?.threadId && primary && <button onClick={() => { dispatch({ type: "select", id: primary.id }); dispatch({ type: "switchTask", botId: primary.id, threadId: run.threadId! }); onClose(); }} className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-[12px] text-ink-secondary hover:bg-raised hover:text-ink"><ExternalLink size={13} />Open task</button>}
-          {run && ["queued", "running", "waiting"].includes(run.status) && <button onClick={() => void invoke(`/api/routine-runs/${run.id}/cancel`)} disabled={working} className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-[12px] text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-40"><X size={13} />Cancel run</button>}
+          {roomId && <button onClick={() => onOpenRoom(roomId)} className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-[12px] font-semibold text-white hover:brightness-110"><ExternalLink size={13} />{t("Join room")}</button>}
+          {call && call.botIds.length > 1 && <button onClick={joinRoom} disabled={working} className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-[12px] font-semibold text-white hover:brightness-110 disabled:opacity-50"><ExternalLink size={13} />{t("Join room")}</button>}
+          {routine && <button onClick={() => void invoke(`/api/routines/${routine.id}/run`)} disabled={working} className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-[12px] font-semibold text-white hover:brightness-110 disabled:opacity-50"><Play size={13} />{t("Run now")}</button>}
+          {run?.threadId && primary && <button onClick={() => { dispatch({ type: "select", id: primary.id }); dispatch({ type: "switchTask", botId: primary.id, threadId: run.threadId! }); onClose(); }} className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-[12px] text-ink-secondary hover:bg-raised hover:text-ink"><ExternalLink size={13} />{t("Open task")}</button>}
+          {run && ["queued", "running", "waiting"].includes(run.status) && <button onClick={() => void invoke(`/api/routine-runs/${run.id}/cancel`)} disabled={working} className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-[12px] text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-40"><X size={13} />{t("Cancel run")}</button>}
           {routine && <button onClick={() => void invoke(`/api/routines/${routine.id}`, "PATCH")} className="hidden" aria-hidden />}
           <div className="ml-auto flex items-center gap-1">
-            {(routine || call) && <button onClick={onEdit} className="rounded-lg px-3 py-2 text-[12px] text-ink-secondary hover:bg-raised hover:text-ink">Edit</button>}
-            {routine && <button onClick={async () => { const response = await api(`/api/routines/${routine.id}`, { method: "PATCH", body: JSON.stringify({ enabled: !routine.enabled }) }); dispatch({ type: "routinePatched", routine: response.routine }); }} className="rounded-lg p-2 text-ink-secondary hover:bg-raised hover:text-ink" title={routine.enabled ? "Pause routine" : "Resume routine"}>{routine.enabled ? <Pause size={15} /> : <Play size={15} />}</button>}
-            {(routine || call) && <button onClick={() => void deleteEvent()} className="rounded-lg p-2 text-ink-secondary hover:bg-danger/10 hover:text-danger" title="Delete"><Trash2 size={15} /></button>}
+            {(routine || call) && <button onClick={onEdit} className="rounded-lg px-3 py-2 text-[12px] text-ink-secondary hover:bg-raised hover:text-ink">{t("Edit")}</button>}
+            {routine && <button onClick={async () => { const response = await api(`/api/routines/${routine.id}`, { method: "PATCH", body: JSON.stringify({ enabled: !routine.enabled }) }); dispatch({ type: "routinePatched", routine: response.routine }); }} className="rounded-lg p-2 text-ink-secondary hover:bg-raised hover:text-ink" title={routine.enabled ? t("Pause routine") : t("Resume routine")}>{routine.enabled ? <Pause size={15} /> : <Play size={15} />}</button>}
+            {(routine || call) && <button onClick={() => void deleteEvent()} className="rounded-lg p-2 text-ink-secondary hover:bg-danger/10 hover:text-danger" title={t("Delete")}><Trash2 size={15} /></button>}
           </div>
         </div>
       </div>
@@ -950,10 +966,10 @@ function PausedList({ routines, bots, onClose, onEdit }: { routines: Routine[]; 
   const { dispatch } = useStore();
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <div role="dialog" aria-modal="true" aria-label="Paused routines" className="w-full max-w-[520px] rounded-2xl border border-hairline/60 bg-panel shadow-2xl">
-        <div className="flex items-center justify-between border-b border-hairline/40 px-5 py-4"><div><div className="text-[16px] font-semibold text-ink">Paused routines</div><div className="mt-0.5 text-[11.5px] text-ink-secondary">History is kept; no new tasks will run.</div></div><button onClick={onClose} className="rounded-full p-2 text-ink-secondary hover:bg-raised"><X size={17} /></button></div>
+      <div role="dialog" aria-modal="true" aria-label={t("Paused routines")} className="w-full max-w-[520px] rounded-2xl border border-hairline/60 bg-panel shadow-2xl">
+        <div className="flex items-center justify-between border-b border-hairline/40 px-5 py-4"><div><div className="text-[16px] font-semibold text-ink">{t("Paused routines")}</div><div className="mt-0.5 text-[11.5px] text-ink-secondary">{t("History is kept; no new tasks will run.")}</div></div><button onClick={onClose} className="rounded-full p-2 text-ink-secondary hover:bg-raised"><X size={17} /></button></div>
         <div className="max-h-[55vh] space-y-1 overflow-y-auto p-3">
-          {routines.map((routine) => { const bot = bots.find((candidate) => candidate.id === routine.botId); return <div key={routine.id} className="flex items-center gap-3 rounded-xl px-3 py-2.5 hover:bg-raised/60">{bot && <BotAvatar bot={bot} state="sleeping" size={36} animated={false} />}<div className="min-w-0 flex-1"><div className="truncate text-[12.5px] font-medium text-ink">{routine.name}</div><div className="mt-0.5 truncate text-[10.5px] text-ink-secondary">{scheduleLabel(routine.schedule)}</div></div><button onClick={() => dispatch({ type: "updateRoutine", routineId: routine.id, patch: { enabled: true } })} className="rounded-lg bg-accent/15 px-2.5 py-1.5 text-[11px] font-medium text-accent">Resume</button><button onClick={() => onEdit(routine)} className="rounded-lg px-2 py-1.5 text-[11px] text-ink-secondary hover:bg-inset">Edit</button></div>; })}
+          {routines.map((routine) => { const bot = bots.find((candidate) => candidate.id === routine.botId); return <div key={routine.id} className="flex items-center gap-3 rounded-xl px-3 py-2.5 hover:bg-raised/60">{bot && <BotAvatar bot={bot} state="sleeping" size={36} animated={false} />}<div className="min-w-0 flex-1"><div className="truncate text-[12.5px] font-medium text-ink">{routine.name}</div><div className="mt-0.5 truncate text-[10.5px] text-ink-secondary">{scheduleLabel(routine.schedule)}</div></div><button onClick={() => dispatch({ type: "updateRoutine", routineId: routine.id, patch: { enabled: true } })} className="rounded-lg bg-accent/15 px-2.5 py-1.5 text-[11px] font-medium text-accent">{t("Resume")}</button><button onClick={() => onEdit(routine)} className="rounded-lg px-2 py-1.5 text-[11px] text-ink-secondary hover:bg-inset">{t("Edit")}</button></div>; })}
         </div>
       </div>
     </div>
@@ -1071,13 +1087,13 @@ export function RoutinesPage({ onBack, onOpenRoom }: { onBack: () => void; onOpe
       if (dragged.kind === "routine") {
         const routine = state.routines.find((candidate) => candidate.id === dragged.id);
         if (!routine) return;
-        if (routine.schedule.type === "daily" && !window.confirm("Move this entire recurring series?")) return;
+        if (routine.schedule.type === "daily" && !window.confirm(t("Move this entire recurring series?"))) return;
         const response = await api(`/api/routines/${routine.id}`, { method: "PATCH", body: JSON.stringify({ schedule: scheduleAt(routine.schedule, dragged.at, nextAt) }) });
         dispatch({ type: "routinePatched", routine: response.routine });
       } else {
         const call = calls.find((candidate) => candidate.id === dragged.id);
         if (!call) return;
-        if (call.schedule.type === "daily" && !window.confirm("Move this entire recurring series?")) return;
+        if (call.schedule.type === "daily" && !window.confirm(t("Move this entire recurring series?"))) return;
         const response = await api(`/api/calendar-calls/${call.id}`, { method: "PATCH", body: JSON.stringify({ schedule: scheduleAt(call.schedule, dragged.at, nextAt) }) });
         upsertCall(response.call);
       }
@@ -1110,31 +1126,31 @@ export function RoutinesPage({ onBack, onOpenRoom }: { onBack: () => void; onOpe
             type="button"
             ref={backButtonRef}
             onClick={onBack}
-            aria-label="Back"
-            title="Back"
+            aria-label={t("Back")}
+            title={t("Back")}
             className="flex size-9 shrink-0 items-center justify-center rounded-lg text-ink-secondary hover:bg-raised hover:text-ink"
             style={windowNoDragStyle}
           >
             <ArrowLeft size={18} />
           </button>
-          <div className="mr-3 flex items-center gap-2"><CalendarDays size={21} className="text-accent" /><h1 className="text-[18px] font-semibold tracking-tight text-ink">Calendar</h1></div>
+          <div className="mr-3 flex items-center gap-2"><CalendarDays size={21} className="text-accent" /><h1 className="text-[18px] font-semibold tracking-tight text-ink">{t("Calendar")}</h1></div>
           <div className="flex items-center rounded-lg border border-hairline/50 bg-panel p-0.5" style={windowNoDragStyle}>
-            <button onClick={() => setAnchor((current) => addDays(current, -viewDays))} className="rounded-md p-2 text-ink-secondary hover:bg-raised hover:text-ink" aria-label="Previous dates"><ChevronLeft size={16} /></button>
-            <button onClick={goToday} className="rounded-md px-3 py-1.5 text-[12px] font-medium text-ink hover:bg-raised">Today</button>
-            <button onClick={() => setAnchor((current) => addDays(current, viewDays))} className="rounded-md p-2 text-ink-secondary hover:bg-raised hover:text-ink" aria-label="Next dates"><ChevronRight size={16} /></button>
+            <button onClick={() => setAnchor((current) => addDays(current, -viewDays))} className="rounded-md p-2 text-ink-secondary hover:bg-raised hover:text-ink" aria-label={t("Previous dates")}><ChevronLeft size={16} /></button>
+            <button onClick={goToday} className="rounded-md px-3 py-1.5 text-[12px] font-medium text-ink hover:bg-raised">{t("Today")}</button>
+            <button onClick={() => setAnchor((current) => addDays(current, viewDays))} className="rounded-md p-2 text-ink-secondary hover:bg-raised hover:text-ink" aria-label={t("Next dates")}><ChevronRight size={16} /></button>
           </div>
           <div className="min-w-[220px] px-2 text-[15px] font-medium text-ink">{calendarRangeLabel(rangeStart, viewDays)}</div>
           <div className="ml-auto flex items-center gap-2" style={windowNoDragStyle}>
-            {running > 0 && <span className="hidden items-center gap-1.5 rounded-full bg-accent/10 px-2.5 py-1.5 text-[10.5px] text-accent sm:flex"><Loader2 size={11} className="animate-spin" />{running} active</span>}
+            {running > 0 && <span className="hidden items-center gap-1.5 rounded-full bg-accent/10 px-2.5 py-1.5 text-[10.5px] text-accent sm:flex"><Loader2 size={11} className="animate-spin" />{t("{count} active", { count: running })}</span>}
             {unseenFailures > 0 && <span className="hidden items-center gap-1.5 rounded-full bg-danger/10 px-2.5 py-1.5 text-[10.5px] text-danger sm:flex"><CircleAlert size={11} />{unseenFailures}</span>}
             {paused.length > 0 && <button onClick={() => setPausedOpen(true)} className="hidden items-center gap-1.5 rounded-full border border-hairline/50 px-2.5 py-1.5 text-[10.5px] text-ink-secondary hover:bg-raised sm:flex"><Pause size={11} />{paused.length}</button>}
-            <select value={botFilter} onChange={(event) => setBotFilter(event.target.value)} className="hidden rounded-lg border border-hairline/50 bg-panel px-2.5 py-2 text-[11.5px] text-ink outline-none focus:border-accent sm:block"><option value="all">All bots</option>{visibleBots.map((bot) => <option key={bot.id} value={bot.id}>{bot.name}</option>)}</select>
-            <select value={viewDays} onChange={(event) => setView(Number(event.target.value) as 1 | 3 | 7)} className="rounded-lg border border-hairline/50 bg-panel px-2.5 py-2 text-[11.5px] text-ink outline-none focus:border-accent"><option value={1}>Day</option><option value={3}>3 days</option><option value={7}>Week</option></select>
+            <select value={botFilter} onChange={(event) => setBotFilter(event.target.value)} className="hidden rounded-lg border border-hairline/50 bg-panel px-2.5 py-2 text-[11.5px] text-ink outline-none focus:border-accent sm:block"><option value="all">{t("All bots")}</option>{visibleBots.map((bot) => <option key={bot.id} value={bot.id}>{bot.name}</option>)}</select>
+            <select value={viewDays} onChange={(event) => setView(Number(event.target.value) as 1 | 3 | 7)} className="rounded-lg border border-hairline/50 bg-panel px-2.5 py-2 text-[11.5px] text-ink outline-none focus:border-accent"><option value={1}>{t("Day")}</option><option value={3}>{t("3 days")}</option><option value={7}>{t("Week")}</option></select>
           </div>
         </div>
         <div className="mt-2 flex items-center gap-1" style={windowNoDragStyle}>
-          <button onClick={() => setSection("calendar")} className={cn("rounded-lg px-3 py-1.5 text-[11.5px] font-medium", section === "calendar" ? "bg-accent/12 text-accent" : "text-ink-secondary hover:bg-raised hover:text-ink")}>Routines &amp; calls</button>
-          <button onClick={() => setSection("webhooks")} className={cn("flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11.5px] font-medium", section === "webhooks" ? "bg-accent/12 text-accent" : "text-ink-secondary hover:bg-raised hover:text-ink")}><Webhook size={12} />Webhooks{state.webhooks.length > 0 && <span className="rounded-full bg-accent/15 px-1.5 text-[9px]">{state.webhooks.length}</span>}</button>
+          <button onClick={() => setSection("calendar")} className={cn("rounded-lg px-3 py-1.5 text-[11.5px] font-medium", section === "calendar" ? "bg-accent/12 text-accent" : "text-ink-secondary hover:bg-raised hover:text-ink")}>{t("Routines & calls")}</button>
+          <button onClick={() => setSection("webhooks")} className={cn("flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11.5px] font-medium", section === "webhooks" ? "bg-accent/12 text-accent" : "text-ink-secondary hover:bg-raised hover:text-ink")}><Webhook size={12} />{t("Webhooks")}{state.webhooks.length > 0 && <span className="rounded-full bg-accent/15 px-1.5 text-[9px]">{state.webhooks.length}</span>}</button>
           {error && <button onClick={() => setError("")} className="ml-auto flex items-center gap-1.5 rounded-lg bg-danger/10 px-2.5 py-1.5 text-[10.5px] text-danger"><CircleAlert size={11} />{error}<X size={11} /></button>}
         </div>
       </header>
@@ -1143,7 +1159,7 @@ export function RoutinesPage({ onBack, onOpenRoom }: { onBack: () => void; onOpe
         <div className="flex min-h-0 flex-1">
           <div className="hidden shrink-0 lg:block"><CalendarSidebar bots={visibleBots} anchor={anchor} onSelectDate={(at) => setAnchor(startOfDay(at))} onCreate={() => openCreate()} /></div>
           <CalendarGrid anchor={rangeStart} days={viewDays} items={items} bots={state.bots} onOpen={(item) => { setSelected(item); if (item.kind === "routine" && item.run && ["failed", "missed"].includes(item.run.status) && !item.run.seenAt) dispatch({ type: "markRoutineRunSeen", runId: item.run.id }); }} onCreate={openCreate} onMove={(item, at) => void moveEvent(item, at)} onResize={(item, duration) => void resizeEvent(item, duration)} />
-          <button onClick={() => openCreate()} disabled={!visibleBots.length} className="fixed bottom-5 right-5 z-30 flex size-12 items-center justify-center rounded-2xl bg-accent text-white shadow-xl shadow-black/30 hover:brightness-110 disabled:opacity-40 lg:hidden" aria-label="Create event"><Plus size={20} /></button>
+          <button onClick={() => openCreate()} disabled={!visibleBots.length} className="fixed bottom-5 right-5 z-30 flex size-12 items-center justify-center rounded-2xl bg-accent text-white shadow-xl shadow-black/30 hover:brightness-110 disabled:opacity-40 lg:hidden" aria-label={t("Create event")}><Plus size={20} /></button>
         </div>
       )}
 

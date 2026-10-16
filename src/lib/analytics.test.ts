@@ -40,7 +40,13 @@ describe("optAction", () => {
 });
 
 describe("the stored choice", () => {
-  it("is on for a fresh install", () => {
+  it("is off for a fresh install of this edition", () => {
+    expect(analyticsEnabled()).toBe(false);
+  });
+
+  it("turns on only by an explicit opt-in", () => {
+    setAnalyticsEnabled(true);
+    expect(store.get("omb-analytics-opt-out")).toBe("0");
     expect(analyticsEnabled()).toBe(true);
   });
 
@@ -74,7 +80,11 @@ describe("the stored choice", () => {
     expect(store.get("omb-installed")).toBeUndefined();
   });
 
-  it("treats unusable storage as a fresh install rather than failing", () => {
+  it("treats unusable storage as a fresh install rather than failing", async () => {
+    // a fresh module: the shared one still remembers the choice an earlier
+    // test made, which would answer before storage is ever read
+    vi.resetModules();
+    const { analyticsEnabled, setAnalyticsEnabled } = await import("./analytics");
     vi.stubGlobal("localStorage", {
       getItem: () => {
         throw new Error("denied");
@@ -83,7 +93,7 @@ describe("the stored choice", () => {
         throw new Error("denied");
       },
     });
-    expect(analyticsEnabled()).toBe(true);
+    expect(analyticsEnabled()).toBe(false);
     expect(() => setAnalyticsEnabled(false)).not.toThrow();
   });
 });

@@ -48,6 +48,8 @@ import {
   resolveCompanionControlPlaneURL,
 } from "./companion-account-service.mjs";
 import capabilitiesModule from "./capabilities.cjs";
+import { getLocale, isLocale, loadStoredLocale, saveStoredLocale, t, tn } from "./i18n.cjs";
+import { applicationMenuTemplate, menuLabel } from "./app-menu.mjs";
 
 const { desktopCapabilities, nativeDesktopActions } = capabilitiesModule;
 const nativeActions = nativeDesktopActions(process.platform);
@@ -102,6 +104,10 @@ const browserConnectionStore = createDescriptorStore({
 });
 let pendingPackageInstallUrl = packageUrlFromCommandLine(process.argv);
 let mainWindow = null;
+// The language the user picked in Settings (userData/locale.json) — read
+// before any window, dialog or menu exists. OMB_LOCALE still overrides it.
+loadStoredLocale(app.getPath("userData"));
+let menuFullScreen = false;
 let unreadCount = 0;
 let unreadOverlayIcon = null;
 
@@ -163,7 +169,7 @@ function applyUnreadBadge(win = mainWindow) {
     unreadOverlayIcon ??= nativeImage.createFromPath(APP_ICON).resize({ width: 16, height: 16 });
     win.setOverlayIcon(
       count > 0 && !unreadOverlayIcon.isEmpty() ? unreadOverlayIcon : null,
-      count > 0 ? `${count} unread conversation${count === 1 ? "" : "s"}` : "No unread conversations",
+      count > 0 ? tn(count, "{count} unread conversation", "{count} unread conversations") : t("No unread conversations"),
     );
     return;
   }
@@ -258,10 +264,10 @@ async function saveSecureCredentials(credentials) {
   // contains. Never derive a replacement from that incomplete view: boot
   // migrations must leave plaintext in place so a later launch can retry.
   if (credentialStoreUnavailable) {
-    throw new Error("The operating-system credential store could not be read this launch");
+    throw new Error(t("The operating-system credential store could not be read this launch"));
   }
   if (!(await safeStorage.isAsyncEncryptionAvailable())) {
-    throw new Error("The operating-system credential store is unavailable");
+    throw new Error(t("The operating-system credential store is unavailable"));
   }
   fs.mkdirSync(path.dirname(CREDENTIALS_FILE), { recursive: true });
   const encrypted = await safeStorage.encryptStringAsync(JSON.stringify(credentials));
@@ -404,7 +410,7 @@ let advertisementTransition = Promise.resolve();
  * token can never overwrite an API key saved at the same time (or vice
  * versa). */
 export async function updateSecureCredentialDocument(derive, afterPersist) {
-  if (!secureCredentialState) throw new Error("Secure credentials are not ready");
+  if (!secureCredentialState) throw new Error(t("Secure credentials are not ready"));
   try {
     return await secureCredentialState.update(derive, afterPersist);
   } finally {
@@ -791,6 +797,8 @@ async function startServerOn(port) {
     OMB_SKILLS_DIR: path.join(process.resourcesPath, "skills"),
     OMB_PORT: String(port),
     OMB_USER_DATA: app.getPath("userData"),
+    // the harness writes chat chips, cards and errors in the app's language
+    OMB_LOCALE: getLocale(),
     ...(secureCredentials.composioApiKey
       ? { COMPOSIO_API_KEY: secureCredentials.composioApiKey }
       : {}),
@@ -913,12 +921,12 @@ function buildErrorPage({ allPortsOccupied }) {
   const serverLogPath = path.join(LOG_DIR, "server.log");
   const serverLogHref = pathToFileURL(serverLogPath).href;
   const reason = allPortsOccupied
-    ? "Every OpenMausBot port answered health checks from another process — likely a second copy of the app, or another program on ports 8799–28799. Quit that program, then quit and reopen OpenMausBot."
-    : "The background server didn't come up in time — this is usually slow startup, not a port conflict. Quit and reopen OpenMausBot.";
+    ? t("Every OpenMausBot port answered health checks from another process — likely a second copy of the app, or another program on ports 8799–28799. Quit that program, then quit and reopen OpenMausBot.")
+    : t("The background server didn't come up in time — this is usually slow startup, not a port conflict. Quit and reopen OpenMausBot.");
   return (
     "data:text/html;charset=utf-8," +
     encodeURIComponent(
-      `<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#070707;color:#fcfcfc;font:15px -apple-system,system-ui"><div style="text-align:center;max-width:360px"><div style="font-size:40px">🐭</div><h2 style="font-weight:600;margin:12px 0 6px">Couldn't start the bot server</h2><p style="color:#fcfcfc99;line-height:1.5">${escapeHtml(reason)} If it keeps happening, check <a target="_blank" rel="noopener" href="${serverLogHref}" style="color:#fcfcfc">${escapeHtml(serverLogPath)}</a>.</p></div></body>`,
+      `<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#070707;color:#fcfcfc;font:15px -apple-system,system-ui"><div style="text-align:center;max-width:360px"><div style="font-size:40px">🐭</div><h2 style="font-weight:600;margin:12px 0 6px">${escapeHtml(t("Couldn't start the bot server"))}</h2><p style="color:#fcfcfc99;line-height:1.5">${escapeHtml(reason)} ${t("If it keeps happening, check {path}.", { path: `<a target="_blank" rel="noopener" href="${serverLogHref}" style="color:#fcfcfc">${escapeHtml(serverLogPath)}</a>` })}</p></div></body>`,
     )
   );
 }
@@ -967,20 +975,20 @@ function desktopViewerErrorPage(message, retryUrl) {
       .replaceAll(">", "&gt;");
   return (
     "data:text/html;charset=utf-8," +
-    encodeURIComponent(`<!doctype html><meta name="color-scheme" content="dark"><title>Desktop unavailable</title>
+    encodeURIComponent(`<!doctype html><meta name="color-scheme" content="dark"><title>${escape(t("Desktop unavailable"))}</title>
       <body style="margin:0;display:grid;place-items:center;height:100vh;background:#070707;color:#f5f5f5;font:14px -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif">
-        <main style="max-width:420px;padding:32px;text-align:center"><h2 style="margin:0 0 10px;font-size:18px">Couldn't open the live desktop</h2>
+        <main style="max-width:420px;padding:32px;text-align:center"><h2 style="margin:0 0 10px;font-size:18px">${escape(t("Couldn't open the live desktop"))}</h2>
         <p style="margin:0 0 20px;color:#a1a1aa;line-height:1.5">${escape(message)}</p>
-        <a href="${escape(retryUrl)}" target="_blank" rel="noreferrer" style="display:inline-block;border-radius:9px;background:#fff;color:#111;padding:9px 14px;text-decoration:none;font-weight:600">Open in browser</a></main>
+        <a href="${escape(retryUrl)}" target="_blank" rel="noreferrer" style="display:inline-block;border-radius:9px;background:#fff;color:#111;padding:9px 14px;text-decoration:none;font-weight:600">${escape(t("Open in browser"))}</a></main>
       </body>`)
   );
 }
 
 function openDesktopViewer(owner, rawUrl, rawTitle, contextId) {
-  if (!owner || owner.isDestroyed()) throw new Error("The OpenMausBot window is unavailable");
+  if (!owner || owner.isDestroyed()) throw new Error(t("The OpenMausBot window is unavailable"));
   const url = desktopViewerUrl(rawUrl);
   const titleCandidate = Object.prototype.toString.call(rawTitle) === "[object String]" ? rawTitle.trim() : "";
-  const title = titleCandidate ? titleCandidate.slice(0, 80) : "Live desktop";
+  const title = titleCandidate ? titleCandidate.slice(0, 80) : t("Live desktop");
 
   const nextContextId =
     Object.prototype.toString.call(contextId) === "[object String]" ? contextId.slice(0, 120) : null;
@@ -1067,22 +1075,22 @@ function openDesktopViewer(owner, rawUrl, rawTitle, contextId) {
   });
   viewer.webContents.on("did-fail-load", (_event, code, description, failedUrl, isMainFrame) => {
     if (!isMainFrame || code === -3 || viewer.isDestroyed() || failedUrl.startsWith("data:")) return;
-    void viewer.loadURL(desktopViewerErrorPage(description || "The viewer did not respond.", url.toString()));
+    void viewer.loadURL(desktopViewerErrorPage(description || t("The viewer did not respond."), url.toString()));
   });
 
   notifyDesktopViewer(true);
   void viewer.loadURL(url.toString()).catch((error) => {
     if (viewer.isDestroyed()) return;
-    void viewer.loadURL(desktopViewerErrorPage(error?.message ?? "The viewer did not respond.", url.toString()));
+    void viewer.loadURL(desktopViewerErrorPage(error?.message ?? t("The viewer did not respond."), url.toString()));
   });
   return true;
 }
 
 function ensureDesktopWorkspace(owner) {
-  if (!owner || owner.isDestroyed()) throw new Error("The OpenMausBot window is unavailable");
+  if (!owner || owner.isDestroyed()) throw new Error(t("The OpenMausBot window is unavailable"));
   if (desktopWorkspaceManager) {
     if (desktopWorkspaceOwner !== owner) {
-      throw new Error("The desktop workspace belongs to another app window");
+      throw new Error(t("The desktop workspace belongs to another app window"));
     }
     return desktopWorkspaceManager;
   }
@@ -1120,10 +1128,10 @@ function ensureDesktopWorkspace(owner) {
 function desktopWorkspaceForEvent(event, create = false) {
   const owner = mainWindow;
   if (!owner || owner.isDestroyed() || event.sender !== owner.webContents) {
-    throw new Error("The desktop workspace is available only to the main app window");
+    throw new Error(t("The desktop workspace is available only to the main app window"));
   }
   if (desktopWorkspaceManager && desktopWorkspaceOwner !== owner) {
-    throw new Error("The desktop workspace belongs to another app window");
+    throw new Error(t("The desktop workspace belongs to another app window"));
   }
   return create ? ensureDesktopWorkspace(owner) : desktopWorkspaceManager;
 }
@@ -1209,9 +1217,9 @@ async function startBrowserSurface(owner) {
 function browserSurfaceForEvent(event) {
   const owner = mainWindow;
   if (!owner || owner.isDestroyed() || event.sender !== owner.webContents) {
-    throw new Error("The browser is available only to the main app window");
+    throw new Error(t("The browser is available only to the main app window"));
   }
-  if (!browserSurface) throw new Error("The built-in browser is unavailable");
+  if (!browserSurface) throw new Error(t("The built-in browser is unavailable"));
   return browserSurface;
 }
 
@@ -1250,15 +1258,15 @@ ipcMain.handle("browser:back", async (event, botId, profile) => {
 ipcMain.handle("browser:set-human-control", (event, botId, held, profile) => {
   const owner = mainWindow;
   if (!owner || owner.isDestroyed() || event.sender !== owner.webContents) {
-    throw new Error("The browser is available only to the main app window");
+    throw new Error(t("The browser is available only to the main app window"));
   }
   const id = String(botId ?? "");
-  if (!/^[A-Za-z0-9_-]{1,120}$/.test(id)) throw new Error("A bot id is required");
+  if (!/^[A-Za-z0-9_-]{1,120}$/.test(id)) throw new Error(t("A bot id is required"));
   // A generic Computer-panel release must be able to clear a positive hold
   // remembered across renderer/surface recreation. If no surface exists,
   // there is no local browser to update, but the remembered gate still goes.
   if (!browserSurface) {
-    if (held === true) throw new Error("The built-in browser is unavailable");
+    if (held === true) throw new Error(t("The built-in browser is unavailable"));
     browserControlHolds.delete(id);
     return true;
   }
@@ -1276,7 +1284,7 @@ ipcMain.handle("browser:close", (event, botId) => browserSurfaceForEvent(event).
 ipcMain.handle("browser:forget-profile", async (event, partitionId) => {
   const surface = browserSurfaceForEvent(event);
   const id = String(partitionId ?? "");
-  if (!/^[A-Za-z0-9_-]{1,40}$/.test(id) || id === "guest") throw new Error("That browser partition id is invalid");
+  if (!/^[A-Za-z0-9_-]{1,40}$/.test(id) || id === "guest") throw new Error(t("That browser partition id is invalid"));
   const dropped = surface.forgetProfile(id);
   browserHost?.revokeCapabilitiesForProfile(id);
   await clearBrowserPartition(browserProfilePartition(id));
@@ -1286,6 +1294,45 @@ ipcMain.handle("browser:forget-profile", async (event, partitionId) => {
 ipcMain.on("screen:preview-intent", (event) => {
   event.returnValue = displayMediaGuard.begin(event.senderFrame);
 });
+
+// Language: the renderer reads it synchronously while its modules load (so
+// the first paint is already right), and a change in Settings is saved here
+// for the next launch and redraws the menu bar now.
+ipcMain.on("locale:get", (event) => {
+  event.returnValue = getLocale();
+});
+ipcMain.handle("locale:set", (_event, locale) => {
+  if (!isLocale(locale)) throw new Error("Unsupported language");
+  saveStoredLocale(app.getPath("userData"), locale);
+  installApplicationMenu();
+  return true;
+});
+
+function readHomepage() {
+  try {
+    const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8"));
+    if (typeof manifest.homepage === "string" && /^https:\/\//.test(manifest.homepage)) return manifest.homepage;
+  } catch {
+    // fall through to the upstream project
+  }
+  return "https://github.com/milind-soni/OpenMausBot";
+}
+
+function installApplicationMenu() {
+  const template = applicationMenuTemplate({
+    appName: app.getName(),
+    platform: process.platform,
+    isFullScreen: menuFullScreen,
+    packaged: app.isPackaged,
+    homepage: readHomepage(),
+    command: (name) => {
+      const target = BrowserWindow.getFocusedWindow() ?? mainWindow;
+      if (target && !target.isDestroyed()) target.webContents.send("menu:command", name);
+    },
+    openExternal: (url) => void shell.openExternal(url),
+  });
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
 
 ipcMain.on("desktop:unread-count", (event, value) => {
   const sender = BrowserWindow.fromWebContents(event.sender);
@@ -1333,6 +1380,15 @@ function createWindow() {
   }
   installWindowStatePersistence(win);
   applyUnreadBadge(win);
+  // "进入全屏幕" / "退出全屏幕" follows the window, as in every Mac app
+  win.on("enter-full-screen", () => {
+    menuFullScreen = true;
+    installApplicationMenu();
+  });
+  win.on("leave-full-screen", () => {
+    menuFullScreen = false;
+    installApplicationMenu();
+  });
   if (restored.maximized) win.maximize();
   win.once("closed", () => {
     if (mainWindow === win) mainWindow = null;
@@ -1362,20 +1418,20 @@ function createWindow() {
     }
     if (params.linkURL) {
       menuItems.push(
-        { label: "Copy Link", click: () => clipboard.writeText(params.linkURL) },
+        { label: menuLabel("Copy Link"), click: () => clipboard.writeText(params.linkURL) },
         { type: "separator" },
       );
     }
     menuItems.push(
-      { label: "Undo", role: "undo", enabled: params.editFlags.canUndo },
-      { label: "Redo", role: "redo", enabled: params.editFlags.canRedo },
+      { label: menuLabel("Undo"), role: "undo", enabled: params.editFlags.canUndo },
+      { label: menuLabel("Redo"), role: "redo", enabled: params.editFlags.canRedo },
       { type: "separator" },
-      { label: "Cut", role: "cut", enabled: params.editFlags.canCut },
-      { label: "Copy", role: "copy", enabled: params.editFlags.canCopy },
-      { label: "Paste", role: "paste", enabled: params.editFlags.canPaste },
-      { label: "Paste and Match Style", role: "pasteAndMatchStyle", enabled: params.editFlags.canPaste },
+      { label: menuLabel("Cut"), role: "cut", enabled: params.editFlags.canCut },
+      { label: menuLabel("Copy"), role: "copy", enabled: params.editFlags.canCopy },
+      { label: menuLabel("Paste"), role: "paste", enabled: params.editFlags.canPaste },
+      { label: menuLabel("Paste and Match Style"), role: "pasteAndMatchStyle", enabled: params.editFlags.canPaste },
       { type: "separator" },
-      { label: "Select All", role: "selectAll", enabled: params.editFlags.canSelectAll },
+      { label: menuLabel("Select All"), role: "selectAll", enabled: params.editFlags.canSelectAll },
     );
     Menu.buildFromTemplate(menuItems).popup({ window: win, frame: params.frame });
   });
@@ -1534,7 +1590,7 @@ ipcMain.handle("engine:open-terminal", async (_event, command) => {
 ipcMain.handle("desktop:pick-folder", async (event, current) => {
   const win = BrowserWindow.fromWebContents(event.sender) ?? undefined;
   const result = await dialog.showOpenDialog(win, {
-    title: "Choose a working folder",
+    title: t("Choose a working folder"),
     properties: ["openDirectory", "createDirectory"],
     ...(typeof current === "string" && current ? { defaultPath: current } : {}),
   });
@@ -1548,9 +1604,9 @@ ipcMain.handle("desktop:export-diagnostics", async (event) => {
   const owner = BrowserWindow.fromWebContents(event.sender) ?? undefined;
   const report = await gatherDiagnostics();
   const result = await dialog.showSaveDialog(owner, {
-    title: "Export diagnostics",
+    title: t("Export diagnostics"),
     defaultPath: diagnosticsFileName(),
-    filters: [{ name: "Text", extensions: ["txt"] }],
+    filters: [{ name: t("Text"), extensions: ["txt"] }],
   });
   if (result.canceled || !result.filePath) return null;
   if (process.platform === "win32") {
@@ -1582,10 +1638,10 @@ ipcMain.handle("desktop:save-file", async (event, rawPath) => {
     const parent = BrowserWindow.fromWebContents(event.sender);
     const defaultPath = await defaultSaveName(app.getPath("downloads"), defaultName);
     const choice = await dialog.showSaveDialog(parent ?? undefined, {
-      title: "Where do you want to save it?",
-      message: "Where do you want to save it?",
+      title: t("Where do you want to save it?"),
+      message: t("Where do you want to save it?"),
       defaultPath,
-      buttonLabel: "Save",
+      buttonLabel: t("Save"),
       properties: ["createDirectory", "showOverwriteConfirmation"],
     });
     // Cancelling is a decision, not a failure — the bubble stays quiet.
@@ -1605,15 +1661,15 @@ ipcMain.handle("desktop:skin", (_event, skin) => {
 });
 
 ipcMain.handle("desktop:open-external", async (_event, rawUrl) => {
-  if (typeof rawUrl !== "string") throw new Error("A web address is required");
+  if (typeof rawUrl !== "string") throw new Error(t("A web address is required"));
   let url;
   try {
     url = new URL(rawUrl);
   } catch {
-    throw new Error("That web address is invalid");
+    throw new Error(t("That web address is invalid"));
   }
   if (url.protocol !== "https:" && url.protocol !== "http:") {
-    throw new Error("Only web links can be opened");
+    throw new Error(t("Only web links can be opened"));
   }
   await shell.openExternal(url.toString());
   return true;
@@ -1714,7 +1770,7 @@ ipcMain.handle("speech:finish", () => {
 ipcMain.handle("skill-recorder:permissions", () => recorderPermissionStatus());
 ipcMain.handle("skill-recorder:start", (event) => {
   const win = BrowserWindow.fromWebContents(event.sender);
-  if (!win) throw new Error("The recorder window is unavailable");
+  if (!win) throw new Error(t("The recorder window is unavailable"));
   return startRecorder(win);
 });
 ipcMain.handle("skill-recorder:stop", () => stopRecorder());
@@ -1767,9 +1823,9 @@ ipcMain.handle("assemblyai:status", () => ({
 }));
 
 ipcMain.handle("assemblyai:set-key", async (_event, value) => {
-  if (typeof value !== "string") throw new Error("Unsupported credential");
+  if (typeof value !== "string") throw new Error(t("Unsupported credential"));
   if (!(await safeStorage.isAsyncEncryptionAvailable())) {
-    throw new Error("The operating-system credential store is unavailable");
+    throw new Error(t("The operating-system credential store is unavailable"));
   }
   const secret = value.trim();
   await updateSecureCredentialDocument((credentials) => {
@@ -1789,6 +1845,7 @@ const CREDENTIAL_PATCH = {
   xaiApiKey: (value) => ({ xai: { key: value } }),
   boxToken: (value) => ({ box: { token: value } }),
   opencodeGoApiKey: (value) => ({ opencodeGo: { apiKey: value } }),
+  workbuddyApiKey: (value) => ({ workbuddy: { apiKey: value } }),
   ttsKey: (value) => ({ tts: { key: value } }),
   openaiImageApiKey: (value) => ({ imageGen: { key: value } }),
 };
@@ -1796,10 +1853,10 @@ const CREDENTIAL_PATCH = {
 ipcMain.handle("credential:set", async (_event, name, value) => {
   const patchFor = CREDENTIAL_PATCH[name];
   if (!patchFor || typeof value !== "string") {
-    throw new Error("Unsupported credential");
+    throw new Error(t("Unsupported credential"));
   }
   if (app.isPackaged && !(await safeStorage.isAsyncEncryptionAvailable())) {
-    throw new Error("The operating-system credential store is unavailable");
+    throw new Error(t("The operating-system credential store is unavailable"));
   }
   const secret = value.trim();
   const applyToHarness = async () => {
@@ -1813,7 +1870,7 @@ ipcMain.handle("credential:set", async (_event, name, value) => {
       body: JSON.stringify(patchFor(secret)),
     });
     const body = await response.json().catch(() => null);
-    if (!response.ok) throw new Error(body?.error || `Could not save credential (HTTP ${response.status})`);
+    if (!response.ok) throw new Error(body?.error || t("Could not save credential (HTTP {status})", { status: response.status }));
     return body;
   };
   if (!app.isPackaged) return applyToHarness();
@@ -1851,6 +1908,7 @@ setCuaStateListener((connection) => {
 });
 
 app.whenReady().then(async () => {
+  installApplicationMenu();
   if (app.isPackaged) app.setAsDefaultProtocolClient("openmausbot");
   if (process.platform === "darwin") app.dock.setIcon(APP_ICON);
   secureCredentials = await loadSecureCredentials();

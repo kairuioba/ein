@@ -9,6 +9,7 @@ import {
   type TeamManifestV2,
 } from "./team-manifest.ts";
 import type { MausColor } from "./store.ts";
+import { t } from "../shared/i18n.ts";
 
 /** What the scout can recognize a project needing. One role becomes one
  * suggested team member; the lead is always added on top. */
@@ -321,7 +322,7 @@ const MAX_SUGGESTED_SPECIALISTS = 5;
  * its human click. */
 export function suggestTeam(profile: ProjectProfile): TeamSuggestion {
   const reasons: Record<string, string> = {
-    lead: "Every project room needs one member who briefs, splits, and reviews.",
+    lead: t("Every project room needs one member who briefs, splits, and reviews."),
   };
   const members: TeamManifestMember[] = [
     {
@@ -341,7 +342,7 @@ export function suggestTeam(profile: ProjectProfile): TeamSuggestion {
       description: template.describe(profile, signal.evidence),
       appearance: { color: template.color },
     });
-    reasons[signal.role] = `Detected via ${signal.evidence.join(", ")}.`;
+    reasons[signal.role] = t("Detected via {evidence}.", { evidence: signal.evidence.join(", ") });
   }
   // no signals at all → the room still gets a working pair of hands
   if (members.length === 1) {
@@ -352,7 +353,7 @@ export function suggestTeam(profile: ProjectProfile): TeamSuggestion {
       description: `You do the hands-on work in ${profile.name}: read the folder, make the change, show the result.${stackLine(profile)}`,
       appearance: { color: "blue" },
     });
-    reasons.builder = "No specific stack detected — a generalist covers the ground.";
+    reasons.builder = t("No specific stack detected — a generalist covers the ground.");
   }
 
   const manifest: TeamManifestV2 = {

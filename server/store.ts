@@ -15,6 +15,7 @@ import { newId, type CloudBackend, type ModelSelection, type ThreadId } from "./
 import { pickBotName } from "./names.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { botAvatarProfile, type BotAvatarCrop } from "../shared/bot-avatar.ts";
+import { msg, t } from "../shared/i18n.ts";
 import type { RoutineRequestCardData } from "../shared/routine-request.ts";
 import type { RoutineRunCardData } from "../shared/routine-run.ts";
 import type { SkillRequestCardData } from "../shared/skill-request.ts";
@@ -369,7 +370,7 @@ export type StoreChange =
   | { type: "group.deleted"; groupId: string };
 
 /** What a task is called before its first message names it. */
-export const UNTITLED_TASK = "New task";
+export const UNTITLED_TASK = msg("New task");
 
 /** A task's name, taken from the first thing you asked it to do. */
 export function titleFromMessage(text: string): string {
@@ -578,9 +579,9 @@ export function roomResponders<T extends { id: string; name: string; hidden?: bo
 }
 
 const onboardingCard = (): OptionCardData => ({
-  title: "What do you mostly want help with?",
-  subtitle: "Pick whatever's closest; we can always expand from there.",
-  options: ["Work & projects", "Writing & research", "Life admin", "A bit of everything"],
+  title: t("What do you mostly want help with?"),
+  subtitle: t("Pick whatever's closest; we can always expand from there."),
+  options: [t("Work & projects"), t("Writing & research"), t("Life admin"), t("A bit of everything")],
 });
 
 /** Messages form a tree (forks appear when a message is edited); the
@@ -1175,7 +1176,7 @@ export class Store {
       this.appendMessage(bot.threadId, {
         role: "bot",
         kind: "text",
-        text: `Hey — I'm ${name}. Nice to meet you.`,
+        text: t("Hey — I'm {name}. Nice to meet you.", { name }),
       });
       this.appendMessage(bot.threadId, { role: "bot", kind: "options", card: onboardingCard() });
     }

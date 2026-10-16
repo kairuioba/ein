@@ -10,6 +10,7 @@
 // a missing method falls back to the argv `--model` pin.
 import type { ModelCatalog, ProviderErrorCode } from "../../contracts.ts";
 import { execCli } from "../../procs.ts";
+import { t } from "../../../shared/i18n.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 
 /** Translate an argv `--model` slug into the id this ACP session will accept.
@@ -337,7 +338,9 @@ const support = (run: typeof execCli): AcpSupport => ({
   // Cursor's compatibility alias is unambiguous and ships with the same CLI.
   defaultCli: "cursor-agent",
   nativeSource: "cursor.acp",
-  loginNote: "Cursor CLI is not signed in — run `cursor-agent login` in a terminal, or set CURSOR_API_KEY",
+  get loginNote() {
+    return t("Cursor CLI is not signed in — run `cursor-agent login` in a terminal, or set CURSOR_API_KEY");
+  },
 
   install: {
     command: {
@@ -383,8 +386,10 @@ const support = (run: typeof execCli): AcpSupport => ({
       // right model anyway; failing it here would refuse a working request.
       if (err.code === -32601 || err.code === -32602) return;
       throw new Error(
-        `Cursor rejected model "${turn.model}" (sent as "${modelId}") via session/set_model: ${err.message}. ` +
-          `Check that \`cursor-agent\` is current and that this account can use that model.`,
+        t(
+          'Cursor rejected model "{model}" (sent as "{modelId}") via session/set_model: {error}. Check that `cursor-agent` is current and that this account can use that model.',
+          { model: turn.model, modelId, error: String(err.message) },
+        ),
       );
     }
   },

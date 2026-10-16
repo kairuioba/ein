@@ -32,16 +32,21 @@ export function isLocale(value: unknown): value is Locale {
 
 interface LocaleEnvironment {
   env?: Record<string, string | undefined>;
+  /** The desktop shell's saved choice (window.ogb.locale in the app window). */
+  shell?: string | null;
   storage?: { getItem(key: string): string | null };
 }
 
 /** The locale a fresh process starts in: an explicit OMB_LOCALE wins, test
- * runners use the English sources, a stored app choice comes next, and
- * everything else starts in Simplified Chinese. */
+ * runners use the English sources, the desktop shell's saved choice comes
+ * next (it survives the server port changing, which browser storage does
+ * not), then a stored browser choice, and everything else starts in
+ * Simplified Chinese. */
 export function detectLocale(environment: LocaleEnvironment = currentEnvironment()): Locale {
   const forced = environment.env?.OMB_LOCALE;
   if (isLocale(forced)) return forced;
   if (environment.env?.VITEST || environment.env?.NODE_TEST_CONTEXT) return "en";
+  if (isLocale(environment.shell)) return environment.shell;
   try {
     const stored = environment.storage?.getItem(LOCALE_STORAGE_KEY);
     if (isLocale(stored)) return stored;
@@ -55,6 +60,7 @@ function currentEnvironment(): LocaleEnvironment {
   const scope = globalThis as {
     process?: { env?: Record<string, string | undefined> };
     localStorage?: { getItem(key: string): string | null };
+    ogb?: { locale?: string | null };
   };
   let storage: LocaleEnvironment["storage"];
   try {
@@ -62,7 +68,7 @@ function currentEnvironment(): LocaleEnvironment {
   } catch {
     storage = undefined;
   }
-  return { env: scope.process?.env, storage };
+  return { env: scope.process?.env, shell: scope.ogb?.locale, storage };
 }
 
 let current: Locale = detectLocale();
@@ -86,7 +92,9 @@ export function interpolate(text: string, params: TranslationParams): string {
 
 /** Translate English source text into the active locale. */
 export function t(source: string, params?: TranslationParams): string {
-  const localized = current === "en" ? source : (DICTIONARIES[current][source] ?? source);
+  const dictionary = DICTIONARIES[current];
+  // own keys only: "constructor" or "toString" must not resolve to Object.prototype
+  const localized = current !== "en" && Object.hasOwn(dictionary, source) ? dictionary[source]! : source;
   return params ? interpolate(localized, params) : localized;
 }
 
@@ -118,6 +126,6 @@ export function intlLocale(): string {
  * the app's language. Empty for English, which needs no instruction. */
 export function replyLanguageInstruction(): string {
   return current === "zh-CN"
-    ? "Language: reply to the user in Simplified Chinese (简体中文) unless the user writes in another language or explicitly asks for one. Keep code, commands, file paths and identifiers unchanged."
+    ? "Language: reply to the user in Simplified Chinese (简体中文) unless the user writes in another language or explicitly asks for one. Text you put into tools that the user will see — plan goals, subtask titles and roles, task names, names and titles of new teammates — is written in Simplified Chinese too. Keep code, commands, file paths and identifiers unchanged."
     : "";
 }

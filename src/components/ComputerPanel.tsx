@@ -1,5 +1,5 @@
-// The bot's computer, in the right-side slot. Where it runs decides the
-// whole flow: cloud → provision the box on open (idempotent) and preview
+// The bot's computer, in the right-side slot (U16: "<bot>的电脑" — live screen,
+// 步骤记录 with 回放, 接管 / 还给). Where it runs decides the whole flow: cloud → provision the box on open (idempotent) and preview
 // via SSE frames or a ~4s screenshot poll. macOS local mode keeps the legacy
 // in-panel capture. Linux local mode is an automation readiness state and its
 // separate preview remains explicitly user-initiated. Auto never selects a
@@ -10,8 +10,9 @@ import {
   CalendarClock,
   CalendarDays,
   Columns2,
-  Globe,
+  Eye,
   Hand,
+  History,
   Loader2,
   Maximize2,
   Monitor,
@@ -19,7 +20,6 @@ import {
   Plus,
   Power,
   Settings,
-  Smartphone,
   X,
 } from "lucide-react";
 import { api, useStore, type Bot } from "@/state/store";
@@ -40,6 +40,11 @@ import { LinuxLocalControl } from "./LinuxLocalControl";
 import { MacLocalControl } from "./MacLocalControl";
 import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
 import { Switch } from "./SettingsPrimitives";
+import { Button, Pill, Segmented, type PillTone } from "./ui";
+import { StepStrip } from "./computer/StepStrip";
+import { computerSteps } from "@/lib/computer-steps";
+import { clockTime } from "@/lib/calendar-view";
+import { liveActivityLabel } from "@/lib/live-activity";
 import {
   autoSelectsLocalComputer,
   instanceSupportsLocalComputer,
@@ -132,7 +137,11 @@ function nextRunLabel(at: number | null) {
 const PANEL_WIDTH_KEY = "omb-computer-panel-width";
 const PANEL_MIN_WIDTH = 360;
 const PANEL_MAX_WIDTH = 960;
-const PANEL_DEFAULT_WIDTH = 400;
+/** U16: the live screen wants room — about half the window by default. */
+function defaultPanelWidth(): number {
+  const half = typeof window === "undefined" ? 640 : Math.round(window.innerWidth / 2);
+  return Math.min(PANEL_MAX_WIDTH, Math.max(PANEL_MIN_WIDTH, half));
+}
 
 function readPanelWidth(): number {
   try {
@@ -141,7 +150,7 @@ function readPanelWidth(): number {
   } catch {
     /* storage blocked — default width */
   }
-  return PANEL_DEFAULT_WIDTH;
+  return defaultPanelWidth();
 }
 
 export function ComputerPanel({
@@ -202,6 +211,9 @@ export function ComputerPanel({
   const [viewerOpen, setViewerOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [creatingRoutine, setCreatingRoutine] = useState(false);
+  // 回放: which step's frame the screen shows (null = live) and the frame's real size
+  const [replay, setReplay] = useState<number | null>(null);
+  const [frameSize, setFrameSize] = useState<{ width: number; height: number } | null>(null);
   const [panelView, setPanelView] = useState<ComputerPanelView>(() => readComputerPanelView(bot.id));
   const androidStatus = useAndroidUsbDevices();
   const androidConnected = androidStatus.devices.length > 0;
@@ -830,10 +842,55 @@ export function ComputerPanel({
     error: t("Couldn't reach the computer"),
   } satisfies Record<Exclude<Phase, "ready" | "local" | "vm">, string>;
 
+  // ── U16 chrome: what the header pills, the screen overlay and the step log say ──
+  const steps = computerSteps(bot.messages, { busy: Boolean(bot.busy) });
+  const replayStep = replay !== null ? steps[replay] : undefined;
+  const shownSrc = replayStep?.frame ? `data:${replayStep.frame.mime};base64,${replayStep.frame.png}` : frameSrc;
+  const lastActivity = [...bot.messages].reverse().find((message) => message.kind === "activity" && message.tool && !message.comm);
+  const actionLabel = bot.busy && lastActivity?.tool?.ok === undefined ? liveActivityLabel(lastActivity) : null;
+  const modeLabel =
+    phase === "local" || bot.computer === "local"
+      ? t("This Mac")
+      : phase === "vm" || bot.computer === "vm"
+        ? t("Local VM")
+        : bot.computer === "off"
+          ? t("Computer")
+          : cloudBackend === "vps"
+            ? t("VPS")
+            : t("Cloud computer");
+  const sleeping = (phase === "ready" && boxState === "archived") || phase === "vps-stopped";
+  const status: { tone: PillTone; label: string } =
+    sleeping
+      ? { tone: "grey", label: t("{mode} · asleep", { mode: modeLabel }) }
+      : phase === "ready" || phase === "vm" || phase === "local"
+        ? { tone: "green", label: t("{mode} · online", { mode: modeLabel }) }
+        : phase === "starting"
+          ? { tone: "blue", label: t("Starting…") }
+          : phase === "checking"
+            ? { tone: "grey", label: t("Checking…") }
+            : phase === "off"
+              ? { tone: "grey", label: t("Computer off") }
+              : { tone: "red", label: t("Not connected") };
+  const canTakeOver = panelView === "computer" && (phase === "ready" || phase === "vm");
+  const takeOver = () => {
+    if (control.held) {
+      void controlAction("release");
+      void window.ogb?.desktopViewer?.close(bot.id);
+      return;
+    }
+    void openDesktop();
+  };
+  const segments = [
+    { value: "computer" as const, label: modeLabel },
+    { value: "android" as const, label: t("Phone screen"), disabled: !androidConnected },
+    ...(browserEnabled ? [{ value: "browser" as const, label: t("Browser") }] : []),
+  ];
+
   return (
     <>
     <aside
-      className="animate-panel-in relative flex h-full shrink-0 flex-col border-l border-hairline/40 bg-panel"
+      aria-label={t("{name}'s computer", { name: bot.name })}
+      className="animate-panel-in relative flex h-full shrink-0 flex-col border-l border-hairline/40 bg-inset"
       style={{ width: panelWidth }}
     >
       <div
@@ -844,65 +901,53 @@ export function ComputerPanel({
         onPointerMove={onResizeMove}
         onPointerUp={onResizeEnd}
         onPointerCancel={onResizeEnd}
-        className="absolute inset-y-0 left-0 z-10 w-1.5 cursor-col-resize hover:bg-accent/40"
+        className="absolute inset-y-0 left-0 z-10 w-1.5 cursor-col-resize hover:bg-select/30"
       />
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3">
-        <button
-          onClick={() => dispatch({ type: "toggleSettings", open: true })}
-          className="rounded-md p-1 text-ink-secondary hover:bg-control hover:text-ink"
-          title={t("Bot settings")}
-        >
-          <Settings size={18} />
-        </button>
-        {androidConnected || browserEnabled ? (
-          <div className="flex overflow-hidden rounded-lg border border-hairline/40">
-            <button
-              onClick={() => selectPanelView("computer")}
-              aria-pressed={panelView === "computer"}
-              className={cn(
-                "flex items-center gap-1.5 px-2.5 py-1 text-[12.5px]",
-                panelView === "computer" ? "bg-control text-ink" : "text-ink-secondary hover:text-ink",
-              )}
-            >
-              <Monitor size={13} /> {t("Computer")}
-            </button>
-            {androidConnected && (
-            <button
-              onClick={() => selectPanelView("android")}
-              aria-pressed={panelView === "android"}
-              className={cn(
-                "flex items-center gap-1.5 border-l border-hairline/40 px-2.5 py-1 text-[12.5px]",
-                panelView === "android" ? "bg-control text-ink" : "text-ink-secondary hover:text-ink",
-              )}
-            >
-              <Smartphone size={13} /> Android
-            </button>
-            )}
-            {browserEnabled && (
-            <button
-              onClick={() => {
-                setError(null);
-                selectPanelView("browser");
-              }}
-              aria-pressed={panelView === "browser"}
-              className={cn(
-                "flex items-center gap-1.5 border-l border-hairline/40 px-2.5 py-1 text-[12.5px]",
-                panelView === "browser" ? "bg-control text-ink" : "text-ink-secondary hover:text-ink",
-              )}
-            >
-              <Globe size={13} /> {t("Browser")}
-            </button>
-            )}
-          </div>
-        ) : (
-          <span className="text-[15px] font-semibold text-ink">{t("Computer")}</span>
+      {/* Header: whose computer, its state, what you're doing, where to look, 接管 */}
+      <div className="flex min-h-14 shrink-0 flex-wrap items-center gap-2 py-2 pl-[18px] pr-3">
+        <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-raised text-ink-secondary shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_45%,transparent)]">
+          <Monitor size={16} />
+        </span>
+        <b className="mr-1 truncate text-[15.5px]">{t("{name}'s computer", { name: bot.name })}</b>
+        <Pill tone={status.tone} dot className="h-6">{status.label}</Pill>
+        {panelView === "computer" && (
+          control.held
+            ? <Pill tone="amber" className="h-6"><Hand size={12} />{t("You're driving")}</Pill>
+            : <Pill tone="grey" className="h-6 bg-raised shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_45%,transparent)]"><Eye size={12} />{t("You're watching · read-only")}</Pill>
+        )}
+        <span className="flex-1" />
+        <Segmented
+          label={t("Which screen")}
+          value={panelView}
+          onChange={(view) => {
+            setError(null);
+            setReplay(null);
+            selectPanelView(view);
+          }}
+          options={segments}
+        />
+        {canTakeOver && (
+          <Button size="sm" onClick={takeOver} disabled={controlPending || pending === "join" || (phase === "vm" && !vmViewerUrl && !control.held)}>
+            {controlPending || pending === "join" ? <Loader2 size={14} className="animate-spin" /> : <Hand size={14} />}
+            {control.held ? t("Hand back to {name}", { name: bot.name }) : t("Take over")}
+          </Button>
         )}
         <button
-          onClick={() => dispatch({ type: "toggleComputer", open: false })}
-          className="rounded-md p-1 text-ink-secondary hover:bg-control hover:text-ink"
+          type="button"
+          onClick={() => dispatch({ type: "toggleSettings", open: true })}
+          className="grid size-8 place-items-center rounded-lg text-ink-secondary hover:bg-raised-hover hover:text-ink"
+          title={t("Bot settings")}
+          aria-label={t("Bot settings")}
         >
-          <X size={18} />
+          <Settings size={16} />
+        </button>
+        <button
+          type="button"
+          onClick={() => dispatch({ type: "toggleComputer", open: false })}
+          aria-label={t("Close")}
+          className="grid size-8 place-items-center rounded-lg text-ink-secondary hover:bg-raised-hover hover:text-ink"
+        >
+          <X size={17} />
         </button>
       </div>
 
@@ -916,7 +961,7 @@ export function ComputerPanel({
             onExpand={onExpandBrowser ? expandBrowser : undefined}
           />
           {error && (
-            <div role="alert" className="mt-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-[12px] text-danger">
+            <div role="alert" className="mt-2 rounded-lg bg-danger/10 px-3 py-2 text-[12px] text-danger">
               {error}
             </div>
           )}
@@ -926,133 +971,142 @@ export function ComputerPanel({
           <AndroidDevicePanel status={androidStatus} />
         </div>
       ) : (
-      <div className="flex-1 overflow-y-auto px-5 pb-5">
-          {/* Screen preview */}
-          <div className="mb-1.5 mt-2 flex items-center justify-between text-[13px] text-ink-secondary">
-            <span>{t("{name}'s screen", { name: bot.name })}</span>
-            {phase === "local" && <span className="text-[11px]">{t("this computer")}</span>}
-            {phase === "vm" && <span className="text-[11px]">{t("Local VM")}</span>}
-            {cloudBackend === "vps" && (phase === "ready" || phase === "starting") && <span className="text-[11px]">{t("self-hosted VPS")}</span>}
-        </div>
-        <div className="flex aspect-[16/10] w-full items-center justify-center overflow-hidden rounded-xl bg-card">
-          {frameSrc && previewOpensDesktop ? (
-            <button
-              type="button"
-              onClick={() => void openDesktop()}
-              disabled={controlPending || pending === "join"}
-              className="group relative flex h-full w-full cursor-pointer items-center justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-wait"
-              aria-label={t("Open {name}'s live desktop", { name: bot.name })}
-              title={t("Open live desktop")}
-            >
-              <img
-                src={frameSrc}
-                alt={t("{name}'s screen", { name: bot.name })}
-                className="h-full w-full object-contain transition group-hover:brightness-75 group-focus-visible:brightness-75"
-              />
-              <span className="pointer-events-none absolute right-2 top-2 flex items-center gap-1 rounded-md bg-black/70 px-2 py-1 text-[11px] font-medium text-white opacity-80 shadow-sm transition group-hover:opacity-100 group-focus-visible:opacity-100">
-                {pending === "join" ? <Loader2 size={12} className="animate-spin" /> : <Maximize2 size={12} />}
-                {t("Open")}
-              </span>
-            </button>
-          ) : frameSrc ? (
-            <img
-              src={frameSrc}
-              alt={t("{name}'s screen", { name: bot.name })}
-              className="h-full w-full object-contain"
-              title={phase === "vm" ? t("Watch-only preview") : undefined}
-            />
-          ) : (
-            <div className="flex flex-col items-center gap-2 px-6 text-center text-ink-secondary">
-              {phase === "checking" || phase === "starting" || phase === "vm" || (phase === "local" && !isLinux) ? (
-                <Loader2 size={18} className="animate-spin" />
-              ) : phase === "off" ? (
-                <Power size={22} />
-              ) : (
-                <Monitor size={22} />
-              )}
-              <span className="text-[12px]">
-                {phase === "ready"
-                  ? t("Waiting for the first frame…")
-                  : phase === "vm"
-                    ? t("Capturing the Local VM screen…")
-                  : phase === "local"
-                    ? isLinux
-                      ? t("Ready for approved bot actions. Start the separate preview below when you want to watch the screen.")
-                      : localMisses >= 3
-                      ? t("No frames yet — the preview needs Screen Recording permission. After granting, relaunch the app.")
-                      : t("Capturing this computer's screen…")
-                    : emptyState[phase]}
-              </span>
-              {phase === "local" && !isLinux && localMisses >= 3 && (
-                <button
-                  onClick={() => window.ogb?.permOpenSettings?.("screen")}
-                  className="mt-1 rounded-lg bg-control px-3 py-1.5 text-[12px] text-ink hover:bg-raised-hover"
-                >
-                  {t("Open Settings")}
-                </button>
-              )}
-              {phase === "vm-unavailable" && (
-                vmStatus?.mode === "per-bot" && vmStatus.image && vmStatus.create_supported ? (
-                  <button
-                    onClick={() => void runVmAction(vmStatus.container === "missing" ? "vm-create" : "vm-recreate")}
-                    disabled={pending !== null}
-                    className="mt-1 rounded-lg bg-primary px-3 py-1.5 text-[12px] font-medium text-primary-ink hover:brightness-110 disabled:opacity-50"
-                  >
-                    {(pending === "vm-create" || pending === "vm-recreate") && (
-                      <Loader2 size={13} className="mr-1.5 inline animate-spin" />
-                    )}
-                    {vmStatus.container === "missing" ? t("Create {name}'s VM", { name: bot.name }) : t("Replace {name}'s VM", { name: bot.name })}
-                  </button>
-                ) : (
-                  <button
-                    onClick={openVmSettings}
-                    className="mt-1 rounded-lg bg-control px-3 py-1.5 text-[12px] text-ink hover:bg-raised-hover"
-                  >
-                    {t("Open Local VM setup")}
-                  </button>
-                )
-              )}
-              {(phase === "vps-unconfigured" || phase === "vps-stopped") && (
-                <button
-                  onClick={openConnectionSettings}
-                  className="mt-1 rounded-lg bg-control px-3 py-1.5 text-[12px] text-ink hover:bg-raised-hover"
-                >
-                  {t("Open VPS settings")}
-                </button>
-              )}
-              {(phase === "vps-stopped" || (phase === "vps-unconfigured" && vpsStatus?.configured)) &&
-                (bot.computer === "cloud" || bot.autoStartVps) && (
-                <button
-                  onClick={() => run("provision")}
-                  disabled={pending === "provision"}
-                  className="mt-1 rounded-lg bg-control px-3 py-1.5 text-[12px] text-ink hover:bg-raised-hover disabled:opacity-50"
-                >
-                  {pending === "provision" && <Loader2 size={13} className="mr-1.5 inline animate-spin" />}
-                  {phase === "vps-stopped" ? t("Start VPS computer") : t("Prepare VPS computer")}
-                </button>
-              )}
-              {phase === "vps-incompatible" && vpsStatus?.managed &&
-                (bot.computer === "cloud" || bot.autoStartVps) && (
-                <button
-                  onClick={() => void replaceVpsComputer()}
-                  disabled={pending === "vps-replace"}
-                  className="mt-1 rounded-lg bg-primary px-3 py-1.5 text-[12px] font-medium text-primary-ink hover:brightness-110 disabled:opacity-50"
-                >
-                  {pending === "vps-replace" && <Loader2 size={13} className="mr-1.5 inline animate-spin" />}
-                  {t("Replace VPS computer")}
-                </button>
-              )}
+      <div className="flex-1 space-y-3.5 overflow-y-auto px-[18px] pb-5">
+        {/* The bot asked for your hands */}
+        {(phase === "ready" || phase === "vm") && control.helpReason && !control.held && (
+          <div className="flex items-center gap-3 rounded-xl bg-warning/10 px-3.5 py-2.5 shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--color-warning)_25%,transparent)]">
+            <Hand size={16} className="shrink-0 text-warning" />
+            <div className="min-w-0 flex-1 text-[12.5px] leading-relaxed text-ink">
+              <b>{bot.name}</b> {t("asked for your hands: {reason}", { reason: control.helpReason })}
             </div>
+            <Button size="sm" onClick={() => void openDesktop()} disabled={controlPending || pending === "join"}>
+              {pending === "join" ? <Loader2 size={13} className="animate-spin" /> : <Hand size={13} />}
+              {t("Take over")}
+            </Button>
+            <Button size="sm" variant="soft" onClick={() => void controlAction("dismiss-help")} disabled={controlPending}>{t("Dismiss")}</Button>
+          </div>
+        )}
+
+        {/* The live screen */}
+        <div
+          className="relative overflow-hidden rounded-2xl shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_40%,transparent)]"
+          style={{ background: "radial-gradient(120% 90% at 85% 0%, color-mix(in srgb, var(--color-select) 12%, var(--color-control)) 0, var(--color-control) 55%)" }}
+        >
+          <div className="flex aspect-[16/10] w-full items-center justify-center px-3 pb-[42px] pt-3">
+            {shownSrc && previewOpensDesktop && replay === null ? (
+              <button
+                type="button"
+                onClick={() => void openDesktop()}
+                disabled={controlPending || pending === "join"}
+                className="group relative flex h-full w-full cursor-pointer items-center justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-select disabled:cursor-wait"
+                aria-label={t("Open {name}'s live desktop", { name: bot.name })}
+                title={t("Open live desktop")}
+              >
+                <img
+                  src={shownSrc}
+                  alt={t("{name}'s screen", { name: bot.name })}
+                  onLoad={(event) => setFrameSize({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })}
+                  className="max-h-full max-w-full rounded-[10px] object-contain shadow-[0_0_0_1px_rgb(16_24_40/0.1),0_18px_40px_-18px_rgb(16_24_40/0.4)] transition group-hover:brightness-90 group-focus-visible:brightness-90"
+                />
+                <span className="pointer-events-none absolute right-2 top-2 flex items-center gap-1 rounded-md bg-[rgb(20_22_28/0.78)] px-2 py-1 text-[11px] font-medium text-white opacity-0 shadow-sm transition group-hover:opacity-100 group-focus-visible:opacity-100">
+                  {pending === "join" ? <Loader2 size={12} className="animate-spin" /> : <Maximize2 size={12} />}
+                  {t("Open")}
+                </span>
+              </button>
+            ) : shownSrc ? (
+              <img
+                src={shownSrc}
+                alt={t("{name}'s screen", { name: bot.name })}
+                onLoad={(event) => setFrameSize({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })}
+                className="max-h-full max-w-full rounded-[10px] object-contain shadow-[0_0_0_1px_rgb(16_24_40/0.1),0_18px_40px_-18px_rgb(16_24_40/0.4)]"
+                title={phase === "vm" ? t("Watch-only preview") : undefined}
+              />
+            ) : (
+              <div className="flex max-w-[420px] flex-col items-center gap-2 px-6 text-center text-ink-secondary">
+                {phase === "checking" || phase === "starting" || phase === "vm" || (phase === "local" && !isLinux) ? (
+                  <Loader2 size={18} className="animate-spin" />
+                ) : phase === "off" ? (
+                  <Power size={22} />
+                ) : (
+                  <Monitor size={22} />
+                )}
+                <span className="text-[12.5px]">
+                  {phase === "ready"
+                    ? t("Waiting for the first frame…")
+                    : phase === "vm"
+                      ? t("Capturing the Local VM screen…")
+                    : phase === "local"
+                      ? isLinux
+                        ? t("Ready for approved bot actions. Start the separate preview below when you want to watch the screen.")
+                        : localMisses >= 3
+                        ? t("No frames yet — the preview needs Screen Recording permission. After granting, relaunch the app.")
+                        : t("Capturing this computer's screen…")
+                      : emptyState[phase]}
+                </span>
+                {phase === "local" && !isLinux && localMisses >= 3 && (
+                  <Button size="sm" variant="ghost" onClick={() => window.ogb?.permOpenSettings?.("screen")}>{t("Open Settings")}</Button>
+                )}
+                {phase === "vm-unavailable" && (
+                  vmStatus?.mode === "per-bot" && vmStatus.image && vmStatus.create_supported ? (
+                    <Button size="sm" onClick={() => void runVmAction(vmStatus.container === "missing" ? "vm-create" : "vm-recreate")} disabled={pending !== null}>
+                      {(pending === "vm-create" || pending === "vm-recreate") && <Loader2 size={13} className="animate-spin" />}
+                      {vmStatus.container === "missing" ? t("Create {name}'s VM", { name: bot.name }) : t("Replace {name}'s VM", { name: bot.name })}
+                    </Button>
+                  ) : (
+                    <Button size="sm" variant="ghost" onClick={openVmSettings}>{t("Open Local VM setup")}</Button>
+                  )
+                )}
+                {(phase === "vps-unconfigured" || phase === "vps-stopped") && (
+                  <Button size="sm" variant="ghost" onClick={openConnectionSettings}>{t("Open VPS settings")}</Button>
+                )}
+                {(phase === "vps-stopped" || (phase === "vps-unconfigured" && vpsStatus?.configured)) &&
+                  (bot.computer === "cloud" || bot.autoStartVps) && (
+                  <Button size="sm" variant="soft" onClick={() => run("provision")} disabled={pending === "provision"}>
+                    {pending === "provision" && <Loader2 size={13} className="animate-spin" />}
+                    {phase === "vps-stopped" ? t("Start VPS computer") : t("Prepare VPS computer")}
+                  </Button>
+                )}
+                {phase === "vps-incompatible" && vpsStatus?.managed &&
+                  (bot.computer === "cloud" || bot.autoStartVps) && (
+                  <Button size="sm" onClick={() => void replaceVpsComputer()} disabled={pending === "vps-replace"}>
+                    {pending === "vps-replace" && <Loader2 size={13} className="animate-spin" />}
+                    {t("Replace VPS computer")}
+                  </Button>
+                )}
+              </div>
+            )}
+          </div>
+          {/* what the bot is doing right now */}
+          {actionLabel && replay === null && shownSrc && (
+            <span className="absolute left-4 top-4 inline-flex h-6 max-w-[70%] items-center gap-1.5 rounded-[7px] bg-select px-2.5 text-[12px] font-semibold text-white shadow-[0_6px_14px_-6px_color-mix(in_srgb,var(--color-select)_70%,transparent)]">
+              <Loader2 size={12} className="shrink-0 animate-spin" />
+              <span className="truncate">{t("{name} · {action}", { name: bot.name, action: actionLabel })}</span>
+            </span>
           )}
+          {/* the dock: live or replay, frame size, clock */}
+          <div className="absolute inset-x-3 bottom-0 flex h-[42px] items-center justify-between">
+            {replay !== null && replayStep ? (
+              <button type="button" onClick={() => setReplay(null)} className="inline-flex h-[22px] items-center gap-1.5 rounded-[7px] bg-warning px-2 text-[11px] font-semibold text-white">
+                <History size={12} />
+                {t("Replay {step}/{total} · back to live", { step: replay + 1, total: steps.length })}
+              </button>
+            ) : shownSrc ? (
+              <span className="inline-flex h-[22px] items-center gap-1.5 rounded-[7px] bg-[rgb(20_22_28/0.78)] px-2 text-[11px] font-semibold text-white">
+                <i className="size-[7px] rounded-full bg-[#7C93FF] shadow-[0_0_0_3px_rgb(124_147_255/0.35)]" />
+                {frameSize ? t("Live · {width}×{height}", { width: frameSize.width, height: frameSize.height }) : t("Live")}
+              </span>
+            ) : <span />}
+            <span className="font-mono text-[11.5px] text-ink-secondary">{replayStep ? clockTime(replayStep.at) : clockTime(Date.now())}</span>
+          </div>
         </div>
 
         {error && (
-          <div className="mt-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-[12px] text-danger">
+          <div className="rounded-lg bg-danger/10 px-3 py-2 text-[12px] text-danger">
             {error}
           </div>
         )}
         {phase === "unconfigured" && (
-          <div className="mt-3 rounded-xl bg-card p-4">
+          <div className="rounded-[14px] bg-raised p-4 shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_45%,transparent)]">
             <div className="mb-3 text-[13px] text-ink-secondary">
               {t("Add a Box API key to give this bot a cloud computer — it spins up right here.")}
             </div>
@@ -1063,177 +1117,77 @@ export function ComputerPanel({
           </div>
         )}
         {phase === "vps-unconfigured" && (
-          <div className="mt-3 rounded-xl bg-card p-4">
+          <div className="rounded-[14px] bg-raised p-4 shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_45%,transparent)]">
             <div className="mb-3 text-[13px] text-ink-secondary">
               {t("Configure the VPS SSH alias in App Settings → Connections. Auto only reuses an existing ready container.")}
             </div>
-            <button
-              onClick={openConnectionSettings}
-              className="rounded-lg bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover"
-            >
-              {t("Open VPS settings")}
-            </button>
+            <Button variant="soft" onClick={openConnectionSettings}>{t("Open VPS settings")}</Button>
           </div>
         )}
 
-        {phase === "vm" &&
-          vmStatus?.mode === "per-bot" &&
-          window.ogb?.desktopWorkspace &&
-          onOpenVmWorkspace && (
-            <button
-              type="button"
-              onClick={() => onOpenVmWorkspace(bot.id)}
-              disabled={pending !== null}
-              className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg border border-accent/30 bg-accent/10 py-2 text-[13px] font-medium text-ink hover:bg-accent/15 disabled:opacity-50"
-              title={t("Watch two Local VM desktops together without pausing either bot")}
-            >
-              <Columns2 size={14} />
-              {t("Open two desktops")}
-            </button>
+        <StepStrip steps={steps} replay={replay} onReplay={setReplay} />
+
+        {/* the 接管 rule */}
+        <div className="flex min-h-11 items-center gap-2.5 rounded-xl bg-raised py-2 pl-2 pr-3.5 text-[12.5px] text-ink shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_45%,transparent)]">
+          <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-warning/12 text-warning"><Hand size={15} /></span>
+          <span className="min-w-0 flex-1">
+            {control.held
+              ? t("You have the wheel — the bot's clicks and keystrokes are refused until you hand it back.")
+              : t("Taking over pauses {name}; hand it back to {name} and it carries on from the current screen.", { name: bot.name })}
+          </span>
+          {!control.held && <span className="hidden shrink-0 text-[11.5px] text-ink-secondary/80 xl:inline">{t("While read-only, your clicks don't reach the computer")}</span>}
+        </div>
+
+        {/* everything else the panel could always do */}
+        <div className="flex flex-wrap gap-2">
+          {((phase === "vm" && vmViewerUrl && control.held) || (phase === "ready" && control.held)) && (
+            <Button variant="ghost" size="sm" onClick={() => void openDesktop()} disabled={pending === "join"} title={t("Open the Local VM's live desktop inside OpenMausBot")}>
+              {pending === "join" ? <Loader2 size={13} className="animate-spin" /> : <Monitor size={13} />}
+              {t("Open live desktop")}
+            </Button>
           )}
-
-        {/* Who is driving — take the wheel / hand it back */}
-        {(phase === "ready" || phase === "vm") && control.helpReason && !control.held && (
-          <div className="mt-3 rounded-xl border border-warning/25 bg-warning/10 p-4">
-            <div className="text-[13px] leading-relaxed text-warning">
-              <b>{bot.name}</b> {t("asked for your hands: {reason}", { reason: control.helpReason })}
-            </div>
-            <div className="mt-2 flex gap-2">
-              <button
-                onClick={() =>
-                  phase === "vm" || phase === "ready" ? void openDesktop() : controlAction("take")
-                }
-                disabled={controlPending || pending === "join"}
-                className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-primary py-2 text-[13px] font-medium text-primary-ink hover:brightness-110 disabled:opacity-50"
-              >
-                {pending === "join" ? <Loader2 size={14} className="animate-spin" /> : <Hand size={14} />}
-                {t("Take control")}
-              </button>
-              <button
-                onClick={() => controlAction("dismiss-help")}
-                disabled={controlPending}
-                className="rounded-lg bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50"
-              >
-                {t("Dismiss")}
-              </button>
-            </div>
-          </div>
-        )}
-        {(phase === "ready" || phase === "vm") && control.held && (
-          <div className="mt-3 rounded-xl border border-accent/25 bg-accent/10 p-4">
-            <div className="text-[13px] leading-relaxed text-ink">
-              {t("You have the wheel — the bot's clicks and keystrokes are refused until you hand it back.")}
-              {phase === "ready" && t(" Use Open desktop to drive.")}
-              {phase === "vm" && t(" Use Open desktop to drive — the preview here is watch-only.")}
-            </div>
-            <button
-              onClick={() => {
-                controlAction("release");
-                void window.ogb?.desktopViewer?.close(bot.id);
-              }}
-              disabled={controlPending}
-              className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg bg-primary py-2 text-[13px] font-medium text-primary-ink hover:brightness-110 disabled:opacity-50"
-            >
-              <Hand size={14} />
-              {t("Hand control back")}
-            </button>
-          </div>
-        )}
-        {phase === "vm" && vmViewerUrl && control.held && (
-          <button
-            onClick={() => void openDesktop()}
-            disabled={pending === "join"}
-            className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-control py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50"
-            title={t("Open the Local VM's live desktop inside OpenMausBot")}
-          >
-            {pending === "join" ? <Loader2 size={14} className="animate-spin" /> : <Monitor size={14} />}
-            {t("Open live desktop")}
-          </button>
-        )}
-        {phase === "vm" && !control.held && !control.helpReason && (
-          <button
-            onClick={() => void openDesktop()}
-            disabled={controlPending || pending === "join" || !vmViewerUrl}
-            className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-control py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50"
-            title={t("Pause the bot's hands and open the Local VM's live desktop")}
-          >
-            {pending === "join" ? <Loader2 size={14} className="animate-spin" /> : <Hand size={14} />}
-            {t("Take control")}
-          </button>
-        )}
-        {phase === "vm" && vmStatus?.mode === "per-bot" && (
-          <button
-            onClick={() => void runVmAction("vm-delete")}
-            disabled={pending !== null || bot.busy}
-            className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg border border-danger/30 py-2 text-[13px] text-danger hover:bg-danger/10 disabled:opacity-50"
-            title={bot.busy ? t("Stop this bot's turn before deleting its VM") : t("Delete {name}'s Local VM", { name: bot.name })}
-          >
-            {pending === "vm-delete" ? <Loader2 size={14} className="animate-spin" /> : <Power size={14} />}
-            {t("Delete this bot's VM")}
-          </button>
-        )}
-        {/* Cloud-only actions */}
-        {phase === "ready" && (
-          <div className="mt-3 flex gap-2">
-            {!control.held && !control.helpReason && (
-              <button
-                onClick={() =>
-                  void openDesktop()
-                }
-                disabled={controlPending || pending === "join"}
-                className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-control py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50"
-                title={t("Pause the bot's hands and drive this computer yourself")}
-              >
-                {pending === "join" ? <Loader2 size={14} className="animate-spin" /> : <Hand size={14} />}
-                {t("Take control")}
-              </button>
-            )}
-            {control.held && (
-              <button
-                onClick={() => void openDesktop()}
-                disabled={pending === "join"}
-                className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-control py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50"
-              >
-                {pending === "join" ? <Loader2 size={14} className="animate-spin" /> : <Monitor size={14} />}
-                {t("Open live desktop")}
-              </button>
-            )}
-            {(cloudBackend === "vps" || boxState !== "archived") && (
-              <button
-                onClick={() => run("sleep")}
-                disabled={pending === "sleep"}
-                className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50"
-                title={t("Put the computer to sleep")}
-              >
-                {pending === "sleep" ? <Loader2 size={14} className="animate-spin" /> : <Moon size={14} />}
-                {t("Sleep")}
-              </button>
-            )}
-          </div>
-        )}
+          {phase === "ready" && (cloudBackend === "vps" || boxState !== "archived") && (
+            <Button variant="ghost" size="sm" onClick={() => run("sleep")} disabled={pending === "sleep"} title={t("Put the computer to sleep")}>
+              {pending === "sleep" ? <Loader2 size={13} className="animate-spin" /> : <Moon size={13} />}
+              {t("Sleep")}
+            </Button>
+          )}
+          {phase === "vm" && vmStatus?.mode === "per-bot" && window.ogb?.desktopWorkspace && onOpenVmWorkspace && (
+            <Button variant="ghost" size="sm" onClick={() => onOpenVmWorkspace(bot.id)} disabled={pending !== null} title={t("Watch two Local VM desktops together without pausing either bot")}>
+              <Columns2 size={13} />
+              {t("Open two desktops")}
+            </Button>
+          )}
+          {phase === "vm" && vmStatus?.mode === "per-bot" && (
+            <Button variant="danger" size="sm" onClick={() => void runVmAction("vm-delete")} disabled={pending !== null || bot.busy} title={bot.busy ? t("Stop this bot's turn before deleting its VM") : t("Delete {name}'s Local VM", { name: bot.name })}>
+              {pending === "vm-delete" ? <Loader2 size={13} className="animate-spin" /> : <Power size={13} />}
+              {t("Delete this bot's VM")}
+            </Button>
+          )}
+        </div>
 
         <LocalScreenPreview />
         <LinuxLocalControl />
         <MacLocalControl />
 
         {/* Computer source */}
-          <div className="mt-4 rounded-xl bg-card p-4">
-            <div className="text-[15px] font-medium text-ink">{t("Runs on")}</div>
-            <div className="mt-0.5 text-[13px] text-ink-secondary">
-              {!bot.computer &&
-                (isLinux || !localSelectable
-                  ? cloudBackend === "vps"
-                    ? t("Auto reuses a ready VPS when one is configured; otherwise computer use stays off. ")
-                    : `${linuxAutoDescription()} `
-                  : cloudBackend === "vps"
-                    ? t("Auto reuses a ready VPS when one exists, otherwise this computer. ")
-                    : t("Auto uses a cloud box when one exists, otherwise this computer. "))}
-              {tRich(
-                "Pick where this bot's computer lives. <b>Local VM</b> is a Cua-controlled Linux desktop in a container on this machine — free and separate from your own desktop. Set it up in App Settings → Local VM.",
-                { b: (chunk) => <b className="text-ink">{chunk}</b> },
-              )}
+        <div className="rounded-[14px] bg-raised p-4 shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_45%,transparent)]">
+          <div className="text-[14px] font-semibold text-ink">{t("Runs on")}</div>
+          <div className="mt-0.5 text-[12.5px] leading-relaxed text-ink-secondary">
+            {!bot.computer &&
+              (isLinux || !localSelectable
+                ? cloudBackend === "vps"
+                  ? t("Auto reuses a ready VPS when one is configured; otherwise computer use stays off. ")
+                  : `${linuxAutoDescription()} `
+                : cloudBackend === "vps"
+                  ? t("Auto reuses a ready VPS when one exists, otherwise this computer. ")
+                  : t("Auto uses a cloud box when one exists, otherwise this computer. "))}
+            {tRich(
+              "Pick where this bot's computer lives. <b>Local VM</b> is a Cua-controlled Linux desktop in a container on this machine — free and separate from your own desktop. Set it up in App Settings → Local VM.",
+              { b: (chunk) => <b className="text-ink">{chunk}</b> },
+            )}
           </div>
-          <div className="mt-3 flex overflow-hidden rounded-lg border border-hairline/40">
+          <div className="mt-3 flex gap-0.5 rounded-[10px] bg-control p-0.5">
             {(
               [
                 ["cloud", msg("Cloud")],
@@ -1241,44 +1195,43 @@ export function ComputerPanel({
                 ["local", msg("This computer")],
                 ["off", msg("Off")],
               ] as const
-            ).map(([mode, label], i) => (
-              (() => {
-                const disabled =
-                  (mode === "cloud" && !cloudSupported) ||
-                  (mode === "vm" && !vmSupported) ||
-                  (mode === "local" && !localSelectable);
-                const unavailableTitle =
-                  mode === "vm" && !vmSupported
-                    ? t("This model engine cannot use the Local VM")
-                    : mode === "cloud" && !cloudSupported
-                      ? t("This model engine cannot use cloud computer tools")
-                      : mode === "local" && !localSelectable
-                        ? localDisabledReason ?? t("Local computer control isn't ready")
-                          : undefined;
-                return (
-              <button
-                key={mode}
-                disabled={disabled}
-                title={unavailableTitle}
-                onClick={() => {
-                  if (mode === bot.computer) return;
-                  if (mode === "local" && bot.autoApprove) setLocalAutoWarning(true);
-                  else dispatch({ type: "updateBot", botId: bot.id, patch: { computer: mode } });
-                }}
-                className={cn(
-                  "flex-1 py-1.5 text-[13px]",
-                  i > 0 && "border-l border-hairline/40",
-                  disabled && "cursor-not-allowed opacity-40",
-                  bot.computer === mode
-                    ? "bg-control text-ink"
-                    : "text-ink-secondary hover:bg-control/60 hover:text-ink",
-                )}
-              >
-                {t(label)}
-              </button>
-                );
-              })()
-            ))}
+            ).map(([mode, label]) => {
+              const disabled =
+                (mode === "cloud" && !cloudSupported) ||
+                (mode === "vm" && !vmSupported) ||
+                (mode === "local" && !localSelectable);
+              const unavailableTitle =
+                mode === "vm" && !vmSupported
+                  ? t("This model engine cannot use the Local VM")
+                  : mode === "cloud" && !cloudSupported
+                    ? t("This model engine cannot use cloud computer tools")
+                    : mode === "local" && !localSelectable
+                      ? localDisabledReason ?? t("Local computer control isn't ready")
+                      : undefined;
+              return (
+                <button
+                  key={mode}
+                  type="button"
+                  disabled={disabled}
+                  title={unavailableTitle}
+                  aria-pressed={bot.computer === mode}
+                  onClick={() => {
+                    if (mode === bot.computer) return;
+                    if (mode === "local" && bot.autoApprove) setLocalAutoWarning(true);
+                    else dispatch({ type: "updateBot", botId: bot.id, patch: { computer: mode } });
+                  }}
+                  className={cn(
+                    "h-7 flex-1 rounded-lg text-[12.5px] font-medium transition-colors",
+                    disabled && "cursor-not-allowed opacity-40",
+                    bot.computer === mode
+                      ? "bg-raised font-semibold text-ink shadow-[0_1px_2px_rgb(16_24_40/0.12)]"
+                      : "text-ink-secondary hover:text-ink",
+                  )}
+                >
+                  {t(label)}
+                </button>
+              );
+            })}
           </div>
           {(!bot.computer || bot.computer === "cloud") && (
             <>
@@ -1311,31 +1264,32 @@ export function ComputerPanel({
         </div>
 
         {/* Routines */}
-        <div className="mt-4 rounded-xl bg-card p-4">
+        <div className="rounded-[14px] bg-raised p-4 shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_45%,transparent)]">
           <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 text-[15px] font-medium text-ink">
-              <CalendarClock size={16} className="text-accent" />
+            <div className="flex items-center gap-2 text-[14px] font-semibold text-ink">
+              <CalendarClock size={16} className="text-accent-text" />
               {t("Scheduled tasks")}
             </div>
             {botRoutines.length > 0 && (
-              <span className="rounded-full bg-control px-2 py-0.5 text-[10px] font-medium text-ink-secondary">
+              <span className="rounded-full bg-control px-2 py-0.5 text-[10.5px] font-semibold text-ink-secondary">
                 {botRoutines.length}
               </span>
             )}
           </div>
-          <div className="mt-0.5 text-[13px] text-ink-secondary">
+          <div className="mt-0.5 text-[12.5px] text-ink-secondary">
             {t("Schedule work for {name}. Use its current setup, or run the whole job inside its cloud VM.", { name: bot.name })}
           </div>
           {!computerDestination && (
-            <div className="mt-3 flex items-start gap-2 rounded-lg border border-warning/25 bg-warning/10 px-3 py-2 text-[11.5px] leading-relaxed text-warning">
+            <div className="mt-3 flex items-start gap-2 rounded-lg bg-warning/10 px-3 py-2 text-[11.5px] leading-relaxed text-warning">
               <Power size={13} className="mt-0.5 shrink-0" />
               {t("Scheduled tasks on this computer will not have desktop access while this is Off. Choose Cloud VM in the schedule editor to run the whole job there.")}
             </div>
           )}
           {activeRoutineRun && (
             <button
+              type="button"
               onClick={() => dispatch({ type: "showRoutines" })}
-              className="mt-3 flex w-full items-center gap-2 rounded-lg border border-accent/25 bg-accent/10 px-3 py-2 text-left text-[12px] text-accent hover:bg-accent/15"
+              className="mt-3 flex w-full items-center gap-2 rounded-lg bg-select/10 px-3 py-2 text-left text-[12px] text-accent-text hover:bg-select/15"
             >
               <Loader2 size={13} className={activeRoutineRun.status === "queued" ? "" : "animate-spin"} />
               <span className="min-w-0 flex-1 truncate">
@@ -1354,37 +1308,31 @@ export function ComputerPanel({
               {botRoutines.slice(0, 3).map((routine) => (
                 <button
                   key={routine.id}
+                  type="button"
                   onClick={() => dispatch({ type: "showRoutines" })}
-                  className="flex w-full items-center gap-2 rounded-lg bg-inset px-3 py-2 text-left hover:bg-control/60"
+                  className="flex w-full items-center gap-2 rounded-lg bg-inset px-3 py-2 text-left hover:bg-raised-hover"
                 >
                   <span className={cn("size-1.5 shrink-0 rounded-full", routine.enabled ? "bg-success" : "bg-ink-secondary/40")} />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[12.5px] font-medium text-ink">{routine.name}</span>
-                    <span className="block truncate text-[10.5px] text-ink-secondary">
+                    <span className="block truncate text-[11px] text-ink-secondary">
                       {routineScheduleLabel(routine)}{routine.runOn === "cloud" ? t(" · runs on VM") : ""}
                     </span>
                   </span>
-                  <span className="shrink-0 text-[10px] text-ink-secondary">{nextRunLabel(routine.nextRunAt)}</span>
+                  <span className="shrink-0 text-[11px] text-ink-secondary">{nextRunLabel(routine.nextRunAt)}</span>
                 </button>
               ))}
             </div>
           )}
           <div className="mt-3 flex gap-2">
-            <button
-              onClick={() => setCreatingRoutine(true)}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary py-2 text-[13px] font-medium text-primary-ink hover:brightness-110"
-            >
+            <Button size="sm" className="flex-1" onClick={() => setCreatingRoutine(true)}>
               <Plus size={14} />
               {t("Create schedule")}
-            </button>
-            <button
-              onClick={() => dispatch({ type: "showRoutines" })}
-              className="flex items-center justify-center gap-1.5 rounded-lg bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover"
-              title={t("Open schedules")}
-            >
+            </Button>
+            <Button size="sm" variant="soft" onClick={() => dispatch({ type: "showRoutines" })} title={t("Open schedules")}>
               <CalendarDays size={14} />
               {t("Schedules")}
-            </button>
+            </Button>
           </div>
         </div>
       </div>

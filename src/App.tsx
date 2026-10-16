@@ -49,7 +49,9 @@ function Shell() {
   const calendarOriginRef = useRef<Exclude<AppView, "routines">>("chat");
   const group = state.groups.find((g) => g.id === state.selectedId);
   const bot = group ? undefined : (state.bots.find((b) => b.id === state.selectedId) ?? state.bots[0]);
-  const calendarFocus = state.activeView === "routines";
+  // C6 (U14): the calendar now keeps the app sidebar, so it no longer takes
+  // over the window. Was: state.activeView === "routines".
+  const calendarFocus = false;
 
   // Nothing on this machine can run a bot. A missing cloud login does not
   // count — that CLI can still host a local model. Wait for the first

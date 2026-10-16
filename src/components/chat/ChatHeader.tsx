@@ -93,9 +93,13 @@ export function ChatHeader({
             </Pill>
           </>
         ) : (
-          bot.chiefOfStaff && (
+          // only the 主 Bot is 总控 (chiefBot in src/lib/org.ts): a section's
+          // chief of staff is that department's lead; one without a section
+          // gets no badge rather than a second 总控
+          bot.chiefOfStaff &&
+          bot.section?.trim() && (
             <Pill tone="grey" className="h-5 shrink-0 text-[11.5px] @max-xl/chathead:hidden">
-              {bot.section?.trim() ? t("{section} lead", { section: bot.section.trim() }) : t("Chief of Staff")}
+              {t("{section} lead", { section: bot.section.trim() })}
             </Pill>
           )
         )}

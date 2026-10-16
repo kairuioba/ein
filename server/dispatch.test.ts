@@ -647,6 +647,15 @@ describe("Dispatcher", () => {
       expect("error" in orgPlan([{ id: "x", title: "英文版", brief: "翻译", role: "翻译" }])).toBe(false);
     });
 
+    it("does not hire specialists when the company rules say the chief may not", () => {
+      writeOrg({ chiefBotId: "boss", rules: { chiefMay: { newSpecialist: false } } });
+      const refused = orgPlan([{ id: "video", title: "发布会视频", brief: "剪一条 30 秒视频", role: "视频剪辑师" }]);
+      expect(refused).toMatchObject({ error: expect.stringContaining("company rules") });
+      expect(host.created).toHaveLength(0);
+      writeOrg({ chiefBotId: "boss", rules: { chiefMay: { newSpecialist: true } } });
+      expect("error" in orgPlan([{ id: "video", title: "发布会视频", brief: "剪一条 30 秒视频", role: "视频剪辑师" }])).toBe(false);
+    });
+
     it("lets a lead plan its part with its own team; the subtask finishes with the lead's report", async () => {
       writeOrg({ chiefBotId: "boss" });
       const top = orgPlan([{ id: "page", title: "落地页", brief: "做发布会落地页", role: "前端工程师" }]);

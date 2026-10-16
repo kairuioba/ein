@@ -607,6 +607,12 @@ export class Dispatcher {
         if (!settings.autoCreate) {
           return { error: `Nobody on your team fits subtask "${item.id}" (${item.role}) and creating specialists is turned off. Name an assignee from list_bots.` };
         }
+        // the company's rules can keep the 主 Bot from hiring on its own
+        if (orgChief && !this.org().rules.chiefMay.newSpecialist) {
+          return {
+            error: `Nobody on your team fits subtask "${item.id}" (${item.role}), and your company rules do not let you create specialists on your own. Name an assignee from list_bots, or ask the user to add one.`,
+          };
+        }
         if (created.length >= settings.maxNewBots || this.host.bots().length + created.length >= this.host.maxBots) {
           // out of room for new bots: share the work among who we have
           assignee = this.leastLoaded(team.concat(created), subtasks, orgChief);

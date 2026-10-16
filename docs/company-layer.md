@@ -1,0 +1,44 @@
+# 公司层：把一群 Bot 当成一家公司来用
+
+这一层建在原有的 Bot、群聊、派发之上，不另起一套数据：部门就是侧边栏分组，主管就是该分组的总控（chief of staff），主 Bot 是整个公司的总控。下面是概念、界面和代码位置。
+
+## 概念
+
+| 概念 | 是什么 | 存在哪 |
+|---|---|---|
+| 主 Bot（总控） | 你只跟它说，它把事拆开派给各部门；带星标、置顶、戴皇冠 | `org.json` 的 `chiefBotId` |
+| 部门 | 一个侧边栏分组（`bot.section`）；颜色、编制、预算线、私有资料、隔离区、可用应用另存 | `org.json` 的 `departments` |
+| 主管 | 部门里那个 chief of staff；总控派活时按部门找主管 | `bot.chiefOfStaff` |
+| 小组（组 B…） | 活跑慢了中途加人，新人编成小组，只接还没开工的子任务 | 派发记录 `run.squads` |
+| 决议 #n | 你在选项卡上拍板的结果，带依据、决策人和由它派生的行动项 | `org-decisions.json` |
+| 资料库 | 有版本、有负责人的文档；订阅的 Bot 每轮都拿到最新版，还在用旧版的会被标出来 | `library/` |
+| 简报 | 整体进度、各部门状态、需要你拍板的事、替你批过的、作废的、风险、花费、时间线 | 实时计算（`/api/brief`） |
+
+## 规则（设置 → 组织）
+
+- **对外发布一律要你批**：发帖、发邮件、上线（含 `kubectl apply`、`helm upgrade`、`terraform apply` 这类部署）永远弹给你，不提供"总是允许"，Bot 不能改。
+- **无人值守 N 分钟没人批就作废**：Bot 在你不在时（Webhook 触发、被派发的活）弹出的审批，超时自动拒绝，卡片显示"已作废"。
+- **卡住多久往上报**：Bot 在干活却一直没进展，每过一档时间往上报一级：主管 → 主 Bot → 你。每一级都会在对方的聊天里留一行，到你这里会出现在"需要你"。
+- **预算线内总控可以直接**：加人、新建专员（可在设置里关掉）。
+- **汇报与节奏**：每天到点由主 Bot 在聊天里发简报一句话（同时记到时间线）；有活在跑时每 N 小时发一行进度。
+- **谁拍板**：员工 / 主管 / 总控 / 老板四级的决策权矩阵；带锁的行只有你能改。
+
+## 界面
+
+简报、工作台（看人 / 看事、加人）、日历、资料库、技能、连接应用在侧边栏顶部；设置是一整页（通用、外观、组织、引擎、自动审核、汇报与节奏、电脑、连接、手机、用量与账单、实验功能、更新）。⌘K 搜 Bot、群聊、消息、文件（资料库文档）和定时任务。
+
+每个引擎有一个自己的像素小人（不是官方 Logo），官方图标只出现在名牌左侧的小方块里。
+
+## 代码
+
+- 服务端：`server/org/`（`layer.ts` 是唯一入口，`index.ts` 里只有一行一行的挂钩，标注了 "company layer"）；派发在 `server/dispatch.ts`、`server/dispatch-api.ts`、`server/dispatch-diagnose.ts`。
+- 共享类型：`shared/org-types.ts`、`shared/dispatch-types.ts`。
+- 前端：`src/state/org-api.ts`（轮询缓存）、`src/lib/org.ts`、`src/components/{brief,workbench,library,settings,group,chat,mascot}/`。
+- 接口：`GET/PATCH /api/org`、`GET /api/org/events`、`GET /api/org/decisions`、`GET /api/brief`、`GET /api/usage/summary`、`GET/POST /api/library…`、`POST /api/dispatch/runs/:id/{approve,cancel,diagnose,amend}`。
+
+## 还没做的
+
+- 部门"可用应用"：一个都不允许时不挂载连接应用；只允许部分时靠提示词约束（连接网关没法按应用过滤）。
+- 隔离区只管资料库；跨部门问话还不会自动脱敏，"申请访问"卡片也还没有。
+- 加人之后不能撤回小组；小组随任务结束解散。
+- 通话需要 macOS 端的语音识别；"共享屏幕"和"发到简报"未接后端。

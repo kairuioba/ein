@@ -22,6 +22,57 @@ export interface InboxSource {
   /** a provider ask raised by this process and not yet settled */
   isLiveRequest(threadId: string, requestId: string): boolean;
   runs: readonly DispatchRun[];
+  /** the escalation rule (卡住多久往上报): a bot working without progress
+   * moves up one level every `afterMin` minutes — its lead, the 主 Bot, then
+   * you. Leave out to list no stuck bots. */
+  escalation?: { afterMin: number; chiefId?: string; now?: number };
+}
+
+/** Who a stuck bot's problem goes to, in order: its department's lead, the
+ * 主 Bot — whoever exists and is not the bot itself. */
+export function escalationLadder(bot: OrgBot, bots: readonly OrgBot[], chiefId: string | undefined): string[] {
+  const ladder: string[] = [];
+  const section = (bot.section ?? "").trim();
+  if (section && !bot.chiefOfStaff) {
+    const lead = bots.find((other) => !other.hidden && other.chiefOfStaff && (other.section ?? "").trim() === section);
+    if (lead && lead.id !== bot.id) ladder.push(lead.id);
+  }
+  if (chiefId && chiefId !== bot.id && !ladder.includes(chiefId)) ladder.push(chiefId);
+  return ladder;
+}
+
+/** Bots working with no sign of progress whose problem has climbed past the
+ * 主 Bot to you: one escalation each, with the path it took. */
+export function stuckEscalations(source: InboxSource, listed: ReadonlySet<string>): InboxItem[] {
+  const rule = source.escalation;
+  if (!rule || !(rule.afterMin > 0)) return [];
+  const now = rule.now ?? Date.now();
+  const step = rule.afterMin * 60_000;
+  const items: InboxItem[] = [];
+  for (const bot of source.bots) {
+    if (bot.hidden || listed.has(bot.id)) continue;
+    const working = bot.activity === "working" || (bot.busy === true && bot.activity === undefined);
+    if (!working) continue;
+    const threads = [...botThreads(bot), ...source.groups.filter((group) => group.busyBotId === bot.id).flatMap((group) => groupThreads(group))];
+    const lastAt = Math.max(0, ...threads.map((threadId) => source.messages(threadId).at(-1)?.at ?? 0));
+    if (!lastAt) continue;
+    const ladder = escalationLadder(bot, source.bots, rule.chiefId);
+    // one level per step: the bot, then each rung, then you
+    const levels = Math.floor((now - lastAt) / step);
+    if (levels <= ladder.length) continue;
+    const chain = [{ botId: bot.id, at: lastAt }, ...ladder.map((botId, index) => ({ botId, at: lastAt + (index + 1) * step }))];
+    items.push({
+      id: `stuck:${bot.id}`,
+      kind: "escalation",
+      title: t("{name} is stuck", { name: bot.name }),
+      botId: bot.id,
+      threadId: bot.threadId,
+      since: lastAt + (ladder.length + 1) * step,
+      detail: t("No progress for {minutes} min; nobody along the way could unblock it", { minutes: Math.floor((now - lastAt) / 60_000) }),
+      chain,
+    });
+  }
+  return items;
 }
 
 /** The first-run quiz every new bot opens with is not a decision. */
@@ -117,6 +168,8 @@ export function collectInbox(source: InboxSource): InboxItem[] {
 
   // a bot that says it is waiting on the owner, with nothing above to answer
   const listed = new Set(items.map((item) => item.botId));
+  // a bot stuck long enough for its problem to climb all the way to you
+  items.push(...stuckEscalations(source, listed));
   for (const bot of visible) {
     if (bot.activity !== "waiting-on-you" || listed.has(bot.id)) continue;
     const last = source.messages(bot.threadId).at(-1);

@@ -4079,5 +4079,11 @@
   "Make lead of {department}": "设为{department}主管",
   "Today's brief: {headline} The details are in Brief.": "今日简报：{headline}详情在「简报」里。",
   "Daily brief: {headline}": "日报：{headline}",
-  "Progress report: {headline}": "进度汇报：{headline}"
+  "Progress report: {headline}": "进度汇报：{headline}",
+  "{name} is stuck": "{name} 卡住了",
+  "No progress for {minutes} min; nobody along the way could unblock it": "{minutes} 分钟没有进展，一路往上报都没解决",
+  "{name} has made no progress for {minutes} min — passed up to you": "{name} 已经 {minutes} 分钟没有进展，报到你这里了",
+  "{name} is stuck — passed up to you": "{name} 卡住了，已经报到你这里",
+  "{name} is stuck — passed up to {to}": "{name} 卡住了，已报给 {to}",
+  "No progress for {minutes} min": "{minutes} 分钟没有进展"
 }

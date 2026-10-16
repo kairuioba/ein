@@ -15,7 +15,7 @@ import { cadenceDue, CadenceStore } from "./cadence.ts";
 import { basisFromTexts, OrgDecisionStore } from "./decisions.ts";
 import type { OrgEventLog } from "./events.ts";
 import { ApprovalExpiry, type UnattendedApproval } from "./expiry.ts";
-import { collectInbox, isDecisionCard, questionOf } from "./inbox.ts";
+import { collectInbox, escalationLadder, isDecisionCard, questionOf } from "./inbox.ts";
 import { LibraryError, LibraryStore } from "./library.ts";
 import { RunWatcher, type OrgEventInput } from "./run-events.ts";
 import { DEFAULT_USD_TO_CNY, summarizeUsage, UsageLedger } from "./usage.ts";
@@ -70,6 +70,8 @@ export class OrgLayer {
   private sweeping = false;
   private readonly cadence: CadenceStore;
   private cadenceTimer: ReturnType<typeof setInterval> | null = null;
+  /** how far each stuck bot's problem has been passed up (0 = not yet) */
+  private readonly escalated = new Map<string, number>();
 
   constructor(host: OrgHost, events: OrgEventLog, opts: { expiryMs?: number } = {}) {
     this.host = host;
@@ -136,6 +138,7 @@ export class OrgLayer {
       messages: (threadId) => this.host.messages(threadId),
       isLiveRequest: (threadId, requestId) => this.host.isLiveRequest(threadId, requestId),
       runs: this.host.runs(),
+      escalation: { afterMin: this.config.rules().escalateAfterMin, chiefId: this.chief()?.id },
     });
   }
 
@@ -474,11 +477,67 @@ export class OrgLayer {
     );
   }
 
-  /** Check the cadence once a minute (server start → stop). */
+  /** Check the cadence and the escalation rule once a minute (server start → stop). */
   startCadence(): void {
     if (this.cadenceTimer) return;
-    this.cadenceTimer = setInterval(() => this.tickCadence(), 60_000);
+    this.cadenceTimer = setInterval(() => {
+      this.tickCadence();
+      this.tickEscalations();
+    }, 60_000);
     this.cadenceTimer.unref?.();
+  }
+
+  /** The escalation rule, one level per escalateAfterMin: a bot working with
+   * no progress is reported to its lead, then the 主 Bot, then you — each
+   * step a line in that rung's chat and an event on the timeline. Returns
+   * the steps it took (for tests). */
+  tickEscalations(now = Date.now()): Array<{ botId: string; to: string }> {
+    const steps: Array<{ botId: string; to: string }> = [];
+    try {
+      const minutes = this.config.rules().escalateAfterMin;
+      if (!(minutes > 0)) return steps;
+      const bots = this.host.bots();
+      const chiefId = this.chief()?.id;
+      const stuckNow = new Set<string>();
+      for (const bot of bots) {
+        if (bot.hidden) continue;
+        const working = bot.activity === "working" || (bot.busy === true && bot.activity === undefined);
+        if (!working) continue;
+        const lastAt = Math.max(0, ...botThreads(bot).map((threadId) => this.host.messages(threadId).at(-1)?.at ?? 0));
+        if (!lastAt) continue;
+        const level = Math.floor((now - lastAt) / (minutes * 60_000));
+        if (level < 1) continue;
+        stuckNow.add(bot.id);
+        const ladder = escalationLadder(bot, bots, chiefId);
+        const done = this.escalated.get(bot.id) ?? 0;
+        for (let next = done + 1; next <= Math.min(level, ladder.length + 1); next += 1) {
+          const to = ladder[next - 1] ?? "owner";
+          const stuckFor = Math.floor((now - lastAt) / 60_000);
+          if (to !== "owner") {
+            const rung = this.bot(to);
+            if (rung) this.host.chip(rung.threadId, t("{name} has made no progress for {minutes} min — passed up to you", { name: bot.name, minutes: stuckFor }), true);
+          }
+          this.emit({
+            kind: "escalation",
+            title:
+              to === "owner"
+                ? t("{name} is stuck — passed up to you", { name: bot.name })
+                : t("{name} is stuck — passed up to {to}", { name: bot.name, to: this.bot(to)?.name ?? "" }),
+            botId: bot.id,
+            ...(this.sectionOfBot(bot.id) ? { section: this.sectionOfBot(bot.id) } : {}),
+            severity: "warn",
+            detail: t("No progress for {minutes} min", { minutes: stuckFor }),
+          });
+          steps.push({ botId: bot.id, to });
+          this.escalated.set(bot.id, next);
+        }
+      }
+      // moving again: a later stall starts at the bottom
+      for (const botId of [...this.escalated.keys()]) if (!stuckNow.has(botId)) this.escalated.delete(botId);
+    } catch (error) {
+      console.error("org: could not apply the escalation rule", error);
+    }
+    return steps;
   }
 
   /** Post what the cadence says is due: the 主 Bot says the daily brief's

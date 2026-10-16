@@ -322,6 +322,37 @@ describe("OrgLayer", () => {
       expect(layer.tickCadence(now + 3 * 60_000)).toEqual([]);
     });
 
+    it("passes a stuck bot's problem up one level per rule step: lead, 主 Bot, you", () => {
+      const now = Date.now();
+      layer.patchOrg({ chiefBotId: "chief", rules: { escalateAfterMin: 10 } });
+      // the writer (内容部) works with no progress; 内容部 gets a lead
+      host.botList = host.botList.map((bot) =>
+        bot.id === "writer" ? { ...bot, busy: true } : bot,
+      );
+      host.botList.push({ id: "editor", name: "主编", threadId: "t-editor", section: "内容部", chiefOfStaff: true, createdAt: 5 });
+      host.threads.set("t-writer", [{ id: "w1", role: "bot", kind: "text", at: now - 5 * 60_000, text: "写着呢" }]);
+      expect(layer.tickEscalations(now)).toEqual([]);
+      host.threads.set("t-writer", [{ id: "w1", role: "bot", kind: "text", at: now - 12 * 60_000, text: "写着呢" }]);
+      expect(layer.tickEscalations(now)).toEqual([{ botId: "writer", to: "editor" }]);
+      expect(host.chips.at(-1)).toMatchObject({ threadId: "t-editor", ok: true });
+      expect(layer.tickEscalations(now)).toEqual([]);
+      expect(layer.inbox().some((item) => item.id === "stuck:writer")).toBe(false);
+      // 31 minutes: past the lead and the chief, so it is on you
+      host.threads.set("t-writer", [{ id: "w1", role: "bot", kind: "text", at: now - 31 * 60_000, text: "写着呢" }]);
+      expect(layer.tickEscalations(now)).toEqual([
+        { botId: "writer", to: "chief" },
+        { botId: "writer", to: "owner" },
+      ]);
+      const item = layer.inbox().find((entry) => entry.id === "stuck:writer");
+      expect(item).toMatchObject({ kind: "escalation", botId: "writer" });
+      expect(item!.chain!.map((step) => step.botId)).toEqual(["writer", "editor", "chief"]);
+      expect(layer.eventsSince(0).filter((event) => event.kind === "escalation")).toHaveLength(3);
+      // moving again resets the ladder
+      host.botList = host.botList.map((bot) => (bot.id === "writer" ? { ...bot, busy: false } : bot));
+      expect(layer.tickEscalations(now)).toEqual([]);
+      expect(layer.inbox().some((entry) => entry.id === "stuck:writer")).toBe(false);
+    });
+
     it("rejects subscriptions for unknown bots or documents", () => {
       const doc = layer.publishDoc({ title: "x", section: null, text: "y" });
       expect(() => layer.subscribeDoc(doc.id, { botId: "nobody", on: true })).toThrow(LibraryError);

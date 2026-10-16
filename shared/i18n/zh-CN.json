@@ -4076,5 +4076,8 @@
   "Daily brief {time}": "日报 {time}",
   "Choose another lead for {department} first": "请先为{department}指定其他主管",
   "Remove as lead of {department}": "取消{department}主管",
-  "Make lead of {department}": "设为{department}主管"
+  "Make lead of {department}": "设为{department}主管",
+  "Today's brief: {headline} The details are in Brief.": "今日简报：{headline}详情在「简报」里。",
+  "Daily brief: {headline}": "日报：{headline}",
+  "Progress report: {headline}": "进度汇报：{headline}"
 }

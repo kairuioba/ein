@@ -49,6 +49,10 @@ class FakeHost implements OrgHost {
   chip(threadId: string, text: string, ok: boolean) {
     this.chips.push({ threadId, text, ok });
   }
+  said: Array<{ threadId: string; text: string }> = [];
+  say(threadId: string, text: string) {
+    this.said.push({ threadId, text });
+  }
   runs() {
     return this.runList;
   }
@@ -301,6 +305,21 @@ describe("OrgLayer", () => {
       // none allowed: nothing is mounted, so there is nothing to say
       expect(layer.appsAllowed({ section: "财务法务" })).toEqual([]);
       expect(layer.appsPrompt({ section: "财务法务" })).toBe("");
+    });
+
+    it("has the 主 Bot say the daily brief once, and report progress while work runs", () => {
+      const evening = new Date();
+      evening.setHours(18, 30, 0, 0);
+      const now = evening.getTime();
+      expect(layer.tickCadence(now)).toEqual(["daily"]);
+      expect(host.said).toEqual([{ threadId: "t-chief", text: expect.stringContaining("Today's brief:") }]);
+      expect(layer.eventsSince(0).some((event) => event.kind === "report" && event.title.startsWith("Daily brief:"))).toBe(true);
+      expect(layer.tickCadence(now + 60_000)).toEqual([]);
+      // a run going for longer than the cadence gets a progress line
+      host.runList = [{ id: "r1", chiefBotId: "chief", sourceThreadId: "t-chief", goal: "g", policy: "balanced", status: "running", subtasks: [], createdAt: now - 3 * 60 * 60_000, updatedAt: now }];
+      expect(layer.tickCadence(now + 2 * 60_000)).toEqual(["progress"]);
+      expect(host.chips.at(-1)).toMatchObject({ threadId: "t-chief", ok: true, text: expect.stringContaining("Progress report:") });
+      expect(layer.tickCadence(now + 3 * 60_000)).toEqual([]);
     });
 
     it("rejects subscriptions for unknown bots or documents", () => {

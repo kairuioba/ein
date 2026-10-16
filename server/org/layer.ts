@@ -11,6 +11,7 @@ import { redactSecrets } from "../redact.ts";
 import { approvalEventFor, autoApprovedRow } from "./approval-events.ts";
 import { buildBrief, type AutoApprovedRow, type ConversationState } from "./brief.ts";
 import { OrgConfigStore } from "./config.ts";
+import { cadenceDue, CadenceStore } from "./cadence.ts";
 import { basisFromTexts, OrgDecisionStore } from "./decisions.ts";
 import type { OrgEventLog } from "./events.ts";
 import { ApprovalExpiry, type UnattendedApproval } from "./expiry.ts";
@@ -43,6 +44,8 @@ export interface OrgHost {
   isLiveRequest(threadId: string, requestId: string): boolean;
   /** deny an open provider request; false when nothing took the answer */
   deny(instanceId: string, threadId: string, requestId: string, message: string): Promise<boolean>;
+  /** a message from the bot that owns this conversation (the daily brief) */
+  say?(threadId: string, text: string): void;
 }
 
 const DAY_MS = 24 * 60 * 60_000;
@@ -65,6 +68,8 @@ export class OrgLayer {
   private readonly lastAutoEvent = new Map<string, number>();
   private sweepTimer: ReturnType<typeof setInterval> | null = null;
   private sweeping = false;
+  private readonly cadence: CadenceStore;
+  private cadenceTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(host: OrgHost, events: OrgEventLog, opts: { expiryMs?: number } = {}) {
     this.host = host;
@@ -73,6 +78,7 @@ export class OrgLayer {
     this.decisions = new OrgDecisionStore(host.dataDir);
     this.ledger = new UsageLedger(host.dataDir);
     this.library = new LibraryStore(host.dataDir);
+    this.cadence = new CadenceStore(host.dataDir);
     this.expiryMs = opts.expiryMs && opts.expiryMs > 0 ? opts.expiryMs : undefined;
     // runs already on disk are history, not news
     this.runWatch.seed(host.runs());
@@ -455,8 +461,69 @@ export class OrgLayer {
     return expired;
   }
 
+  // ── report cadence (汇报与节奏) ──
+
+  /** The 主 Bot: the org's chief, else the unsectioned chief of staff. */
+  private chief(): OrgBot | undefined {
+    const visible = this.host.bots().filter((bot) => !bot.hidden);
+    const chosen = this.org().chiefBotId;
+    return (
+      (chosen ? visible.find((bot) => bot.id === chosen) : undefined) ??
+      visible.find((bot) => bot.chiefOfStaff && !sectionOf(bot.section)) ??
+      visible.find((bot) => bot.chiefOfStaff)
+    );
+  }
+
+  /** Check the cadence once a minute (server start → stop). */
+  startCadence(): void {
+    if (this.cadenceTimer) return;
+    this.cadenceTimer = setInterval(() => this.tickCadence(), 60_000);
+    this.cadenceTimer.unref?.();
+  }
+
+  /** Post what the cadence says is due: the 主 Bot says the daily brief's
+   * headline in its chat; while work runs, a progress line every N hours.
+   * Both also go on the company timeline. Returns what it posted. */
+  tickCadence(now = Date.now()): Array<"daily" | "progress"> {
+    const posted: Array<"daily" | "progress"> = [];
+    try {
+      const chief = this.chief();
+      if (!chief) return posted;
+      const cadence = this.config.rules().reportCadence;
+      const active = this.host.runs().filter((run) => !run.parentRunId && (run.status === "running" || run.status === "awaiting-approval"));
+      const due = cadenceDue({
+        now,
+        dailyBriefAt: cadence.dailyBriefAt,
+        everyHours: cadence.everyHours,
+        activeSince: active.length ? Math.min(...active.map((run) => run.createdAt)) : undefined,
+        state: this.cadence.get(),
+      });
+      if (!due.daily && !due.progress) return posted;
+      const headline = this.brief(startOfDay(now), now).headline;
+      if (due.daily) {
+        const text = t("Today's brief: {headline} The details are in Brief.", { headline });
+        if (this.host.say) this.host.say(chief.threadId, text);
+        else this.host.chip(chief.threadId, text, true);
+        this.emit({ kind: "report", title: t("Daily brief: {headline}", { headline }), botId: chief.id, severity: "info" });
+        this.cadence.set({ dailyDay: startOfDay(now) });
+        posted.push("daily");
+      }
+      if (due.progress) {
+        this.host.chip(chief.threadId, t("Progress report: {headline}", { headline }), true);
+        this.emit({ kind: "report", title: t("Progress report: {headline}", { headline }), botId: chief.id, severity: "info" });
+        this.cadence.set({ progressAt: now });
+        posted.push("progress");
+      }
+    } catch (error) {
+      console.error("org: could not post a report", error);
+    }
+    return posted;
+  }
+
   stop(): void {
     if (this.sweepTimer) clearInterval(this.sweepTimer);
     this.sweepTimer = null;
+    if (this.cadenceTimer) clearInterval(this.cadenceTimer);
+    this.cadenceTimer = null;
   }
 }

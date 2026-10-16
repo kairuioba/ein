@@ -4464,6 +4464,8 @@ const orgLayer = new OrgLayer(
     messages: (threadId) => store.messagesFor(threadId),
     patchCard: (threadId, messageId, card) => void store.patchMessage(threadId, messageId, { card: card as OptionCardData }),
     chip: (threadId, text, ok) => void store.appendMessage(threadId, { role: "bot", kind: "activity", tool: { name: text, ok, ...(ok ? { system: true } : {}) } }),
+    // the 主 Bot says the daily brief in its own chat (unread + notification like any reply)
+    say: (threadId, text) => void store.appendMessage(threadId, { role: "bot", kind: "text", text }),
     runs: () => dispatcher.list(),
     maxAttempts: () => dispatchSettings(cfg.dispatch).maxAttempts,
     usdToCny: () => cfg.usage?.usdToCny,
@@ -4482,6 +4484,8 @@ const orgLayer = new OrgLayer(
   { expiryMs: Number(process.env.OMB_UNATTENDED_EXPIRY_MS) || undefined },
 );
 const orgApiDeps: OrgApiDeps = { json, readBody, events: orgEvents, org: orgLayer };
+// the report cadence: the daily brief at its time, progress every N hours while work runs
+if (!process.env.VITEST) orgLayer.startCadence();
 
 /** The decision log, plus the company layer's view of it: every row is also
  * an org event (approval requested / resolved / auto / expired). Declared as

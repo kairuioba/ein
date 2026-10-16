@@ -42,9 +42,14 @@ export function ChatCard({
       aria-label={label}
       className={cn("flex w-full max-w-[560px] flex-col gap-1.5 rounded-[14px] px-3.5 py-3 text-ink", SOFT, className)}
     >
-      <div className="flex min-w-0 items-center gap-2">
-        <h3 className="min-w-0 flex-1 truncate text-[13.5px] font-bold leading-[1.45]">{title}</h3>
-        {pill && <span aria-live={live ? "polite" : undefined}>{pill}</span>}
+      <div className="flex min-w-0 items-start gap-2">
+        {/* up to two lines: a question or a goal is read, not glanced at */}
+        <h3 className="line-clamp-2 min-w-0 flex-1 text-[13.5px] font-bold leading-[1.45] break-words">{title}</h3>
+        {pill && (
+          <span className="shrink-0" aria-live={live ? "polite" : undefined}>
+            {pill}
+          </span>
+        )}
       </div>
       {meta && <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[12px] leading-[1.5] text-ink-secondary">{meta}</div>}
       {children}

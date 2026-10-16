@@ -112,5 +112,7 @@
   "Recorded as decision #{id}": "已记为决议 #{id}",
   "{count} done": "{count} 个已完成",
   "{squad} · {count} person": "{squad} · {count} 人",
-  "{squad} · {count} people": "{squad} · {count} 人"
+  "{squad} · {count} people": "{squad} · {count} 人",
+  "Dismissed": "已忽略",
+  "Answered": "已回答"
 }

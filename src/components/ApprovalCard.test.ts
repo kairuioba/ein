@@ -259,4 +259,13 @@ describe("ApprovalCard company layer", () => {
     expect(markup).not.toContain("Allow once");
     expect(markup).not.toContain("Denied");
   });
+
+  it("calls an ask that closed before any answer reached it closed, not denied", () => {
+    const markup = renderToStaticMarkup(
+      createElement(ApprovalCard, { bot: writer, message: post({ answered: "unavailable", dismissed: true }) }),
+    );
+    expect(markup).toContain("Closed");
+    expect(markup).not.toContain("Denied");
+    expect(markup).not.toContain("Allow once");
+  });
 });

@@ -117,7 +117,10 @@ export function ApprovalCard({
 
   const settledLabel = expired
     ? t("Voided")
-    : settled === "allow"
+    : // the ask closed (its turn stopped) before any answer reached it
+      settled === "unavailable"
+      ? t("Closed")
+      : settled === "allow"
       ? (skillAction ? t(SKILL_SETTLED_LABEL[skillAction]) : undefined) ??
         (routineAction ? t(ROUTINE_SETTLED_LABEL[routineAction]) : undefined) ??
         (isRoutineRequest ? t("Routine confirmed") : isSkillRequest ? t("Skill confirmed") : draft ? t("Approved to send") : t("Allowed"))

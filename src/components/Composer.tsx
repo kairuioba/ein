@@ -1,6 +1,6 @@
 import { track } from "@/lib/analytics";
-import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
-import { ArrowUp, Check, Clock, Hand, Mic, Paperclip, ShieldCheck, Square, Users, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type SetStateAction } from "react";
+import { ArrowUp, Check, Clock, Hand, Paperclip, ShieldCheck, Sparkles, Square, Users } from "lucide-react";
 import { useStore, visibleMessages, type Bot, type Group, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
@@ -16,7 +16,7 @@ import {
   type ComposerSendSnapshot,
   type FailedComposerSend,
 } from "@/lib/drafts";
-import { MausAvatar } from "./Avatar";
+import { BotAvatar } from "./Avatar";
 import { ComposerAttachments, pathForFile } from "./ComposerAttachments";
 import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
 import {
@@ -30,11 +30,14 @@ import {
   type Attachment,
   type PasteAttachment,
 } from "@/lib/composer-attachments";
-import { normalizeState } from "@/lib/mascot";
 import { groupComposerHint, roomRespondersForComposer } from "@/lib/group-routing";
-import { PendingApprovalActions, PendingApprovalPanel, pendingApprovals } from "./PendingApproval";
+import { pendingApprovals } from "./PendingApproval";
+import { PendingApprovalStrip } from "./chat/ApprovalStrip";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { ReplyQuote } from "./ReplyQuote";
+import { ErrorStrip, MenuDivider, MenuItem, MenuLabel, PopoverPanel, RING, useDismiss } from "./chat/primitives";
+import { IconAt, IconMic, IconPlus, IconSlash } from "./chat/icons";
+import { filterSkills, skillInstruction, slashQueryAt, useSkillChoices, type SkillChoice } from "./chat/skills";
 
 /** The active @mention query at the caret: the text between an `@` that
  * starts a word and the caret. null = no mention being typed. */
@@ -60,103 +63,44 @@ interface QueuedGroupSend {
   draft: ComposerDraftSnapshot;
 }
 
-/** Composer chip for Auto mode. Compact label (Ask / Auto); the menu still
- * uses the full names. Same `autoApprove` bit as the profile switch — picking
- * Auto mode here turns that on. The chip only changes its name, not its color. */
-function PermissionModeSelector({ bot, onSetAuto }: { bot: Bot; onSetAuto: (auto: boolean) => void }) {
-  const [open, setOpen] = useState(false);
-  const wrapperRef = useRef<HTMLDivElement>(null);
-  const on = Boolean(bot.autoApprove);
-
+/** Whether an element is on screen inside the viewport (null while unknown). */
+function useOnScreen(selector: string | null): boolean {
+  const [visible, setVisible] = useState(false);
   useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) setOpen(false);
+    if (!selector || typeof IntersectionObserver === "undefined") {
+      setVisible(false);
+      return;
     }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
-  useEffect(() => {
-    if (!open) return;
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
+    let observer: IntersectionObserver | null = null;
+    let tries = 0;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const attach = () => {
+      const wrapper = document.querySelector<HTMLElement>(selector);
+      const target = (wrapper?.lastElementChild as HTMLElement | null) ?? wrapper;
+      if (!target) {
+        setVisible(false);
+        // the card may mount a moment after the composer (window, task switch)
+        if (tries++ < 10) timer = setTimeout(attach, 300);
+        return;
+      }
+      observer = new IntersectionObserver((entries) => setVisible(entries.some((entry) => entry.isIntersecting)), {
+        // the composer dock covers the bottom of the transcript
+        rootMargin: "0px 0px -120px 0px",
+        threshold: 0.35,
+      });
+      observer.observe(target);
     };
-    document.addEventListener("keydown", closeOnEscape);
-    return () => document.removeEventListener("keydown", closeOnEscape);
-  }, [open]);
-
-  return (
-    <div className="relative flex items-center" ref={wrapperRef}>
-      <button
-        type="button"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-label={on ? t("Auto mode") : t("Ask for approval")}
-        onClick={() => setOpen((current) => !current)}
-        className="flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full border border-hairline/20 bg-transparent px-3 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink"
-      >
-        {on ? <ShieldCheck size={14} className="opacity-70" /> : <Hand size={14} className="opacity-70" />}
-        {on ? t("Auto") : t("Ask")}
-      </button>
-
-      {open && (
-        <div
-          role="menu"
-          aria-label={t("Permission mode for {name}", { name: bot.name })}
-          className="absolute bottom-full left-0 z-30 mb-2 w-80 overflow-hidden rounded-xl border border-hairline/40 bg-raised shadow-lg"
-        >
-          <div className="border-b border-hairline/20 px-4 py-3 text-[13px] font-medium text-ink-secondary">
-            {t("How should {name} actions be approved?", { name: bot.name })}
-          </div>
-          <div className="flex flex-col py-1">
-            <button
-              type="button"
-              role="menuitemradio"
-              aria-checked={!on}
-              onClick={() => {
-                onSetAuto(false);
-                setOpen(false);
-              }}
-              className="flex items-start gap-3 px-4 py-3 text-left hover:bg-raised-hover"
-            >
-              <Hand size={16} className="mt-0.5 shrink-0 opacity-70" />
-              <div className="flex w-full flex-col gap-0.5">
-                <div className="flex items-center justify-between text-[14px] text-ink">
-                  {t("Ask for approval")}
-                  {!on && <Check size={14} />}
-                </div>
-                <div className="text-[13px] text-ink-secondary">{t("Ask before actions that need your permission")}</div>
-              </div>
-            </button>
-            <button
-              type="button"
-              role="menuitemradio"
-              aria-checked={on}
-              onClick={() => {
-                onSetAuto(true);
-                setOpen(false);
-              }}
-              className="flex items-start gap-3 px-4 py-3 text-left hover:bg-raised-hover"
-            >
-              <ShieldCheck size={16} className="mt-0.5 shrink-0 opacity-70" />
-              <div className="flex w-full flex-col gap-0.5">
-                <div className="flex items-center justify-between text-[14px] text-ink">
-                  {t("Auto mode")}
-                  {on && <Check size={14} />}
-                </div>
-                <div className="text-[13px] text-ink-secondary">
-                  {t("Keep going automatically; destructive and sensitive actions still ask")}
-                </div>
-              </div>
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+    attach();
+    return () => {
+      if (timer) clearTimeout(timer);
+      observer?.disconnect();
+    };
+  }, [selector]);
+  return visible;
 }
 
-/** Renders the editable message composer and its pending attachments. */
+/** Renders the editable message composer (design U8/U9: a pill with +, the
+ * input, @ and /, and the round mic/send button) and what sits above it. */
 export function Composer({
   bot,
   group,
@@ -167,6 +111,7 @@ export function Composer({
   onConsumeReply,
   onRestoreReply,
   locked = false,
+  notice,
 }: {
   bot?: Bot;
   group?: Group;
@@ -178,6 +123,8 @@ export function Composer({
   onRestoreReply?: (message: Message, threadId: string) => void;
   /** New rooms keep the composer inert until their setup is saved or skipped. */
   locked?: boolean;
+  /** Strips the conversation puts above the pill (errors, retries). */
+  notice?: ReactNode;
 }) {
   const { state, dispatch } = useStore();
   const { capabilities } = useDesktopCapabilities();
@@ -198,7 +145,10 @@ export function Composer({
   const approvalBot = group
     ? members?.find((member) => member.id === approval?.message.from?.botId) ??
       members?.find((member) => member.id === group.busyBotId)
-    : bot;
+    : (state.bots.find((member) => member.id === approval?.message.from?.botId) ?? bot);
+  // the card in the transcript is where an approval is answered; the strip
+  // here only stands in while that card is out of view
+  const approvalCardVisible = useOnScreen(approval ? `[data-mid="${CSS.escape(approval.message.id)}"]` : null);
   const busyName = group
     ? (members?.find((b) => b.id === group.busyBotId)?.name ?? t("A bot"))
     : (bot?.name ?? t("The bot"));
@@ -265,7 +215,11 @@ export function Composer({
   const [speechError, setSpeechError] = useState<string | null>(null);
   const [caret, setCaret] = useState(0);
   const [highlight, setHighlight] = useState(0);
-  const [dismissedAt, setDismissedAt] = useState<number | null>(null); // Esc'd this @
+  const [dismissedAt, setDismissedAt] = useState<number | null>(null); // Esc'd this @ or /
+  const [plusOpen, setPlusOpen] = useState(false);
+  const plusRef = useRef<HTMLDivElement>(null);
+  const closePlus = useCallback(() => setPlusOpen(false), []);
+  useDismiss(plusOpen, closePlus, plusRef);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   // what was typed before the mic went on — partials append after it
   const baseText = useRef("");
@@ -303,9 +257,23 @@ export function Composer({
     if (mention.query.endsWith(" ") && pool.some((b) => b.name.toLowerCase() === q)) return [];
     return pool.filter((b) => !q || b.name.toLowerCase().includes(q)).slice(0, 6);
   }, [mention, dismissedAt, state.bots, bot?.id, group, members]);
-  const pickerOpen = candidates.length > 0;
 
-  useEffect(() => setHighlight(0), [mention?.start, mention?.query]);
+  // ── / skill picker (a skill the bot — or the room's members — can use) ──
+  const slash = mention ? null : slashQueryAt(text, caret);
+  const slashActive = Boolean(slash && slash.start !== dismissedAt);
+  const skillBots = useMemo(
+    () => (group ? (members ?? []).filter((member) => !member.hidden) : bot ? [bot] : []).map((member) => ({ id: member.id, name: member.name })),
+    [group, members, bot],
+  );
+  const { skills, loading: skillsLoading } = useSkillChoices(skillBots, slashActive);
+  const skillCandidates = useMemo(
+    () => (slashActive && slash ? filterSkills(skills, slash.query).slice(0, 6) : []),
+    [slashActive, slash, skills],
+  );
+  const pickerOpen = candidates.length > 0 || skillCandidates.length > 0;
+  const pickerLength = candidates.length > 0 ? candidates.length : skillCandidates.length;
+
+  useEffect(() => setHighlight(0), [mention?.start, mention?.query, slash?.start, slash?.query]);
 
   // one line at rest, then grow with the draft — hard cap at six lines
   useEffect(() => {
@@ -317,19 +285,43 @@ export function Composer({
     el.style.height = `${Math.min(el.scrollHeight, cap)}px`;
   }, [text]);
 
+  const placeCaret = (next: number) => {
+    setCaret(next);
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.setSelectionRange(next, next);
+    });
+  };
+
   const pickMention = (peer: MentionChoice) => {
     if (!mention) return;
     const after = text.slice(caret);
     const next = `${text.slice(0, mention.start)}@${peer.name} ${after}`;
     editText(next);
-    const newCaret = mention.start + peer.name.length + 2;
-    setCaret(newCaret);
     // picking completes this tag — close the popup so the next Enter sends
     setDismissedAt(mention.start);
-    requestAnimationFrame(() => {
-      inputRef.current?.focus();
-      inputRef.current?.setSelectionRange(newCaret, newCaret);
-    });
+    placeCaret(mention.start + peer.name.length + 2);
+  };
+
+  const pickSkill = (skill: SkillChoice) => {
+    if (!slash) return;
+    const instruction = skillInstruction(skill.name);
+    const next = `${text.slice(0, slash.start)}${instruction}${text.slice(caret)}`;
+    editText(next);
+    setDismissedAt(slash.start);
+    placeCaret(slash.start + instruction.length);
+  };
+
+  /** The @ and / buttons: type the trigger at the caret, opening its picker. */
+  const insertTrigger = (trigger: "@" | "/") => {
+    const input = inputRef.current;
+    const at = input ? input.selectionStart ?? text.length : text.length;
+    const before = text.slice(0, at);
+    const glue = before && !/\s$/.test(before) ? " " : "";
+    const next = `${before}${glue}${trigger}${text.slice(at)}`;
+    editText(next);
+    setDismissedAt(null);
+    placeCaret(at + glue.length + 1);
   };
 
   // Rooms hold one message client-side while a member speaks; it auto-sends
@@ -361,7 +353,7 @@ export function Composer({
   const autoBot = group ? undefined : bot;
   const pickFiles = async (picked: FileList | null) => {
     if (!picked?.length) return;
-    const { attachments: added, notice } = await intakeFiles(Array.from(picked), {
+    const { attachments: added, notice: intakeNotice } = await intakeFiles(Array.from(picked), {
       allowImages: engineSupportsImages,
       getPath: pathForFile,
       uploadImage: imageAttachmentFromFile,
@@ -369,7 +361,7 @@ export function Composer({
     if (added.length) addAttachments(added);
     // Keep file-specific failures beside the attachments. A successful
     // overlapping intake must not erase an earlier failure before it is read.
-    if (notice) setAttachmentNotice(notice);
+    if (intakeNotice) setAttachmentNotice(intakeNotice);
   };
   const setAuto = (auto: boolean) => {
     if (!autoBot) return;
@@ -536,112 +528,172 @@ export function Composer({
     setRecording((r) => !r);
   };
 
+  const stopTurn = () => {
+    if (group) dispatch({ type: "interruptGroup", groupId: group.id });
+    else if (bot) dispatch({ type: "interrupt", botId: bot.id });
+  };
+  const showApprovalCard = () => {
+    if (approval) dispatch({ type: "focusMessage", threadId, messageId: approval.message.id });
+  };
+
+  const name = group ? group.name : (bot?.name ?? "");
+  const placeholder = locked
+    ? t("Finish room setup to start chatting")
+    : approval
+      ? t("Answer the approval above to continue")
+      : recording
+        ? t("Listening…")
+        : busy && canSteer
+          ? t("{name} is working — Enter sends this into the running turn", { name: busyName })
+          : busy
+            ? group
+              ? t("{name} is working — Enter queues your message", { name: busyName })
+              : t("{name} is working — sends when this turn finishes", { name: busyName })
+            : group
+              ? t("Message {name} · @ a bot · @everyone", { name })
+              : t("Message {name} · @ to mention a bot · / to use a skill", { name });
+
+  // anything above the pill gets the stage colour behind it, so the
+  // transcript never shows through a strip
+  const stripsShown = Boolean(
+    notice ||
+      speechError ||
+      failedSends.length ||
+      pendingChip ||
+      (approval && !approvalCardVisible) ||
+      replyTo ||
+      attachments.length ||
+      attachmentNotice,
+  );
+
+  // the round button: send what is typed, else stop a running turn, else
+  // dictate (where dictation is missing, pressing it says why)
+  const primary: "send" | "queue" | "stop" | "mic" = hasContent
+    ? busy && !canSteer
+      ? "queue"
+      : "send"
+    : busy
+      ? "stop"
+      : "mic";
+
   return (
-    <div className="pointer-events-none relative px-5 pb-3">
-      {/* No fill or hairline on this wrapper — those were the black frame
-          in the pill's top corners. The dock overlays the transcript. */}
-      {speechError && (
-        <div className="pointer-events-auto mb-2 w-full rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12px] text-warning">
-          {speechError}
-        </div>
-      )}
+    <div className="pointer-events-none relative mx-auto w-full max-w-[720px] px-5 pb-3">
+      {/* No fill on this wrapper: bubbles scroll under the pill. The stage
+          colour starts at the pill's midline and runs to the bottom edge;
+          strips above the pill sit on the stage colour too. */}
       <div className="pointer-events-auto relative w-full">
+        <div className="relative flex flex-col">
+        {stripsShown && (
+          <>
+            <div aria-hidden className="pointer-events-none absolute -top-3 -right-5 -left-5 h-3 bg-gradient-to-b from-transparent to-stage" />
+            <div aria-hidden className="pointer-events-none absolute -right-5 -left-5 top-0 bottom-0 bg-stage" />
+          </>
+        )}
+        {notice && <div className="relative">{notice}</div>}
+        {speechError && (
+          <div className="relative mb-2">
+            <ErrorStrip tone="warning" onDismiss={() => setSpeechError(null)}>
+              {speechError}
+            </ErrorStrip>
+          </div>
+        )}
         {failedSends.map((failed) => (
-          <div
-            key={failed.id}
-            className="mb-2 flex items-center gap-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-[12.5px] text-danger"
-          >
-            <span className="min-w-0 flex-1 truncate">
-              {t("Not sent: “{text}”", { text: failed.text.trim() || t("attachment") })}
-            </span>
-            <button
-              type="button"
-              onClick={() => retryFailedSend(failed)}
-              className="shrink-0 rounded px-2 py-1 font-medium hover:bg-danger/10"
+          <div key={failed.id} className="relative mb-2">
+            <ErrorStrip
+              onDismiss={() => forgetFailedComposerSend(draftId, failed.id)}
+              action={
+                <button
+                  type="button"
+                  onClick={() => retryFailedSend(failed)}
+                  className="h-6 shrink-0 rounded-md px-2 text-[12px] font-semibold hover:bg-danger/10"
+                >
+                  {t("Retry")}
+                </button>
+              }
             >
-              {t("Retry")}
-            </button>
-            <button
-              type="button"
-              onClick={() => forgetFailedComposerSend(draftId, failed.id)}
-              aria-label={t("Dismiss failed message")}
-              title={t("Dismiss")}
-              className="flex size-5 shrink-0 items-center justify-center rounded hover:bg-danger/10"
-            >
-              <X size={13} strokeWidth={2.5} />
-            </button>
+              <span className="block truncate">{t("Not sent: “{text}”", { text: failed.text.trim() || t("attachment") })}</span>
+            </ErrorStrip>
           </div>
         ))}
         {pendingChip && (
-          <div className="mb-2 flex items-center gap-2 rounded-lg border border-hairline/40 bg-panel px-3 py-2 text-[12.5px] text-ink-secondary">
-            <Clock size={13} className="shrink-0" />
-            <span className="min-w-0 flex-1 truncate">
-              {t("Queued — sends when {name} finishes: “{text}”", { name: busyName, text: pendingChip })}
-            </span>
-            <button
-              type="button"
-              onClick={clearQueued}
-              aria-label={t("Cancel queued message")}
-              title={t("Cancel queued message")}
-              className="ml-auto flex size-5 shrink-0 items-center justify-center rounded text-ink-secondary hover:bg-raised hover:text-ink"
-            >
-              <X size={13} strokeWidth={2.5} />
-            </button>
+          <div className="relative mb-2">
+            <ErrorStrip tone="quiet" onDismiss={clearQueued}>
+              <span className="flex min-w-0 items-center gap-2">
+                <Clock size={13} className="shrink-0" />
+                <span className="min-w-0 truncate">
+                  {t("Queued — sends when {name} finishes: “{text}”", { name: busyName, text: pendingChip })}
+                </span>
+              </span>
+            </ErrorStrip>
           </div>
         )}
         {pickerOpen && (
           <div
             role="listbox"
-            aria-label={t("Tag a bot")}
-            className="absolute bottom-full left-2 z-20 mb-2 w-72 overflow-hidden rounded-xl border border-hairline/40 bg-raised shadow-lg"
+            aria-label={candidates.length ? t("Tag a bot") : t("Use a skill")}
+            className={cn("absolute bottom-full left-2 z-20 mb-2 w-80 overflow-hidden rounded-xl bg-raised p-1 shadow-xl", RING)}
           >
-            {candidates.map((peer, i) => (
-              <button
-                key={peer.id}
-                role="option"
-                aria-selected={i === highlight}
-                onClick={() => pickMention(peer)}
-                onMouseEnter={() => setHighlight(i)}
-                className={cn(
-                  "flex w-full items-center gap-2.5 px-3 py-2 text-left",
-                  i === highlight ? "bg-raised-hover" : "",
-                )}
-              >
-                {peer.bot ? (
-                  <MausAvatar
-                    color={peer.bot.color}
-                    state={normalizeState(peer.bot.mascotExpression) ?? "happy"}
-                    size={24}
-                  />
-                ) : (
-                  <span className="flex size-6 items-center justify-center rounded-full bg-raised text-ink-secondary">
-                    <Users size={14} aria-hidden="true" />
-                  </span>
-                )}
-                <span className="min-w-0 flex-1 truncate text-[14px] font-medium text-ink">{peer.name}</span>
-                <span className="shrink-0 text-xs text-ink-secondary">{peer.bot ? t("Agent") : t("Channel")}</span>
-              </button>
-            ))}
+            {candidates.length > 0
+              ? candidates.map((peer, i) => (
+                  <button
+                    key={peer.id}
+                    role="option"
+                    aria-selected={i === highlight}
+                    onClick={() => pickMention(peer)}
+                    onMouseEnter={() => setHighlight(i)}
+                    className={cn("flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left", i === highlight ? "bg-raised-hover" : "")}
+                  >
+                    {peer.bot ? (
+                      <BotAvatar bot={peer.bot} size={22} />
+                    ) : (
+                      <span className="flex size-[22px] items-center justify-center rounded-[7px] bg-control text-ink-secondary">
+                        <Users size={13} aria-hidden="true" />
+                      </span>
+                    )}
+                    <span className="min-w-0 flex-1 truncate text-[13.5px] font-medium text-ink">{peer.name}</span>
+                    <span className="shrink-0 text-[11.5px] text-ink-secondary">{peer.bot ? t("Agent") : t("Channel")}</span>
+                  </button>
+                ))
+              : skillCandidates.map((skill, i) => (
+                  <button
+                    key={`${skill.botId}:${skill.name}`}
+                    role="option"
+                    aria-selected={i === highlight}
+                    onClick={() => pickSkill(skill)}
+                    onMouseEnter={() => setHighlight(i)}
+                    className={cn("flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left", i === highlight ? "bg-raised-hover" : "")}
+                  >
+                    <Sparkles size={14} className="mt-0.5 shrink-0 text-ink-secondary" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-mono text-[12.5px] font-semibold text-ink">/{skill.name}</span>
+                      {skill.description && <span className="block truncate text-[11.5px] text-ink-secondary">{skill.description}</span>}
+                    </span>
+                    {group && <span className="shrink-0 text-[11px] text-ink-secondary">{skill.botName}</span>}
+                  </button>
+                ))}
           </div>
         )}
-        {/* An approval takes over the composer: you answer it before you
-            can type again, so a waiting bot is impossible to miss. */}
-        {approval && (
-          <div className="mb-2 overflow-hidden rounded-2xl border border-accent/40 bg-card">
-            <PendingApprovalPanel pending={approval} count={approvals.length} index={0} />
-            <PendingApprovalActions
+        {slashActive && !pickerOpen && slash?.query === "" && (
+          <div className={cn("absolute bottom-full left-2 z-20 mb-2 w-80 rounded-xl bg-raised px-3 py-2.5 text-[12.5px] text-ink-secondary shadow-xl", RING)}>
+            {skillsLoading ? t("Loading skills…") : t("No skills yet — import one in the bot's settings.")}
+          </div>
+        )}
+        {/* The card in the transcript is where an approval is answered; this
+            strip stands in only while that card is out of view. */}
+        {approval && !approvalCardVisible && (
+          <div className="relative">
+            <PendingApprovalStrip
               pending={approval}
+              count={approvals.length}
               threadId={threadId}
               bot={approvalBot}
-              onCancelTurn={() => {
-                if (group) dispatch({ type: "interruptGroup", groupId: group.id });
-                else if (bot) dispatch({ type: "interrupt", botId: bot.id });
-              }}
+              onShow={showApprovalCard}
+              onCancelTurn={stopTurn}
             />
           </div>
         )}
         {replyTo && (
-          <div className="mb-2 px-1">
+          <div className="relative mb-2 px-1">
             <ReplyQuote
               message={replyTo}
               fallbackName={bot?.name}
@@ -649,231 +701,325 @@ export function Composer({
             />
           </div>
         )}
-        <ComposerAttachments
-          items={attachments}
-          onAdd={addAttachments}
-          onRemove={removeAttachment}
-          onDisplayInChatBox={displayPasteInChatBox}
-          allowImages={engineSupportsImages}
-          notice={attachmentNotice}
-          onNotice={setAttachmentNotice}
-        />
         <div className="relative">
-          {/* App-ground from the pill midline down, full-bleed. Bubbles may
-              tuck into the top half of the radius; they must not show below
-              center — including the corner pockets around the paperclip. */}
+          <ComposerAttachments
+            items={attachments}
+            onAdd={addAttachments}
+            onRemove={removeAttachment}
+            onDisplayInChatBox={displayPasteInChatBox}
+            allowImages={engineSupportsImages}
+            notice={attachmentNotice}
+            onNotice={setAttachmentNotice}
+          />
+        </div>
+        </div>
+        <div className="relative">
+          {/* Stage colour from the pill's midline down, across the whole
+              chat column: bubbles may tuck into the top half of the pill's
+              radius, never below its centre. */}
+          <div aria-hidden className="absolute top-1/2 -bottom-3 left-1/2 w-[200vw] -translate-x-1/2 bg-stage" />
           <div
-            aria-hidden
-            className="absolute -left-5 -right-5 top-1/2 h-[50vh] bg-app"
-          />
-        <div className="relative z-[1] flex items-end gap-1 rounded-3xl bg-raised px-2 py-1.5">
-          <input
-            ref={fileInput}
-            type="file"
-            multiple
-            className="hidden"
-            onChange={(e) => {
-              void pickFiles(e.target.files);
-              // same file twice in a row still fires onChange
-              e.target.value = "";
-            }}
-          />
-          {!locked && (
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={() => fileInput.current?.click()}
-                aria-label={t("Attach a file")}
-                title={t("Attach a file")}
-                className="flex size-8 shrink-0 items-center justify-center rounded-full text-ink-secondary hover:bg-control hover:text-ink"
-              >
-                <Paperclip size={17} />
-              </button>
-              {autoBot && <PermissionModeSelector bot={autoBot} onSetAuto={setAuto} />}
-            </div>
-          )}
-          <textarea
-          ref={inputRef}
-          rows={1}
-          value={text}
-          onChange={(e) => {
-            editText(e.target.value);
-            setCaret(e.target.selectionStart ?? e.target.value.length);
-            setDismissedAt(null);
-          }}
-          onPaste={(e) => {
-            // an image from the clipboard becomes an uploaded attachment —
-            // but only for engines that can open one; a grok bot politely
-            // refuses instead of receiving a path it cannot read
-            const imageFiles = Array.from(e.clipboardData.files).filter(isImageFile);
-            if (imageFiles.length && engineSupportsImages) {
-              e.preventDefault();
-              void (async () => {
-                for (const file of imageFiles) {
-                  try {
-                    const attachment = await imageAttachmentFromFile(file);
-                    if (attachment) editAttachments((prev) => [...prev, attachment]);
-                  } catch (err) {
-                    dispatch({
-                      type: "error",
-                      message: err instanceof Error ? err.message : t("image upload failed"),
-                    });
+            className={cn(
+              "relative z-[1] flex min-h-[50px] items-end gap-2 rounded-[25px] bg-raised py-[8px] pr-2 pl-2.5",
+              "inset-ring inset-ring-hairline/55 shadow-[0_6px_18px_-10px_#10182840]",
+            )}
+          >
+            <input
+              ref={fileInput}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                void pickFiles(e.target.files);
+                // same file twice in a row still fires onChange
+                e.target.value = "";
+              }}
+            />
+            {!locked && (
+              <div ref={plusRef} className="relative flex shrink-0 items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setPlusOpen((open) => !open)}
+                  aria-haspopup="menu"
+                  aria-expanded={plusOpen}
+                  aria-label={t("Attach and options")}
+                  title={t("Attach and options")}
+                  className={cn(
+                    "grid size-8 place-items-center rounded-full text-ink-secondary transition-colors hover:text-ink",
+                    plusOpen ? "bg-raised-hover" : "bg-control/70 hover:bg-raised-hover",
+                  )}
+                >
+                  <IconPlus size={18} />
+                </button>
+                {/* Auto mode shows itself — the one setting worth seeing at a glance */}
+                {autoBot?.autoApprove && (
+                  <button
+                    type="button"
+                    onClick={() => setPlusOpen(true)}
+                    title={t("Keep going automatically; destructive and sensitive actions still ask")}
+                    className="flex h-6 items-center gap-1 rounded-full bg-select/10 px-2 text-[11.5px] font-semibold text-accent-text"
+                  >
+                    <ShieldCheck size={12} />
+                    {t("Auto")}
+                  </button>
+                )}
+                {plusOpen && (
+                  <PopoverPanel label={t("Attach and options")} className="bottom-full left-0 mb-2 w-[300px]">
+                    <MenuItem
+                      icon={<Paperclip size={14} />}
+                      onClick={() => {
+                        setPlusOpen(false);
+                        fileInput.current?.click();
+                      }}
+                    >
+                      {t("Attach a file")}
+                    </MenuItem>
+                    <MenuItem
+                      icon={<IconSlash size={14} />}
+                      onClick={() => {
+                        setPlusOpen(false);
+                        insertTrigger("/");
+                      }}
+                    >
+                      {t("Use a skill")}
+                    </MenuItem>
+                    {autoBot && (
+                      <>
+                        <MenuDivider />
+                        <MenuLabel>{t("How should {name} actions be approved?", { name: autoBot.name })}</MenuLabel>
+                        <MenuItem
+                          icon={<Hand size={14} />}
+                          role="menuitemradio"
+                          aria-checked={!autoBot.autoApprove}
+                          hint={!autoBot.autoApprove ? <Check size={13} /> : undefined}
+                          onClick={() => {
+                            setPlusOpen(false);
+                            setAuto(false);
+                          }}
+                        >
+                          {t("Ask for approval")}
+                        </MenuItem>
+                        <MenuItem
+                          icon={<ShieldCheck size={14} />}
+                          role="menuitemradio"
+                          aria-checked={Boolean(autoBot.autoApprove)}
+                          hint={autoBot.autoApprove ? <Check size={13} /> : undefined}
+                          onClick={() => {
+                            setPlusOpen(false);
+                            setAuto(true);
+                          }}
+                        >
+                          {t("Auto mode")}
+                        </MenuItem>
+                      </>
+                    )}
+                  </PopoverPanel>
+                )}
+              </div>
+            )}
+            <textarea
+              ref={inputRef}
+              rows={1}
+              value={text}
+              onChange={(e) => {
+                editText(e.target.value);
+                setCaret(e.target.selectionStart ?? e.target.value.length);
+                setDismissedAt(null);
+              }}
+              onPaste={(e) => {
+                // an image from the clipboard becomes an uploaded attachment —
+                // but only for engines that can open one; a grok bot politely
+                // refuses instead of receiving a path it cannot read
+                const imageFiles = Array.from(e.clipboardData.files).filter(isImageFile);
+                if (imageFiles.length && engineSupportsImages) {
+                  e.preventDefault();
+                  void (async () => {
+                    for (const file of imageFiles) {
+                      try {
+                        const attachment = await imageAttachmentFromFile(file);
+                        if (attachment) editAttachments((prev) => [...prev, attachment]);
+                      } catch (err) {
+                        dispatch({
+                          type: "error",
+                          message: err instanceof Error ? err.message : t("image upload failed"),
+                        });
+                      }
+                    }
+                  })();
+                  return;
+                }
+                // a wall of text becomes a chip instead of burying the input
+                const pasted = e.clipboardData.getData("text/plain");
+                if (!isLongPaste(pasted)) return;
+                e.preventDefault();
+                // Preserve native paste replacement semantics: if text was
+                // selected, the attachment replaces that selection.
+                const start = e.currentTarget.selectionStart;
+                const end = e.currentTarget.selectionEnd;
+                if (start !== end) {
+                  editText(`${text.slice(0, start)}${text.slice(end)}`);
+                  setCaret(start);
+                }
+                editAttachments((prev) => [...prev, pasteAttachment(pasted)]);
+              }}
+              onKeyUp={(e) => setCaret((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
+              onClick={(e) => setCaret((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
+              onKeyDown={(e) => {
+                if (pickerOpen) {
+                  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                    e.preventDefault();
+                    const delta = e.key === "ArrowDown" ? 1 : -1;
+                    setHighlight((h) => (h + delta + pickerLength) % pickerLength);
+                    return;
+                  }
+                  if (e.key === "Enter" || e.key === "Tab") {
+                    e.preventDefault();
+                    if (candidates.length) pickMention(candidates[highlight] ?? candidates[0]!);
+                    else pickSkill(skillCandidates[highlight] ?? skillCandidates[0]!);
+                    return;
+                  }
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    setDismissedAt(mention?.start ?? slash?.start ?? null);
+                    return;
                   }
                 }
-              })();
-              return;
-            }
-            // a wall of text becomes a chip instead of burying the input
-            const pasted = e.clipboardData.getData("text/plain");
-            if (!isLongPaste(pasted)) return;
-            e.preventDefault();
-            // Preserve native paste replacement semantics: if text was
-            // selected, the attachment replaces that selection.
-            const start = e.currentTarget.selectionStart;
-            const end = e.currentTarget.selectionEnd;
-            if (start !== end) {
-              editText(`${text.slice(0, start)}${text.slice(end)}`);
-              setCaret(start);
-            }
-            editAttachments((prev) => [...prev, pasteAttachment(pasted)]);
-          }}
-          onKeyUp={(e) => setCaret((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
-          onClick={(e) => setCaret((e.target as HTMLTextAreaElement).selectionStart ?? 0)}
-          onKeyDown={(e) => {
-            if (pickerOpen) {
-              if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-                e.preventDefault();
-                const delta = e.key === "ArrowDown" ? 1 : -1;
-                setHighlight((h) => (h + delta + candidates.length) % candidates.length);
-                return;
-              }
-              if (e.key === "Enter" || e.key === "Tab") {
-                e.preventDefault();
-                pickMention(candidates[highlight]);
-                return;
-              }
-              if (e.key === "Escape") {
-                e.preventDefault();
-                setDismissedAt(mention?.start ?? null);
-                return;
-              }
-            }
-            // an empty composer + ArrowUp = edit your last message (like a chat app)
-            if (e.key === "ArrowUp" && !hasContent && onEditLast) {
-              e.preventDefault();
-              onEditLast();
-              return;
-            }
-            // Shift+Enter inserts a newline; plain Enter sends
-            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-              e.preventDefault();
-              send();
-            }
-            if (e.key === "Escape" && recording) setRecording(false);
-          }}
-          disabled={Boolean(approval) || locked}
-          placeholder={
-            locked
-              ? t("Finish room setup to start chatting")
-              : approval
-              ? t("Answer the approval above to continue")
-              : recording
-              ? t("Listening…")
-              : busy && canSteer
-                ? t("{name} is working — Enter sends this into the running turn", { name: busyName })
-              : busy
-                ? group
-                  ? t("{name} is working — Enter queues your message", { name: busyName })
-                  : t("{name} is working — sends when this turn finishes", { name: busyName })
-                : group
-                  ? t("Message {name} — {hint}", { name: group.name, hint: groupComposerHint(group, members ?? []) })
-                  : t("Message {name}", { name: bot?.name ?? "" })
-          }
-          aria-label={t("Message {name}", { name: group ? group.name : (bot?.name ?? "") })}
-            className="max-h-[9rem] min-h-6 min-w-0 flex-1 resize-none overflow-y-auto self-center bg-transparent px-1 py-1 text-[15px] leading-6 text-ink placeholder:text-ink-secondary focus:outline-none"
-          />
-          <div className="flex items-center gap-1">
-          {busy && !locked && (
-          <button
-            onClick={() => {
-              if (group) dispatch({ type: "interruptGroup", groupId: group.id });
-              else if (bot) dispatch({ type: "interrupt", botId: bot.id });
-            }}
-            aria-label={t("Stop this turn")}
-            className="flex size-8 shrink-0 items-center justify-center rounded-full text-ink-secondary hover:bg-raised hover:text-ink"
-            title={t("Stop")}
-          >
-            <Square size={14} className="fill-current" />
-          </button>
-        )}
-        {!locked && !busy && !hasContent && capabilities.dictation.available && (
-          <button
-            onClick={toggleMic}
-            aria-label={recording ? t("Stop dictation") : t("Start dictation")}
-            className={cn(
-              "flex size-8 shrink-0 items-center justify-center rounded-full",
-              recording
-                ? "animate-pulse bg-danger/20 text-danger"
-                : "text-ink-secondary hover:bg-raised hover:text-ink",
+                if (e.key === "Escape" && slashActive) {
+                  e.preventDefault();
+                  setDismissedAt(slash?.start ?? null);
+                  return;
+                }
+                // an empty composer + ArrowUp = edit your last message (like a chat app)
+                if (e.key === "ArrowUp" && !hasContent && onEditLast) {
+                  e.preventDefault();
+                  onEditLast();
+                  return;
+                }
+                // Shift+Enter inserts a newline; plain Enter sends
+                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                  e.preventDefault();
+                  send();
+                }
+                if (e.key === "Escape" && recording) setRecording(false);
+              }}
+              disabled={Boolean(approval) || locked}
+              placeholder={placeholder}
+              aria-label={t("Message {name}", { name })}
+              // rooms: who answers when nobody is mentioned
+              title={group ? t("Message {name} — {hint}", { name, hint: groupComposerHint(group, members ?? []) }) : undefined}
+              className="max-h-[9rem] min-h-[34px] min-w-0 flex-1 resize-none self-center overflow-y-auto bg-transparent px-1 py-[7px] text-[13.5px] leading-5 text-ink placeholder:text-ink-secondary/70 focus:outline-none disabled:cursor-not-allowed"
+            />
+            {!locked && (
+              <div className="flex shrink-0 items-center gap-1 self-center">
+                <button
+                  type="button"
+                  onClick={() => insertTrigger("@")}
+                  disabled={Boolean(approval)}
+                  aria-label={t("Mention a bot")}
+                  title={t("Mention a bot")}
+                  className="grid size-8 place-items-center rounded-full text-ink-secondary hover:bg-raised-hover hover:text-ink disabled:opacity-40"
+                >
+                  <IconAt size={17} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => insertTrigger("/")}
+                  disabled={Boolean(approval)}
+                  aria-label={t("Use a skill")}
+                  title={t("Use a skill")}
+                  className="grid size-8 place-items-center rounded-full text-[15px] font-bold text-ink-secondary hover:bg-raised-hover hover:text-ink disabled:opacity-40"
+                >
+                  /
+                </button>
+                {busy && hasContent && (
+                  <button
+                    type="button"
+                    onClick={stopTurn}
+                    aria-label={t("Stop this turn")}
+                    title={t("Stop")}
+                    className="grid size-8 place-items-center rounded-full text-ink-secondary hover:bg-raised-hover hover:text-ink"
+                  >
+                    <Square size={13} className="fill-current" />
+                  </button>
+                )}
+                {primary === "stop" ? (
+                  <button
+                    type="button"
+                    onClick={stopTurn}
+                    aria-label={t("Stop this turn")}
+                    title={t("Stop")}
+                    className="grid size-[34px] place-items-center rounded-full bg-primary text-primary-ink hover:brightness-110"
+                  >
+                    <Square size={12} className="fill-current" />
+                  </button>
+                ) : primary === "mic" ? (
+                  <button
+                    type="button"
+                    onClick={toggleMic}
+                    aria-label={recording ? t("Stop dictation") : t("Start dictation")}
+                    title={recording ? t("Stop dictation (Esc)") : t("Dictate")}
+                    className={cn(
+                      "grid size-[34px] place-items-center rounded-full",
+                      recording ? "animate-pulse bg-danger text-white" : "bg-primary text-primary-ink hover:brightness-110",
+                    )}
+                  >
+                    <IconMic size={16} />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={send}
+                    disabled={Boolean(group && queued)}
+                    aria-label={
+                      group && queued
+                        ? t("Waiting for queued message")
+                        : busy && canSteer
+                          ? t("Send into the running turn")
+                          : busy
+                            ? t("Queue message")
+                            : t("Send message")
+                    }
+                    title={
+                      group && queued
+                        ? t("Your earlier message will send when the current turn finishes")
+                        : busy && canSteer
+                          ? t("Send into the running turn")
+                          : busy
+                            ? t("Sends when the current turn finishes")
+                            : t("Send")
+                    }
+                    className={cn(
+                      "grid size-[34px] place-items-center rounded-full transition",
+                      group && queued
+                        ? "cursor-not-allowed bg-control text-ink-secondary"
+                        : primary === "queue"
+                          ? "bg-control text-ink hover:bg-raised-hover"
+                          : "bg-primary text-primary-ink hover:brightness-110 disabled:opacity-25",
+                    )}
+                  >
+                    {primary === "queue" ? <Clock size={15} /> : <ArrowUp size={17} strokeWidth={2.4} />}
+                  </button>
+                )}
+              </div>
             )}
-            title={recording ? t("Stop dictation (Esc)") : t("Dictate")}
-          >
-            <Mic size={18} />
-          </button>
-        )}
-        {hasContent && !locked && (
-          <button
-            onClick={send}
-            disabled={Boolean(group && queued)}
-            aria-label={
-              group && queued
-                ? t("Waiting for queued message")
-                : busy && canSteer
-                  ? t("Send into the running turn")
-                  : busy
-                    ? t("Queue message")
-                    : t("Send message")
-            }
-            title={
-              group && queued
-                ? t("Your earlier message will send when the current turn finishes")
-                : busy && canSteer
-                  ? t("Send into the running turn")
-                  : busy
-                    ? t("Sends when the current turn finishes")
-                    : t("Send")
-            }
-            className={cn(
-              "flex size-8 shrink-0 items-center justify-center rounded-full text-white",
-              group && queued
-                ? "cursor-not-allowed bg-raised text-ink-secondary"
-                : busy && !canSteer
-                  ? "bg-raised text-ink-secondary hover:bg-raised-hover"
-                  : "bg-accent hover:brightness-110",
-            )}
-          >
-            {busy && !canSteer ? <Clock size={15} /> : <ArrowUp size={17} />}
-          </button>
-          )}
           </div>
-        </div>
         </div>
       </div>
       <div className="pointer-events-auto">
-      <LocalComputerAutoWarning
-        open={autoWarn}
-        onCancel={() => setAutoWarn(false)}
-        onConfirm={() => {
-          if (autoBot) {
-            dispatch({
-              type: "updateBot",
-              botId: autoBot.id,
-              patch: { autoApprove: true, acknowledgeLocalAuto: true },
-            });
-          }
-          setAutoWarn(false);
-        }}
-      />
+        <LocalComputerAutoWarning
+          open={autoWarn}
+          onCancel={() => setAutoWarn(false)}
+          onConfirm={() => {
+            if (autoBot) {
+              dispatch({
+                type: "updateBot",
+                botId: autoBot.id,
+                patch: { autoApprove: true, acknowledgeLocalAuto: true },
+              });
+            }
+            setAutoWarn(false);
+          }}
+        />
       </div>
     </div>
   );

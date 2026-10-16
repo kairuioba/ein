@@ -1,30 +1,27 @@
+// The 1:1 chat (design U8, Grok-Bot conventions): soft grey bot bubbles and
+// black user bubbles in one centred column, centred time separators and
+// system lines, result / approval / draft cards with status pills, thread
+// links under answered messages, the typing line, the error strip above the
+// pill composer, and the routine panel on the right.
 import { Component, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  AlertTriangle,
   ArrowDown,
   Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  Bug,
   Clock,
   Copy,
-  Crown,
-  Folder,
   ListTree,
-  Monitor,
   MessageSquareReply,
   Pencil,
   Pin,
   PinOff,
   RefreshCw,
-  Search,
-  Square,
   Webhook,
   X,
 } from "lucide-react";
 import { WorkingDots } from "@/components/WorkingIndicator";
-import { cachedInput, costCaption, formatTokens, formatUsd, hasFiniteCost, usageChip, usageDetail } from "@/lib/usage";
 import {
   useStore,
   useStreaming,
@@ -37,10 +34,9 @@ import {
   type Message,
 } from "@/state/store";
 import { EngineSetup } from "./EngineSetup";
-import { BotAvatar, MausAvatar } from "./Avatar";
+import { BotAvatar } from "./Avatar";
 import { TurnPresence } from "./TurnPresence";
 import { showToolCallsEnabled } from "@/lib/feature-flags";
-import { stateForBot } from "@/lib/mascot";
 import { showWorkingDots } from "@/lib/turn-tail";
 import { liveActivityLabel } from "@/lib/live-activity";
 import { ChatMarkdown } from "./ChatMarkdown";
@@ -53,17 +49,13 @@ import { ConnectorCard } from "./ConnectorCard";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { hasRoutineExecutionTask, RoutineRunCard } from "./RoutineRunCard";
 import { AttachedFileChips, AttachedImageGallery } from "./AttachmentPreview";
-import { ModelPicker } from "./ModelPicker";
 import { RenameTitle } from "./RenameTitle";
-import { TaskPicker } from "./TaskPicker";
-
 import { SpeakButton } from "./SpeakButton";
-import { CallButton, CallOverlay } from "./CallView";
+import { CallOverlay } from "./CallView";
 import { cn } from "@/lib/cn";
-import { intlLocale, msg, t, tn } from "@/lib/i18n";
-import { COMPACT_BUBBLE, COMPACT_SQUARE } from "@/lib/compact-chip";
+import { intlLocale, msg, t } from "@/lib/i18n";
 import { useFocusMessage } from "@/lib/focus-message";
-import { groupActivityRuns } from "@/lib/activity-runs";
+import { groupActivityRuns, type TranscriptItem } from "@/lib/activity-runs";
 import { ActivityRun } from "./ActivityRun";
 import { webhookMessageView } from "@/lib/webhook-message";
 import { splitTranscriptAttachments } from "@/lib/composer-attachments";
@@ -78,30 +70,47 @@ import {
 } from "@/lib/transcript-window";
 import { timelineEvents } from "@/lib/taskTimeline";
 import { useReplyDraft } from "@/lib/drafts";
+import { chiefBot } from "@/lib/org";
+import { useApi, useOrg } from "@/state/org-api";
+import type { DispatchRun } from "../../shared/dispatch-types";
+import type { OrgDecision } from "../../shared/org-types";
+import { pendingApprovals } from "./PendingApproval";
+import { ChatHeader } from "./chat/ChatHeader";
+import { RoutinePanel } from "./chat/RoutinePanel";
+import { DecisionCard, DispatchRunCard } from "./chat/ResultCards";
+import { CardButton, ErrorStrip, SOFT, SystemLine, ThreadLink, TimeSeparator } from "./chat/primitives";
+import { IconBolt, IconUsers } from "./chat/icons";
+import {
+  clockLabel,
+  currentFailure,
+  failureText,
+  isFailureLine,
+  isSystemLine,
+  isTurnError,
+  nextReplyTarget,
+  replyIndex,
+  runningRunCount,
+  runsForThread,
+  runsKey,
+  separatorBetween,
+  slotByTime,
+  typingLabel,
+} from "./chat/chat-model";
 
 /** Long user messages collapse behind a fade so pasted walls of text don't
  * bury the conversation; bots get full markdown. */
 const USER_COLLAPSE_CHARS = 600;
 const USER_COLLAPSE_LINES = 8;
 
-/** "Today" / "Yesterday" / "Mon, Aug 11" — real dates, not a hardcoded label. */
-function dayLabel(at: number): string {
-  const d = new Date(at);
-  const now = new Date();
-  const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
-  const diffDays = Math.round((startOfDay(now) - startOfDay(d)) / 86_400_000);
-  if (diffDays === 0) return t("Today");
-  if (diffDays === 1) return t("Yesterday");
-  return d.toLocaleDateString(intlLocale(), { weekday: "short", month: "short", day: "numeric" });
-}
+/** The transcript column: centred, the same width as the composer. */
+const COLUMN = "mx-auto w-full max-w-[720px] px-5";
 
-function DaySeparator({ at }: { at: number }) {
-  return (
-    <div className="py-3 text-center text-[13px] text-ink-secondary">
-      {dayLabel(at)} {formatTime(at)}
-    </div>
-  );
-}
+/** Bot bubble and user bubble, as the design draws them. */
+const BOT_BUBBLE = cn("w-fit min-w-0 max-w-[560px] rounded-2xl rounded-tl-md px-[13px] py-[9px] text-[13.5px] leading-[1.6] text-ink", SOFT);
+const USER_BUBBLE = "w-fit min-w-0 max-w-[440px] rounded-2xl rounded-tr-md bg-bubble-user px-[13px] py-[9px] text-[13.5px] leading-[1.6] whitespace-pre-wrap text-bubble-user-ink";
+
+/** How often the header's "N running" and the run cards refresh. */
+const DISPATCH_POLL_MS = 4_000;
 
 /** Screen-reader names for the timeline dots; the state values stay ids. */
 const TIMELINE_STATE_LABEL = {
@@ -117,12 +126,12 @@ function TaskTimeline({ messages, busy }: { messages: Message[]; busy: boolean }
   if (events.length === 0) return null;
   const recent = events.slice(-8);
   return (
-    <div className="w-full px-5 pt-1">
+    <div className={cn(COLUMN, "pt-1")}>
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
-        className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left text-[12.5px] text-ink-secondary hover:bg-raised/50 hover:text-ink"
+        className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left text-[12.5px] text-ink-secondary hover:bg-raised-hover hover:text-ink"
       >
         <span className="flex items-center gap-1.5"><ListTree size={14} /> {t("Execution timeline")}{busy ? ` · ${t("running")}` : ""}</span>
         <ChevronDown size={14} className={cn("transition-transform", open && "rotate-180")} />
@@ -155,6 +164,9 @@ function TaskTimeline({ messages, busy }: { messages: Message[]; busy: boolean }
   );
 }
 
+const HOVER_ACTION =
+  "rounded-md p-1.5 text-ink-secondary opacity-0 transition-opacity hover:bg-raised-hover hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100";
+
 /** Hover/focus-revealed copy control shared by user + bot bubbles. */
 function CopyButton({ text, className }: { text: string; className?: string }) {
   const [copied, setCopied] = useState(false);
@@ -167,10 +179,7 @@ function CopyButton({ text, className }: { text: string; className?: string }) {
       }}
       aria-label={t("Copy message")}
       title={t("Copy message")}
-      className={cn(
-        "rounded-md p-1.5 text-ink-secondary opacity-0 transition-opacity hover:bg-raised hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100",
-        className,
-      )}
+      className={cn(HOVER_ACTION, className)}
     >
       {copied ? <Check size={14} className="text-success" /> : <Copy size={14} />}
     </button>
@@ -195,9 +204,9 @@ function ErrorRow({
 }) {
   return (
     <div className="flex justify-start">
-      <div className="w-fit max-w-[min(42rem,78%)] rounded-xl border border-danger/30 bg-danger/10 px-3.5 py-2.5 text-[13.5px] text-danger">
+      <div className="w-fit min-w-0 max-w-[560px] rounded-[14px] bg-danger/[0.06] px-3.5 py-2.5 text-[13px] text-danger inset-ring inset-ring-danger/25">
         <div className="flex items-start gap-2">
-          <AlertTriangle size={15} className="mt-0.5 shrink-0" />
+          <IconBolt size={15} className="mt-0.5 shrink-0" />
           <span className="min-w-0 break-words">{message}</span>
         </div>
         {setupInstance &&
@@ -205,12 +214,9 @@ function ErrorRow({
           <EngineSetup instance={setupInstance} className="mt-2 text-ink-secondary" />
         ) : (
           onRetry && (
-            <button
-              onClick={onRetry}
-              className="mt-1.5 flex items-center gap-1.5 rounded-full border border-danger/30 px-2.5 py-1 text-[12.5px] hover:bg-danger/15"
-            >
+            <CardButton variant="white" onClick={onRetry} className="mt-2 h-7 text-danger">
               <RefreshCw size={12} /> {t("Retry")}
-            </button>
+            </CardButton>
           )
         )}
       </div>
@@ -227,11 +233,7 @@ class MessageBoundary extends Component<{ children: ReactNode; fallbackText: str
   }
   render() {
     if (this.state.failed) {
-      return (
-        <div className="w-fit max-w-[min(42rem,78%)] rounded-2xl bg-card px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap text-ink">
-          {this.props.fallbackText}
-        </div>
-      );
+      return <div className={cn(BOT_BUBBLE, "whitespace-pre-wrap")}>{this.props.fallbackText}</div>;
     }
     return this.props.children;
   }
@@ -260,7 +262,7 @@ function BubbleEditor({
     if (draft.trim()) onSubmit(draft.trim());
   };
   return (
-    <div className="w-full max-w-[min(42rem,78%)] rounded-2xl border border-hairline/40 bg-bubble-user px-4 py-3 text-bubble-user-ink">
+    <div className="w-full min-w-0 max-w-[560px] rounded-2xl bg-raised px-4 py-3 text-ink inset-ring-[1.5px] inset-ring-select">
       <textarea
         ref={ref}
         value={draft}
@@ -274,22 +276,15 @@ function BubbleEditor({
           if (e.key === "Escape") onCancel();
         }}
         rows={Math.min(10, Math.max(2, draft.split("\n").length))}
-        className="w-full resize-none bg-transparent text-[15px] leading-relaxed text-ink focus:outline-none"
+        className="w-full resize-none bg-transparent text-[13.5px] leading-relaxed text-ink focus:outline-none"
       />
       <div className="mt-2 flex items-center justify-end gap-2">
-        <button
-          onClick={onCancel}
-          className="rounded-full px-3 py-1 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink"
-        >
+        <CardButton variant="grey" onClick={onCancel}>
           {t("Cancel")}
-        </button>
-        <button
-          onClick={submit}
-          disabled={!draft.trim()}
-          className="rounded-full bg-primary px-3 py-1 text-[13px] font-medium text-primary-ink disabled:opacity-40"
-        >
+        </CardButton>
+        <CardButton onClick={submit} disabled={!draft.trim()}>
           {t("Send")}
-        </button>
+        </CardButton>
       </div>
     </div>
   );
@@ -342,62 +337,54 @@ function Bubble({
   const switchTo = (v: Message | undefined) => {
     if (v && !bot.busy) dispatch({ type: "switchBranch", botId: bot.id, messageId: v.id });
   };
+  const pinned = bot.pinnedMessageId === message.id;
+  const pinButton = (
+    <button
+      onClick={() =>
+        dispatch({
+          type: "updateBot",
+          botId: bot.id,
+          patch: { pinnedMessageId: pinned ? "" : message.id },
+        })
+      }
+      aria-label={pinned ? t("Unpin message") : t("Pin message")}
+      className={HOVER_ACTION}
+      title={pinned ? t("Unpin this message") : t("Pin this message to the top of the thread")}
+    >
+      {pinned ? <PinOff size={14} /> : <Pin size={14} />}
+    </button>
+  );
+  const replyButton = (
+    <button type="button" onClick={onReply} aria-label={t("Reply to message")} className={HOVER_ACTION} title={t("Reply")}>
+      <MessageSquareReply size={14} />
+    </button>
+  );
 
   return (
     <div className={cn("group flex w-full flex-col", user ? "animate-msg-in items-end" : "items-start")}>
-      <div className={cn("flex w-full items-center gap-1.5", user ? "justify-end" : "justify-start")}>
+      <div className={cn("flex w-full items-end gap-1", user ? "justify-end" : "justify-start")}>
         {/* editing rewinds the thread, so it waits for the turn to end —
             same rule as the version switcher below */}
         {user && message.kind === "text" && !webhookView && !bot.busy && (
-          <button
-            onClick={onStartEdit}
-            aria-label={t("Edit message")}
-            className="rounded-md p-1.5 text-ink-secondary opacity-0 transition-opacity hover:bg-raised hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
-            title={t("Edit message")}
-          >
+          <button onClick={onStartEdit} aria-label={t("Edit message")} className={HOVER_ACTION} title={t("Edit message")}>
             <Pencil size={14} />
           </button>
         )}
         {user && <CopyButton text={visibleText} />}
+        {user && replyButton}
+        {user && pinButton}
         {user && (
-          <>
-            <button
-              type="button"
-              onClick={onReply}
-              aria-label={t("Reply to message")}
-              className="rounded-md p-1.5 text-ink-secondary opacity-0 transition-opacity hover:bg-raised hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
-              title={t("Reply")}
-            >
-              <MessageSquareReply size={14} />
-            </button>
-            <button
-              onClick={() =>
-                dispatch({
-                  type: "updateBot",
-                  botId: bot.id,
-                  patch: { pinnedMessageId: bot.pinnedMessageId === message.id ? "" : message.id },
-                })
-              }
-              aria-label={bot.pinnedMessageId === message.id ? t("Unpin message") : t("Pin message")}
-              className="rounded-md p-1.5 text-ink-secondary opacity-0 transition-opacity hover:bg-raised hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
-              title={
-                bot.pinnedMessageId === message.id
-                  ? t("Unpin this message")
-                  : t("Pin this message to the top of the thread")
-              }
-            >
-              {bot.pinnedMessageId === message.id ? <PinOff size={14} /> : <Pin size={14} />}
-            </button>
-          </>
+          <span className="mr-1 mb-1 shrink-0 text-[11px] tabular-nums text-ink-secondary/70" title={new Date(message.at).toLocaleString(intlLocale())}>
+            {clockLabel(message.at)}
+          </span>
         )}
         <div
           className={cn(
-            "w-fit max-w-[min(42rem,78%)] rounded-2xl text-[15px] leading-relaxed",
             user && webhookView
-              ? "overflow-hidden border border-accent/25 bg-card text-ink shadow-[0_10px_30px_rgba(0,0,0,0.18)]"
+              ? "w-fit min-w-0 max-w-[520px] overflow-hidden rounded-2xl bg-raised text-[13.5px] leading-[1.6] text-ink inset-ring inset-ring-select/30"
               : user
-                ? "bg-bubble-user px-4 py-2.5 whitespace-pre-wrap text-bubble-user-ink"
-                : "bg-card px-4 py-2.5 text-ink",
+                ? USER_BUBBLE
+                : BOT_BUBBLE,
           )}
           title={new Date(message.at).toLocaleString(intlLocale())}
         >
@@ -415,7 +402,7 @@ function Bubble({
           )}
           {user && webhookView ? (
             <div className="min-w-[300px] max-w-[520px]">
-              <div className="flex items-center gap-2 border-b border-accent/15 bg-accent/[0.055] px-4 py-2.5 text-[11.5px] font-medium text-accent">
+              <div className="flex items-center gap-2 border-b border-select/15 bg-select/[0.055] px-4 py-2.5 text-[11.5px] font-medium text-accent-text">
                 <Webhook size={13} />
                 <span>{t("Webhook task")}</span>
               </div>
@@ -423,7 +410,7 @@ function Bubble({
               {webhookView.payload && (
                 <details className="border-t border-hairline/30 bg-inset/25 px-4 py-2.5 text-[11.5px] text-ink-secondary">
                   <summary className="cursor-pointer select-none hover:text-ink">{t("View event payload")}</summary>
-                  <pre className="mt-2 max-h-48 overflow-auto rounded-lg border border-hairline/25 bg-black/25 p-3 font-mono text-[10.5px] leading-relaxed whitespace-pre-wrap text-ink-secondary">{webhookView.payload}</pre>
+                  <pre className="mt-2 max-h-48 overflow-auto rounded-lg border border-hairline/25 bg-inset p-3 font-mono text-[10.5px] leading-relaxed whitespace-pre-wrap text-ink-secondary">{webhookView.payload}</pre>
                 </details>
               )}
             </div>
@@ -443,17 +430,17 @@ function Bubble({
                 </div>
               )}
               {message.steered && (
-                <div className="mt-1 text-[11px] text-ink-secondary/70" title={t("Sent while the bot was working — it saw this before its next step, inside the same turn.")}>
+                <div className="mt-1 text-[11px] opacity-70" title={t("Sent while the bot was working — it saw this before its next step, inside the same turn.")}>
                   {t("sent mid-turn")}
                 </div>
               )}
               {collapsible && (
-                <button onClick={() => setExpanded(true)} className="mt-1 text-[12.5px] text-ink-secondary hover:text-ink">
+                <button onClick={() => setExpanded(true)} className="mt-1 text-[12.5px] opacity-75 hover:opacity-100">
                   {t("Show full message")}
                 </button>
               )}
               {expanded && (
-                <button onClick={() => setExpanded(false)} className="mt-1 text-[12.5px] text-ink-secondary hover:text-ink">
+                <button onClick={() => setExpanded(false)} className="mt-1 text-[12.5px] opacity-75 hover:opacity-100">
                   {t("Show less")}
                 </button>
               )}
@@ -466,66 +453,31 @@ function Bubble({
         </div>
         {!user && (
           <>
-            <div className="flex flex-col gap-0.5 self-end pb-0.5">
+            <div className="flex items-center self-end">
               <CopyButton text={text} />
               {message.kind === "text" && (
                 <SpeakButton text={text} botId={bot.id} messageId={message.id} voiceId={bot.voice} />
               )}
               {isLastBotText && !bot.busy && onRegenerate && (
-                <button
-                  onClick={onRegenerate}
-                  aria-label={t("Regenerate response")}
-                  title={t("Regenerate response")}
-                  className="rounded-md p-1.5 text-ink-secondary opacity-0 transition-opacity hover:bg-raised hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
-                >
+                <button onClick={onRegenerate} aria-label={t("Regenerate response")} title={t("Regenerate response")} className={HOVER_ACTION}>
                   <RefreshCw size={14} />
                 </button>
               )}
             </div>
-            <button
-              type="button"
-              onClick={onReply}
-              aria-label={t("Reply to message")}
-              className="rounded-md p-1.5 text-ink-secondary opacity-0 transition-opacity hover:bg-raised hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
-              title={t("Reply")}
-            >
-              <MessageSquareReply size={14} />
-            </button>
-            <button
-              onClick={() =>
-                dispatch({
-                  type: "updateBot",
-                  botId: bot.id,
-                  patch: { pinnedMessageId: bot.pinnedMessageId === message.id ? "" : message.id },
-                })
-              }
-              aria-label={bot.pinnedMessageId === message.id ? t("Unpin message") : t("Pin message")}
-              className="rounded-md p-1.5 text-ink-secondary opacity-0 transition-opacity hover:bg-raised hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
-              title={
-                bot.pinnedMessageId === message.id
-                  ? t("Unpin this message")
-                  : t("Pin this message to the top of the thread")
-              }
-            >
-              {bot.pinnedMessageId === message.id ? <PinOff size={14} /> : <Pin size={14} />}
-            </button>
+            {replyButton}
+            {pinButton}
+            <span className="mb-1 ml-1 self-end text-[11px] tabular-nums text-ink-secondary/70 opacity-0 transition-opacity group-hover:opacity-100">
+              {clockLabel(message.at)}
+            </span>
           </>
         )}
-        <span
-          className={cn(
-            "self-end pb-1 text-[11px] tabular-nums text-ink-secondary/70 opacity-0 transition-opacity group-hover:opacity-100",
-            user ? "order-first mr-1" : "ml-1",
-          )}
-        >
-          {formatTime(message.at)}
-        </span>
       </div>
       {versions.length > 1 && (
         <div className="mt-1 flex items-center gap-0.5 pr-1 text-[12px] text-ink-secondary">
           <button
             onClick={() => switchTo(versions[versionIndex - 1])}
             disabled={versionIndex <= 0 || bot.busy}
-            className="rounded p-0.5 hover:bg-raised hover:text-ink disabled:opacity-30 disabled:hover:bg-transparent"
+            className="rounded p-0.5 hover:bg-raised-hover hover:text-ink disabled:opacity-30 disabled:hover:bg-transparent"
             title={t("Previous version")}
           >
             <ChevronLeft size={14} />
@@ -536,7 +488,7 @@ function Bubble({
           <button
             onClick={() => switchTo(versions[versionIndex + 1])}
             disabled={versionIndex >= versions.length - 1 || bot.busy}
-            className="rounded p-0.5 hover:bg-raised hover:text-ink disabled:opacity-30 disabled:hover:bg-transparent"
+            className="rounded p-0.5 hover:bg-raised-hover hover:text-ink disabled:opacity-30 disabled:hover:bg-transparent"
             title={t("Next version")}
           >
             <ChevronRight size={14} />
@@ -547,26 +499,24 @@ function Bubble({
   );
 }
 
-/** A tool run: spinner while live, check/cross once settled. */
+/** A tool run: spinner while live, check/cross once settled. Bot⇄bot chips
+ * are links to the channel where the exchange lives, drawn as system lines. */
 function ActivityChip({ message }: { message: Message }) {
-  const { dispatch } = useStore();
+  const { state, dispatch } = useStore();
   const tool = message.tool;
   if (!tool) return null;
-  // bot⇄bot comm chip: opens the channel where the exchange lives
   const comm = message.comm;
   if (comm) {
+    const peer = state.bots.find((bot) => bot.id === comm.withBotId);
     return (
-      <div className="flex justify-start">
-        <button
-          onClick={() => dispatch({ type: "select", id: comm.groupId })}
-          title={t("Open the conversation with {name}", { name: comm.withName })}
-          className="flex items-center gap-2 rounded-full border border-hairline/40 bg-panel px-3 py-1.5 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink"
-        >
-          <MausAvatar color={comm.withColor} state="happy" size={16} />
-          <span className="max-w-[480px] truncate">{tool.name}</span>
-          <ChevronRight size={13} />
-        </button>
-      </div>
+      <SystemLine
+        icon={peer ? <BotAvatar bot={peer} size={16} /> : <IconUsers size={13} />}
+        onClick={() => dispatch({ type: "select", id: comm.groupId })}
+        title={t("Open the conversation with {name}", { name: comm.withName })}
+      >
+        {tool.name}
+        <ChevronRight size={12} className="ml-0.5 inline-block align-[-2px]" />
+      </SystemLine>
     );
   }
   const failed = tool.ok === false;
@@ -574,7 +524,7 @@ function ActivityChip({ message }: { message: Message }) {
     <div className="flex justify-start">
       <div
         className={cn(
-          "flex items-center gap-2 rounded-full border border-hairline/40 bg-panel px-3 py-1.5 text-[13px]",
+          "flex items-center gap-2 rounded-full bg-control/50 px-3 py-1.5 text-[12.5px]",
           failed ? "text-danger" : "text-ink-secondary",
         )}
       >
@@ -597,11 +547,19 @@ function ScreenFrame({ png, mime }: { png: string; mime?: string }) {
       <img
         src={`data:${mime ?? "image/png"};base64,${png}`}
         alt={t("Bot's screen")}
-        className="w-fit max-w-[min(42rem,78%)] rounded-2xl border border-hairline/40"
+        className="w-fit min-w-0 max-w-[560px] rounded-2xl ring-1 ring-hairline/40"
       />
     </div>
   );
 }
+
+/** Cards in the transcript that are not messages, placed by time. */
+type TimedCard =
+  | { kind: "run"; id: string; at: number; run: DispatchRun }
+  | { kind: "decision"; id: string; at: number; decision: OrgDecision };
+
+const itemFirstAt = (item: TranscriptItem) => (item.kind === "run" ? item.messages[0]!.at : item.message.at);
+const itemLastAt = (item: TranscriptItem) => (item.kind === "run" ? item.messages.at(-1)!.at : item.message.at);
 
 /** The settled transcript, memoized as one unit: during streaming every
  * frame re-renders ChatView, but all of these props keep their identity
@@ -618,11 +576,17 @@ const MessagesList = memo(function MessagesList({
   emergingId,
   canRetryLast,
   engine,
+  hasEarlier,
+  cards,
+  replies,
+  stripId,
   onStartEdit,
   onCancelEdit,
   onSubmitEdit,
   onRegenerate,
   onReply,
+  onShowReplies,
+  onOpenRoutine,
 }: {
   bot: Bot;
   messages: Message[];
@@ -634,47 +598,79 @@ const MessagesList = memo(function MessagesList({
   canRetryLast: boolean;
   /** This bot's engine, for rendering setup help on a `setup` error. */
   engine: InstanceInfo | undefined;
+  /** earlier rows are folded away above the window */
+  hasEarlier: boolean;
+  cards: readonly TimedCard[];
+  /** message id → ids of the messages replying to it */
+  replies: ReadonlyMap<string, string[]>;
+  /** the failure the strip above the composer is showing (kept out of here) */
+  stripId: string | null;
   onStartEdit: (id: string) => void;
   onCancelEdit: () => void;
   onSubmitEdit: (id: string, text: string) => void;
   onRegenerate: () => void;
   onReply: (message: Message) => void;
+  onShowReplies: (messageId: string) => void;
+  onOpenRoutine: (routineId: string) => void;
 }) {
   const { state, dispatch } = useStore();
   const showToolCalls = showToolCallsEnabled(state.config);
   // Fold finished tool chips into runs, so a stretch of them cannot bury
   // what the bot actually said. Hidden unless Settings → Tool calls is on.
   const items = useMemo(() => groupActivityRuns(messages), [messages]);
+  const placed = useMemo(() => {
+    const byRow = new Map<number, TimedCard[]>();
+    for (const { after, card } of slotByTime(items.map(itemLastAt), cards, { hasEarlier })) {
+      byRow.set(after, [...(byRow.get(after) ?? []), card]);
+    }
+    return byRow;
+  }, [items, cards, hasEarlier]);
   // A search hit inside a folded run has to open it: the fold keeps the
   // row out of the DOM, and there is nothing for the scroll to land on.
   const focus = state.focusMessage;
   const focusedId = focus && !focus.consumed && focus.threadId === bot.threadId ? focus.messageId : null;
+  const findBot = (id?: string) => (id ? state.bots.find((candidate) => candidate.id === id) : undefined);
+
+  // the time the last rendered row happened, for the separators
+  let lastAt: number | undefined;
+  const separatorFor = (at: number) => {
+    const separator = separatorBetween(lastAt, at);
+    lastAt = at;
+    return separator ? <TimeSeparator label={separator.label} /> : null;
+  };
+  const renderCards = (index: number) =>
+    (placed.get(index) ?? []).map((card) => (
+      <div key={card.id} className="contents">
+        {separatorFor(card.at)}
+        <div className="flex justify-start">
+          {card.kind === "run" ? <DispatchRunCard run={card.run} bots={state.bots} /> : <DecisionCard decision={card.decision} />}
+        </div>
+      </div>
+    ));
+
   return (
     <>
-      {messages.length === 0 && !bot.busy && (
+      {messages.length === 0 && !bot.busy && cards.length === 0 && (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 py-24 text-center">
-          <BotAvatar bot={bot} state="idle" size={64} motion="none" motionKey={0} />
+          <BotAvatar bot={bot} size={64} />
           <RenameTitle
             value={bot.name}
             onCommit={(name) => dispatch({ type: "updateBot", botId: bot.id, patch: { name } })}
             className="text-[17px] font-semibold text-ink"
             inputClassName="rounded bg-inset px-1.5 py-0.5 text-center text-[17px] font-semibold"
           />
-          <div className="max-w-[360px] text-[14px] text-ink-secondary">
+          <div className="max-w-[360px] text-[13.5px] text-ink-secondary">
             {bot.description || t("Send a message to start the conversation.")}
           </div>
         </div>
       )}
+      {renderCards(-1)}
       {items.map((item, i) => {
-        const previous = items[i - 1];
-        const prev = previous && (previous.kind === "run" ? previous.messages.at(-1) : previous.message);
-        const first = item.kind === "run" ? item.messages[0] : item.message;
-        const newDay = !prev || new Date(prev.at).toDateString() !== new Date(first.at).toDateString();
         if (item.kind === "run") {
-          if (!showToolCalls) return null;
+          if (!showToolCalls) return <div key={item.id} className="contents">{renderCards(i)}</div>;
           return (
             <div key={item.id} className="contents">
-              {newDay && <DaySeparator at={first.at} />}
+              {separatorFor(itemFirstAt(item))}
               <ActivityRun messages={item.messages} forceOpen={item.messages.some((step) => step.id === focusedId)}>
                 {item.messages.map((step) => (
                   <div key={step.id} className="contents" data-mid={step.id}>
@@ -682,11 +678,12 @@ const MessagesList = memo(function MessagesList({
                   </div>
                 ))}
               </ActivityRun>
+              {renderCards(i)}
             </div>
           );
         }
         const m = item.message;
-        if (m.id === emergingId) return null;
+        if (m.id === emergingId) return <div key={m.id} className="contents">{renderCards(i)}</div>;
         const row = (() => {
           switch (m.kind) {
             case "secret":
@@ -694,10 +691,10 @@ const MessagesList = memo(function MessagesList({
             case "connector":
               return m.connector ? <ConnectorCard botId={bot.id} threadId={bot.threadId} message={m} /> : null;
             case "options":
-              // a live permission ask gets the approval box; questions keep
-              // the list card. The first-run quiz drops out once they talk.
+              // a live permission ask gets the approval card; questions keep
+              // the options card. The first-run quiz drops out once they talk.
               if (m.card?.requestId && m.card.tool) {
-                return <ApprovalCard bot={bot} message={m} />;
+                return <ApprovalCard bot={findBot(m.from?.botId) ?? bot} message={m} threadId={bot.threadId} />;
               }
               if (shouldHideOnboardingCard(m, transcript)) return null;
               return <OptionCard botId={bot.id} message={m} />;
@@ -714,22 +711,37 @@ const MessagesList = memo(function MessagesList({
                         state,
                       )
                     : undefined}
+                  onOpenRoutine={state.routines.some((routine) => routine.id === m.routineRun?.routineId) ? onOpenRoutine : undefined}
                 />
               );
             }
             case "activity": {
+              // the failure on show in the strip above the composer stays
+              // out of the history until it is dismissed or answered
+              if (m.id === stripId) return null;
               // a failed turn is an error, not a tool run — render it as one.
-              // bot⇄bot comm chips stay because they link to another conversation.
-              // plain tool runs stay out unless Settings → Tool calls is on.
-              if (m.tool?.name.startsWith("error:")) {
+              if (isTurnError(m) && m.tool) {
                 return (
                   <ErrorRow
-                    message={m.tool.name.slice(6).trim()}
+                    message={failureText(m)}
                     onRetry={m.id === messages.at(-1)?.id && canRetryLast ? onRegenerate : undefined}
                     setupInstance={m.tool.setup ? engine : undefined}
                   />
                 );
               }
+              // org and dispatch events, and failures the harness reported,
+              // are centred system lines; bot⇄bot chips link to the channel
+              if (isSystemLine(m)) {
+                return <SystemLine icon={<IconUsers size={13} />}>{m.tool?.name}</SystemLine>;
+              }
+              if (isFailureLine(m)) {
+                return (
+                  <SystemLine tone="danger" icon={<IconBolt size={13} />}>
+                    {failureText(m)}
+                  </SystemLine>
+                );
+              }
+              // plain tool runs stay out unless Settings → Tool calls is on
               if (!showToolCalls && !m.comm) return null;
               return <ActivityChip message={m} />;
             }
@@ -752,11 +764,18 @@ const MessagesList = memo(function MessagesList({
               );
           }
         })();
-        if (!row) return null;
+        if (!row) return <div key={m.id} className="contents">{renderCards(i)}</div>;
+        const threadCount = replies.get(m.id)?.length ?? 0;
         return (
-          <div key={m.id} className="contents" data-mid={m.id}>
-            {newDay && <DaySeparator at={m.at} />}
-            {row}
+          <div key={m.id} className="contents">
+            <div className="contents" data-mid={m.id}>
+              {separatorFor(m.at)}
+              <div className={cn("flex min-w-0 flex-col", m.role === "user" ? "items-end" : "items-start")}>
+                {row}
+                {threadCount > 0 && <ThreadLink count={threadCount} onClick={() => onShowReplies(m.id)} />}
+              </div>
+            </div>
+            {renderCards(i)}
           </div>
         );
       })}
@@ -787,22 +806,22 @@ function PinnedBanner({
   const text = (pinned.text ?? "").replace(/\s+/g, " ").trim();
   if (!text) return null;
   return (
-    <div className="w-full px-5">
-      <div className="mb-2 flex items-center gap-2 rounded-lg border border-accent/25 bg-accent/[0.07] px-3 py-1.5">
-        <Pin size={12} className="shrink-0 text-accent" />
+    <div className={cn(COLUMN, "pt-2")}>
+      <div className="flex items-center gap-2 rounded-[10px] bg-select/[0.07] px-3 py-1.5 inset-ring inset-ring-select/20">
+        <Pin size={12} className="shrink-0 text-accent-text" />
         <button
           onClick={() => onJump(pinned.id)}
           className="flex min-w-0 flex-1 items-baseline gap-2 text-left"
           title={t("Jump to the pinned message")}
         >
-          <span className="shrink-0 text-[11.5px] font-medium text-accent">{sender}</span>
+          <span className="shrink-0 text-[11.5px] font-semibold text-accent-text">{sender}</span>
           <span className="truncate text-[12.5px] text-ink-secondary">{text}</span>
         </button>
         <button
           onClick={onUnpin}
           aria-label={t("Unpin message")}
           title={t("Unpin")}
-          className="shrink-0 rounded p-0.5 text-ink-secondary hover:bg-raised hover:text-ink"
+          className="shrink-0 rounded p-0.5 text-ink-secondary hover:bg-raised-hover hover:text-ink"
         >
           <X size={13} />
         </button>
@@ -821,7 +840,6 @@ export function ChatView({ bot }: { bot: Bot }) {
   const streaming = stream.streaming[bot.threadId];
   const reasoning = stream.reasoning[bot.threadId];
   const provisioning = state.provisioning[bot.id];
-  const mascotMotion = state.mascotMotion?.botId === bot.id ? state.mascotMotion : null;
   const [findOpen, setFindOpen] = useState(false);
   const { replyTo, selectReply, clearReply, consumeReply, restoreReply } = useReplyDraft(
     bot.threadId,
@@ -840,8 +858,31 @@ export function ChatView({ bot }: { bot: Bot }) {
     return () => window.removeEventListener("keydown", onFind);
   }, []);
 
+  // ── the company layer: the 主 Bot, its dispatch runs and decisions ──
+  const org = useOrg();
+  const isMainBot = chiefBot(state.bots, org.data)?.id === bot.id;
+  const coordinates = isMainBot || Boolean(bot.chiefOfStaff);
+  const dispatchState = useApi<{ runs?: DispatchRun[] }>(coordinates ? "/api/dispatch/state" : null, { runs: [] }, DISPATCH_POLL_MS);
+  const decisionsApi = useApi<{ decisions?: OrgDecision[] }>(isMainBot && org.loaded && !org.error ? "/api/org/decisions" : null, { decisions: [] }, 10_000);
+  const allRuns = dispatchState.data.runs ?? [];
+  const runningRuns = runningRunCount(allRuns, bot.id);
+  const threadRuns = runsForThread(allRuns, bot.threadId);
+  const threadRunsKey = runsKey(threadRuns);
+  const groupDecisions = (decisionsApi.data.decisions ?? []).filter((decision) => decision.source.kind === "group");
+  const decisionsKey = groupDecisions.map((decision) => `${decision.id}:${decision.actionItems.length}`).join("|");
+  // stable while nothing changed, so a poll does not re-render the transcript
+  const cards = useMemo<TimedCard[]>(
+    () => [
+      ...threadRuns.map((run) => ({ kind: "run" as const, id: `run:${run.id}`, at: run.createdAt, run })),
+      ...groupDecisions.map((decision) => ({ kind: "decision" as const, id: `decision:${decision.id}`, at: decision.at, decision })),
+    ],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [threadRunsKey, decisionsKey],
+  );
+
   // only the active branch is rendered; forks stay reachable via ‹ › nav
   const messages = useMemo(() => visibleMessages(bot), [bot]);
+  const replies = useMemo(() => replyIndex(messages), [messages]);
 
   // Windowed transcript: only a tail of the thread mounts (screenshots make
   // full threads DOM-heavy). The boundary is anchored per bot+task; a
@@ -895,10 +936,10 @@ export function ChatView({ bot }: { bot: Bot }) {
     [messages],
   );
 
-  // Mascot while the turn works. Streaming stays invisible — when the reply
-  // is finished, the whole bubble pops in above the mascot.
+  // The typing line while the turn works. Streaming stays invisible — when
+  // the reply is finished, the whole bubble pops in above the line.
   const lastMessage = messages.at(-1);
-  const toolInFlight = lastMessage?.kind === "activity" && lastMessage.tool?.ok === undefined;
+  const toolInFlight = lastMessage?.kind === "activity" && lastMessage.tool?.ok === undefined && !isSystemLine(lastMessage);
   const activityLabel = liveActivityLabel(lastMessage);
   const waiting = Boolean(
     bot.busy &&
@@ -928,6 +969,12 @@ export function ChatView({ bot }: { bot: Bot }) {
   useEffect(() => {
     setBusySince(bot.busy ? Date.now() : null);
   }, [bot.busy, bot.id]);
+  // a routine this bot is running right now names what it is busy with
+  const runningRoutine = state.routineRuns.find((run) => run.botId === bot.id && run.status === "running");
+  const typing = typingLabel(bot.name, {
+    routine: runningRoutine?.routineName,
+    activity: toolInFlight ? activityLabel : null,
+  });
 
   // regenerate = fork the last user message with the same text — reuses the
   // existing branch machinery, so the old answer stays reachable via ‹ ›
@@ -936,6 +983,47 @@ export function ChatView({ bot }: { bot: Bot }) {
       dispatch({ type: "editMessage", botId: bot.id, messageId: lastUserMessage.id, text: lastUserMessage.text });
     }
   }, [lastUserMessage, bot.busy, bot.id, dispatch]);
+
+  // ── the strip above the composer: the newest failure, dismissible ──
+  const failure = currentFailure(messages);
+  const [dismissedFailures, setDismissedFailures] = useState<ReadonlySet<string>>(() => new Set());
+  useEffect(() => setDismissedFailures(new Set()), [bot.threadId]);
+  const stripFailure = failure && !dismissedFailures.has(failure.id) && !failure.tool?.setup ? failure : undefined;
+  const canRetryLast = !bot.busy && Boolean(lastUserMessage);
+
+  // ── thread replies: each click lands on the next reply ──
+  const lastReplyFocus = useRef<string | null>(null);
+  const showReplies = useCallback(
+    (messageId: string) => {
+      const target = nextReplyTarget(replies.get(messageId) ?? [], lastReplyFocus.current);
+      if (!target) return;
+      lastReplyFocus.current = target;
+      dispatch({ type: "focusMessage", threadId: bot.threadId, messageId: target });
+    },
+    [replies, bot.threadId, dispatch],
+  );
+
+  // ── the routine panel on the right ──
+  const [routinePanel, setRoutinePanel] = useState<{ routineId: string | null } | null>(null);
+  const botRoutines = useMemo(() => state.routines.filter((routine) => routine.botId === bot.id), [state.routines, bot.id]);
+  const openRoutinePanel = useCallback(
+    (routineId: string | null) => {
+      // one panel at a time on the right
+      if (state.settingsOpen) dispatch({ type: "toggleSettings", open: false });
+      if (state.computerOpen) dispatch({ type: "toggleComputer", open: false });
+      if (state.inspectorOpen) dispatch({ type: "toggleInspector", open: false });
+      setRoutinePanel({ routineId });
+    },
+    [dispatch, state.settingsOpen, state.computerOpen, state.inspectorOpen],
+  );
+  useEffect(() => {
+    if (state.settingsOpen || state.computerOpen || state.inspectorOpen) setRoutinePanel(null);
+  }, [state.settingsOpen, state.computerOpen, state.inspectorOpen]);
+  useEffect(() => setRoutinePanel(null), [bot.id]);
+  const openRoutines = useCallback(() => {
+    const names = new Set(botRoutines.map((routine) => `${routine.name.trim()}\n${routine.prompt.trim()}`));
+    openRoutinePanel(names.size === 1 ? botRoutines[0]!.id : null);
+  }, [botRoutines, openRoutinePanel]);
 
   // Scroll pinning: follow the bottom while the user hasn't scrolled away.
   // Follow breaks ONLY on an upward user gesture (wheel/touch), never on
@@ -980,7 +1068,7 @@ export function ChatView({ bot }: { bot: Bot }) {
     if (!el || !followRef.current) return;
     el.scrollTo({ top: el.scrollHeight });
     previousScrollTop.current = el.scrollTop;
-  }, [bot.id, messages.length, streaming, reasoning, bot.busy, composerDock.pad]);
+  }, [bot.id, messages.length, streaming, reasoning, bot.busy, composerDock.pad, cards.length]);
 
   // Expanding prepends rows: capture the height first, then after the commit
   // shift scrollTop by the growth so the message under the cursor stays put
@@ -1015,8 +1103,8 @@ export function ChatView({ bot }: { bot: Bot }) {
   // ArrowUp only counts outside inputs — in the composer it edits, not scrolls.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const typing = e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement;
-      if (e.key === "PageUp" || ((e.key === "Home" || e.key === "ArrowUp") && !typing)) {
+      const typingInField = e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement;
+      if (e.key === "PageUp" || ((e.key === "Home" || e.key === "ArrowUp") && !typingInField)) {
         setBottomFollow(false);
       }
     };
@@ -1036,358 +1124,251 @@ export function ChatView({ bot }: { bot: Bot }) {
     });
   };
 
-  return (
-    <main className="relative flex h-full min-w-0 flex-1 flex-col bg-stage">
-      {/* Call mode covers the thread while the bot is on the line */}
-      <CallOverlay bot={bot} />
-      {/* Header */}
-      <div
-        className={cn(
-          // @container so the chips on the right can fold to icon bubbles
-          // when the column is narrow (side panel open, small window)
-          "@container/chathead flex items-center justify-between px-5 py-3",
-          // Room for the drawer button, which overlays this corner below md.
-          "pl-11 md:pl-5",
-        )}
-      >
-        <div className="flex min-w-0 items-center gap-2.5 rounded-lg px-1.5 py-1">
-          <button
-            onClick={() => dispatch({ type: "toggleSettings", open: true })}
-            className="flex size-10 shrink-0 items-center justify-center rounded-lg hover:bg-raised/50"
-            title={t("Open agent profile")}
-            aria-label={t("Open {name}'s profile", { name: bot.name })}
-          >
-            <BotAvatar
-              bot={bot}
-              state={stateForBot({ ...bot, messages })}
-              size={28}
-              motion={mascotMotion?.kind ?? "none"}
-              motionKey={mascotMotion?.nonce ?? 0}
-            />
-          </button>
-          <RenameTitle
-            value={bot.name}
-            onCommit={(name) => dispatch({ type: "updateBot", botId: bot.id, patch: { name } })}
-            onActivate={() => dispatch({ type: "toggleSettings", open: true })}
-            showEditButton
-            className="truncate text-[15px] font-semibold text-ink"
-            inputClassName="max-w-[220px] rounded bg-inset px-1.5 py-0.5 text-[15px] font-semibold"
-          />
-          {bot.chiefOfStaff && (
-            <span className="flex items-center gap-1 rounded-full bg-accent/12 px-2 py-0.5 text-[11px] font-medium text-accent">
-              <Crown size={11} /> {t("Chief of Staff")}
-            </span>
-          )}
-          {bot.busy && <WorkingDots className="text-ink-secondary" />}
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <button
-            onClick={() => setFindOpen((open) => !open)}
-            aria-label={t("Find in conversation")}
-            aria-pressed={findOpen}
-            className={cn(
-              "rounded-md p-1.5 hover:bg-raised",
-              findOpen ? "text-accent" : "text-ink-secondary hover:text-ink",
-            )}
-            title={t("Find in conversation (⌘F)")}
-          >
-            <Search size={18} />
-          </button>
-          {bot.busy && (
-            <button
-              onClick={() => dispatch({ type: "interrupt", botId: bot.id })}
-              className={cn(
-                "flex items-center gap-1.5 rounded-full border border-hairline/40 bg-raised/60 px-2.5 py-1 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink",
-                COMPACT_BUBBLE,
-              )}
-              title={t("Stop this turn")}
-            >
-              <Square size={12} className="fill-current" />
-              <span className="@max-4xl/chathead:hidden">{t("Stop")}</span>
-            </button>
-          )}
-          <TaskPicker bot={bot} />
-          <UsageChip bot={bot} />
-          <WorkingFolderChip bot={bot} />
-          <ModelPicker bot={bot} />
-          <CallButton bot={bot} />
-          <button
-            onClick={() => dispatch({ type: "toggleComputer" })}
-            className={cn(
-              "rounded-md p-1.5 hover:bg-raised",
-              state.computerOpen ? "text-accent" : "text-ink-secondary hover:text-ink",
-            )}
-            title={t("Bot's computer")}
-          >
-            <Monitor size={18} />
-          </button>
-          <button
-            onClick={() => dispatch({ type: "toggleInspector" })}
-            aria-label={t("Inspector")}
-            aria-pressed={state.inspectorOpen}
-            className={cn(
-              "rounded-md p-1.5 hover:bg-raised",
-              state.inspectorOpen ? "text-accent" : "text-ink-secondary hover:text-ink",
-            )}
-            title={t("Inspector — runtime events and raw protocol for this thread")}
-          >
-            <Bug size={18} />
-          </button>
-        </div>
-      </div>
-
-      {findOpen && <ChatFindBar threadId={bot.threadId} onClose={() => setFindOpen(false)} />}
-
-      {/* Error banner */}
+  const approvalsWaiting = pendingApprovals(messages).length > 0;
+  const strips = (
+    <>
       {state.error && (
-        <div className="w-full px-5">
-          <div className="mb-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-[13px] text-danger">
-            {state.error}
-          </div>
+        <div className="mb-2">
+          <ErrorStrip onDismiss={() => dispatch({ type: "error", message: null })}>{state.error}</ErrorStrip>
         </div>
       )}
-
-      {/* Pinned message banner */}
-      <PinnedBanner
-        bot={bot}
-        pinnedId={bot.pinnedMessageId}
-        messages={messages}
-        onJump={(messageId) =>
-          dispatch({ type: "focusMessage", threadId: bot.threadId, messageId })
-        }
-        onUnpin={() =>
-          dispatch({ type: "updateBot", botId: bot.id, patch: { pinnedMessageId: "" } })
-        }
-      />
-
-      {showToolCallsEnabled(state.config) && <TaskTimeline messages={messages} busy={bot.busy ?? false} />}
-
-      {/* Messages + composer share one pane so bubbles scroll into the pill
-          instead of dying on a rectangular clip above a black dock. */}
-      <div className="relative min-h-0 flex-1">
-      <div
-        ref={scrollRef}
-        className="h-full overflow-x-hidden overflow-y-auto overscroll-y-contain px-5 [overflow-anchor:none]"
-        onPointerDown={(e) => {
-          // grabbing the scrollbar is a scroll gesture too — the lane lives
-          // past the content box (clientWidth excludes it)
-          const el = scrollRef.current;
-          if (el && e.target === el && e.nativeEvent.offsetX >= el.clientWidth) setBottomFollow(false);
-        }}
-        onWheel={(e) => {
-          if (e.deltaY < 0) setBottomFollow(false);
-          else if (atEnd()) setBottomFollow(true);
-        }}
-        onTouchStart={(e) => (touchY.current = e.touches[0]?.clientY ?? 0)}
-        onTouchMove={(e) => {
-          const y = e.touches[0]?.clientY ?? 0;
-          if (y > touchY.current + 4) setBottomFollow(false);
-          else if (atEnd()) setBottomFollow(true);
-        }}
-        onScroll={() => {
-          const el = scrollRef.current;
-          if (!el) return;
-          const scrollTop = el.scrollTop;
-          const resume = shouldResumeBottomFollow({
-            following: followRef.current,
-            previousScrollTop: previousScrollTop.current,
-            scrollTop,
-            distanceFromBottom: el.scrollHeight - scrollTop - el.clientHeight,
-          });
-          previousScrollTop.current = scrollTop;
-          if (resume) setBottomFollow(true);
-        }}
-      >
-        <div
-          className="flex w-full flex-col gap-3"
-          style={{ paddingBottom: composerDock.pad }}
-          role="log"
-          aria-live="polite"
-          aria-label={t("Conversation with {name}", { name: bot.name })}
-        >
-          {hiddenCount > 0 && (
-            <div className="flex justify-center pt-2">
-              <button
-                onClick={showEarlier}
-                className="rounded-full border border-hairline/40 bg-panel px-3 py-1 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink"
-              >
-                {t("Show earlier messages ({count} more)", { count: hiddenCount })}
-              </button>
-            </div>
-          )}
-          <MessagesList
-            bot={bot}
-            messages={windowedMessages}
-            transcript={messages}
-            editingId={editingId}
-            lastBotTextId={lastBotTextId}
-            emergingId={popping?.id}
-            canRetryLast={!bot.busy && Boolean(lastUserMessage)}
-            engine={state.instances.find((i) => i.instanceId === bot.modelSelection.instanceId)}
-            onStartEdit={startEdit}
-            onCancelEdit={cancelEdit}
-            onSubmitEdit={submitEdit}
-            onRegenerate={regenerate}
-            onReply={selectReply}
-          />
-          {laterCount > 0 && (
-            <div className="flex justify-center">
-              <button
-                onClick={showLater}
-                className="rounded-full border border-hairline/40 bg-panel px-3 py-1 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink"
-              >
-                {t("Show later messages ({count} more)", { count: laterCount })}
-              </button>
-            </div>
-          )}
-          {provisioning && (
-            <div className="flex justify-start">
-              <div className="flex items-center gap-2 rounded-full border border-hairline/40 bg-panel px-3 py-1.5 text-[13px] text-ink-secondary">
-                <WorkingDots size={3.5} />
-                {t("Setting up this bot's computer…")}
-              </div>
-            </div>
-          )}
-          <TurnPresence
-            avatar={
-              <MausAvatar
-                color={bot.color}
-                state={toolInFlight ? "working" : "thinking"}
-                size={36}
-                forward={false}
-                lookAround={1}
-                trackPointer={false}
-              />
+      {stripFailure && (
+        <div className="mb-2">
+          <ErrorStrip
+            onDismiss={() => setDismissedFailures((current) => new Set([...current, stripFailure.id]))}
+            action={
+              isTurnError(stripFailure) && stripFailure.id === lastMessage?.id && canRetryLast ? (
+                <button
+                  type="button"
+                  onClick={regenerate}
+                  className="flex h-6 shrink-0 items-center gap-1 rounded-md px-2 text-[12px] font-semibold hover:bg-danger/10"
+                >
+                  <RefreshCw size={12} /> {t("Retry")}
+                </button>
+              ) : undefined
             }
-            visible={presenceVisible}
-            label={activityLabel}
-            answering={popping !== null}
-            since={busySince}
           >
-            {popping ? (
-              <div className="w-fit max-w-[min(42rem,78%)] rounded-2xl bg-card px-4 py-2.5 text-[15px] leading-relaxed text-ink">
-                <MessageBoundary fallbackText={popping.text}>
-                  <ChatMarkdown text={popping.text} />
-                </MessageBoundary>
-              </div>
-            ) : null}
-          </TurnPresence>
-          {/* Ghost tail: 1:1 sends made mid-turn wait in the server's steer
-              queue and stay off the transcript until drain (they must never
-              become the active leaf). These rows are that queue made visible,
-              in send order, each with its own cancel. */}
-          {bot.busy &&
-            (state.pendingQueued[bot.threadId] ?? []).map((entry) => (
-              <div key={entry.queueId} className="flex flex-col items-end">
-                <div className="w-fit max-w-[min(42rem,78%)] rounded-2xl border border-dashed border-hairline/70 bg-panel/60 px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap text-ink-secondary">
-                  {entry.text}
-                </div>
-                <div className="mt-1 flex items-center gap-1 pr-1 text-[11px] text-ink-secondary/70">
-                  <Clock size={11} aria-hidden="true" />
-                  <span>{t("Queued — sends when this turn finishes")}</span>
+            {failureText(stripFailure)}
+          </ErrorStrip>
+        </div>
+      )}
+    </>
+  );
+
+  return (
+    <>
+      <main className="relative flex h-full min-w-0 flex-1 flex-col bg-stage">
+        {/* Call mode covers the thread while the bot is on the line */}
+        <CallOverlay bot={bot} />
+        <ChatHeader
+          bot={bot}
+          messages={messages}
+          isMainBot={isMainBot}
+          runningRuns={runningRuns}
+          waitingOnYou={approvalsWaiting || bot.activity === "waiting-on-you"}
+          findOpen={findOpen}
+          onFind={() => setFindOpen(true)}
+          onOpenRoutines={openRoutines}
+          routineCount={botRoutines.length}
+        />
+
+        {findOpen && (
+          <div className="pt-2">
+            <ChatFindBar threadId={bot.threadId} onClose={() => setFindOpen(false)} />
+          </div>
+        )}
+
+        {/* Pinned message banner */}
+        <PinnedBanner
+          bot={bot}
+          pinnedId={bot.pinnedMessageId}
+          messages={messages}
+          onJump={(messageId) =>
+            dispatch({ type: "focusMessage", threadId: bot.threadId, messageId })
+          }
+          onUnpin={() =>
+            dispatch({ type: "updateBot", botId: bot.id, patch: { pinnedMessageId: "" } })
+          }
+        />
+
+        {showToolCallsEnabled(state.config) && <TaskTimeline messages={messages} busy={bot.busy ?? false} />}
+
+        {/* Messages + composer share one pane so bubbles scroll into the pill
+            instead of dying on a rectangular clip above the dock. */}
+        <div className="relative min-h-0 flex-1">
+          <div
+            ref={scrollRef}
+            className="h-full overflow-x-hidden overflow-y-auto overscroll-y-contain [overflow-anchor:none]"
+            onPointerDown={(e) => {
+              // grabbing the scrollbar is a scroll gesture too — the lane lives
+              // past the content box (clientWidth excludes it)
+              const el = scrollRef.current;
+              if (el && e.target === el && e.nativeEvent.offsetX >= el.clientWidth) setBottomFollow(false);
+            }}
+            onWheel={(e) => {
+              if (e.deltaY < 0) setBottomFollow(false);
+              else if (atEnd()) setBottomFollow(true);
+            }}
+            onTouchStart={(e) => (touchY.current = e.touches[0]?.clientY ?? 0)}
+            onTouchMove={(e) => {
+              const y = e.touches[0]?.clientY ?? 0;
+              if (y > touchY.current + 4) setBottomFollow(false);
+              else if (atEnd()) setBottomFollow(true);
+            }}
+            onScroll={() => {
+              const el = scrollRef.current;
+              if (!el) return;
+              const scrollTop = el.scrollTop;
+              const resume = shouldResumeBottomFollow({
+                following: followRef.current,
+                previousScrollTop: previousScrollTop.current,
+                scrollTop,
+                distanceFromBottom: el.scrollHeight - scrollTop - el.clientHeight,
+              });
+              previousScrollTop.current = scrollTop;
+              if (resume) setBottomFollow(true);
+            }}
+          >
+            <div
+              className={cn(COLUMN, "flex min-h-full flex-col justify-end gap-3 pt-4")}
+              style={{ paddingBottom: composerDock.pad }}
+              role="log"
+              aria-live="polite"
+              aria-label={t("Conversation with {name}", { name: bot.name })}
+            >
+              {hiddenCount > 0 && (
+                <div className="flex justify-center pt-1">
                   <button
-                    type="button"
-                    onClick={() =>
-                      dispatch({ type: "cancelQueued", botId: bot.id, queueId: entry.queueId })
-                    }
-                    aria-label={t("Cancel queued message")}
-                    title={t("Cancel queued message")}
-                    className="ml-0.5 flex size-4 shrink-0 items-center justify-center rounded text-ink-secondary hover:bg-raised hover:text-ink"
+                    onClick={showEarlier}
+                    className={cn("rounded-full px-3 py-1 text-[12px] text-ink-secondary hover:text-ink", SOFT)}
                   >
-                    <X size={11} strokeWidth={2.5} />
+                    {t("Show earlier messages ({count} more)", { count: hiddenCount })}
                   </button>
                 </div>
-              </div>
-            ))}
+              )}
+              <MessagesList
+                bot={bot}
+                messages={windowedMessages}
+                transcript={messages}
+                editingId={editingId}
+                lastBotTextId={lastBotTextId}
+                emergingId={popping?.id}
+                canRetryLast={canRetryLast}
+                engine={state.instances.find((i) => i.instanceId === bot.modelSelection.instanceId)}
+                hasEarlier={hiddenCount > 0}
+                cards={cards}
+                replies={replies}
+                stripId={stripFailure?.id ?? null}
+                onStartEdit={startEdit}
+                onCancelEdit={cancelEdit}
+                onSubmitEdit={submitEdit}
+                onRegenerate={regenerate}
+                onReply={selectReply}
+                onShowReplies={showReplies}
+                onOpenRoutine={openRoutinePanel}
+              />
+              {laterCount > 0 && (
+                <div className="flex justify-center">
+                  <button
+                    onClick={showLater}
+                    className={cn("rounded-full px-3 py-1 text-[12px] text-ink-secondary hover:text-ink", SOFT)}
+                  >
+                    {t("Show later messages ({count} more)", { count: laterCount })}
+                  </button>
+                </div>
+              )}
+              {provisioning && (
+                <div className="flex items-center gap-2 text-[12.5px] text-ink-secondary">
+                  <WorkingDots size={3.5} />
+                  {t("Setting up this bot's computer…")}
+                </div>
+              )}
+              <TurnPresence
+                avatar={<BotAvatar bot={bot} size={18} state={toolInFlight ? "working" : "thinking"} />}
+                visible={presenceVisible}
+                label={typing}
+                answering={popping !== null}
+                since={busySince}
+              >
+                {popping ? (
+                  <div className={BOT_BUBBLE}>
+                    <MessageBoundary fallbackText={popping.text}>
+                      <ChatMarkdown text={popping.text} />
+                    </MessageBoundary>
+                  </div>
+                ) : null}
+              </TurnPresence>
+              {/* Ghost tail: 1:1 sends made mid-turn wait in the server's steer
+                  queue and stay off the transcript until drain (they must never
+                  become the active leaf). These rows are that queue made visible,
+                  in send order, each with its own cancel. */}
+              {bot.busy &&
+                (state.pendingQueued[bot.threadId] ?? []).map((entry) => (
+                  <div key={entry.queueId} className="flex flex-col items-end">
+                    <div className="w-fit min-w-0 max-w-[440px] rounded-2xl rounded-tr-md border border-dashed border-hairline/70 px-[13px] py-[9px] text-[13.5px] leading-[1.6] whitespace-pre-wrap text-ink-secondary">
+                      {entry.text}
+                    </div>
+                    <div className="mt-1 flex items-center gap-1 pr-1 text-[11px] text-ink-secondary/70">
+                      <Clock size={11} aria-hidden="true" />
+                      <span>{t("Queued — sends when this turn finishes")}</span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          dispatch({ type: "cancelQueued", botId: bot.id, queueId: entry.queueId })
+                        }
+                        aria-label={t("Cancel queued message")}
+                        title={t("Cancel queued message")}
+                        className="ml-0.5 flex size-4 shrink-0 items-center justify-center rounded text-ink-secondary hover:bg-raised-hover hover:text-ink"
+                      >
+                        <X size={11} strokeWidth={2.5} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+            </div>
+          </div>
+
+          {/* a soft fade under the header, as the design draws it */}
+          <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 z-[1] h-5 bg-gradient-to-b from-stage to-transparent" />
+
+          {/* Reading scrollback — one tap back to the end, streaming or not */}
+          {!follow && (
+            <button
+              onClick={jumpToLatest}
+              aria-label={t("Jump to latest messages")}
+              className="animate-pop-in absolute left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-raised px-3 py-1.5 text-[12.5px] text-ink shadow-lg hover:bg-raised-hover"
+              style={{ bottom: composerDock.height }}
+            >
+              <ArrowDown size={13} /> {t("Jump to latest")}
+            </button>
+          )}
+
+          {/* Keyed by task: each conversation keeps its own draft and a failed
+              request can restore the old task without spilling into the newly
+              selected one. ArrowUp-to-edit stays gated on busy because editing
+              rewinds the thread, which a live turn forbids (the server 409s it). */}
+          <div ref={composerDockRef} className="absolute inset-x-0 bottom-0 z-[2]">
+            <Composer
+              key={bot.threadId}
+              bot={bot}
+              replyTo={replyTo}
+              onClearReply={clearReply}
+              onConsumeReply={consumeReply}
+              onRestoreReply={restoreReply}
+              onEditLast={lastUserMessage && !bot.busy ? () => setEditingId(lastUserMessage.id) : undefined}
+              notice={state.error || stripFailure ? strips : undefined}
+            />
+          </div>
         </div>
-      </div>
-
-      {/* Reading scrollback — one tap back to the end, streaming or not */}
-      {!follow && (
-        <button
-          onClick={jumpToLatest}
-          aria-label={t("Jump to latest messages")}
-          className="animate-pop-in absolute left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-hairline/40 bg-raised px-3 py-1.5 text-[12.5px] text-ink shadow-lg hover:bg-raised-hover"
-          style={{ bottom: composerDock.height }}
-        >
-          <ArrowDown size={13} /> {t("Jump to latest")}
-        </button>
+      </main>
+      {routinePanel && (
+        <RoutinePanel
+          bot={bot}
+          routineId={routinePanel.routineId}
+          onSelect={(routineId) => setRoutinePanel({ routineId })}
+          onClose={() => setRoutinePanel(null)}
+        />
       )}
-
-      {/* Keyed by task: each conversation keeps its own draft and a failed
-          request can restore the old task without spilling into the newly
-          selected one. ArrowUp-to-edit stays gated on busy because editing
-          rewinds the thread, which a live turn forbids (the server 409s it). */}
-      <div ref={composerDockRef} className="absolute inset-x-0 bottom-0 z-[2]">
-      <Composer
-        key={bot.threadId}
-        bot={bot}
-        replyTo={replyTo}
-        onClearReply={clearReply}
-        onConsumeReply={consumeReply}
-        onRestoreReply={restoreReply}
-        onEditLast={lastUserMessage && !bot.busy ? () => setEditingId(lastUserMessage.id) : undefined}
-      />
-      </div>
-      </div>
-
-    </main>
-  );
-}
-
-/** What the open task has spent — quiet until the first turn settles.
- * Click opens the bot's settings, where the Usage card has the breakdown. */
-function UsageChip({ bot }: { bot: Bot }) {
-  const { state, dispatch } = useStore();
-  const usage = bot.tasks?.find((t) => t.threadId === bot.threadId)?.usage;
-  const text = usage ? usageChip(usage) : "";
-  if (!usage || !text) return null;
-  const billing = state.instances.find((i) => i.instanceId === bot.modelSelection.instanceId)?.snapshot.billing;
-  const detail = [
-    tn(usage.turns, "{count} turn", "{count} turns"),
-    usageDetail(usage),
-    // the whole thread rides along on every turn, so most of "in" is the
-    // model re-reading what it already saw — say so, or the figure reads as
-    // a bug (issue #527)
-    cachedInput(usage) > 0 ? t("cached = context re-read each turn, not new text") : null,
-    hasFiniteCost(usage.costUsd) ? `${formatUsd(usage.costUsd)} ${costCaption(billing)}` : null,
-  ]
-    .filter(Boolean)
-    .join("\n");
-  // folded: one figure — cost when the engine reports one, else tokens
-  const short = usage.costUsd !== null ? formatUsd(usage.costUsd) : formatTokens(usage.input + usage.output);
-  return (
-    <button
-      onClick={() => dispatch({ type: "toggleSettings", open: true })}
-      className="whitespace-nowrap rounded-full border border-hairline/40 bg-raised/60 px-2.5 py-1 text-[12px] tabular-nums text-ink-secondary hover:bg-raised hover:text-ink @max-4xl/chathead:px-2"
-      title={detail}
-    >
-      <span className="@max-4xl/chathead:hidden">{text}</span>
-      <span className="hidden @max-4xl/chathead:inline">{short}</span>
-    </button>
-  );
-}
-
-/** The folder this task's tools run in — quiet unless it's somewhere other
- * than home. Shows the pinned task folder when there is one, else the bot's
- * folder a first turn would pin. Click opens bot settings to change it. */
-function WorkingFolderChip({ bot }: { bot: Bot }) {
-  const { dispatch } = useStore();
-  const task = bot.tasks?.find((t) => t.threadId === bot.threadId);
-  const folder = task?.cwd === undefined ? bot.cwd : (task.cwd ?? undefined);
-  if (!folder) return null;
-  const name = folder.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || folder;
-  return (
-    <button
-      onClick={() => dispatch({ type: "toggleSettings", open: true })}
-      className={cn(
-        "flex max-w-[180px] items-center gap-1.5 rounded-full border border-hairline/40 bg-raised/60 px-2.5 py-1 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink",
-        COMPACT_SQUARE,
-      )}
-      title={t("Working folder: {path}", { path: folder })}
-    >
-      <Folder size={12} className="@max-4xl/chathead:size-[14px]" />
-      <span className="truncate font-mono @max-4xl/chathead:hidden">{name}</span>
-    </button>
+    </>
   );
 }

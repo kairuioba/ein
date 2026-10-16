@@ -12,6 +12,7 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Check, Copy } from "lucide-react";
 import { t } from "@/lib/i18n";
+import { useCodeTheme } from "@/components/chat/code-theme";
 
 // tiny highlight cache so revisiting a thread doesn't re-tokenize settled
 // blocks; keys are content-hashed and capped. Streamed partials may land here
@@ -61,9 +62,11 @@ const localFilePath = (href?: string): string | null => {
 function CodeBlock({ code, lang, streaming }: { code: string; lang: string; streaming: boolean }) {
   const [html, setHtml] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  // light token colours on the daylight skins, dark ones on the dark skins
+  const theme = useCodeTheme();
 
   useEffect(() => {
-    const key = `${lang}:${hash(code)}`;
+    const key = `${theme}:${lang}:${hash(code)}`;
     const cached = highlightCache.get(key);
     if (cached) return setHtml(cached);
     let alive = true;
@@ -73,7 +76,7 @@ function CodeBlock({ code, lang, streaming }: { code: string; lang: string; stre
         .then((shiki) =>
           shiki.codeToHtml(code, {
             lang: lang || "text",
-            theme: "github-dark-default",
+            theme,
           }),
         )
         .then((out) => {
@@ -103,7 +106,7 @@ function CodeBlock({ code, lang, streaming }: { code: string; lang: string; stre
       alive = false;
       if (timer !== undefined) clearTimeout(timer);
     };
-  }, [code, lang, streaming]);
+  }, [code, lang, streaming, theme]);
 
   const copy = () => {
     void navigator.clipboard?.writeText(code);
@@ -112,12 +115,12 @@ function CodeBlock({ code, lang, streaming }: { code: string; lang: string; stre
   };
 
   return (
-    <div className="my-2 overflow-hidden rounded-lg border border-hairline/40 bg-inset">
+    <div className="my-2 overflow-hidden rounded-[10px] border border-hairline/40 bg-raised">
       <div className="flex items-center justify-between border-b border-hairline/30 px-3 py-1">
         <span className="text-[11px] uppercase tracking-wide text-ink-secondary">{lang || t("code")}</span>
         <button
           onClick={copy}
-          className="rounded p-1 text-ink-secondary hover:bg-raised hover:text-ink"
+          className="rounded p-1 text-ink-secondary hover:bg-raised-hover hover:text-ink"
           title={t("Copy code")}
         >
           {copied ? <Check size={13} className="text-success" /> : <Copy size={13} />}
@@ -263,7 +266,7 @@ function ChatMarkdownComponent({ text, streaming = false }: { text: string; stre
           },
           code({ children }: { children?: ReactNode }) {
             return (
-              <code className="rounded bg-inset px-1 py-px text-[13px]">{children}</code>
+              <code className="rounded bg-raised/80 px-1 py-px text-[12.5px] inset-ring inset-ring-hairline/35">{children}</code>
             );
           },
           a({ href, children }: { href?: string; children?: ReactNode }) {

@@ -4,7 +4,7 @@
 // question is never answered by the machine.
 import { describe, expect, it } from "vitest";
 
-import { approvalKey, autoDecision, looksDestructive, looksSensitive } from "./auto-approve.ts";
+import { approvalKey, autoDecision, autoVerdict, externalPublishRule, looksDestructive, looksExternalPublish, looksSensitive } from "./auto-approve.ts";
 
 describe("looksDestructive", () => {
   const dangerous = [
@@ -146,5 +146,101 @@ describe("unattended turns", () => {
   it("still auto-approves the same action when a person started the turn", () => {
     expect(autoDecision(bot, "Bash", "git status")).toBeTruthy();
     expect(autoDecision(bot, "Bash", "git status", { unattended: false })).toBeTruthy();
+  });
+});
+
+// Company rule: posting, emailing and going live always reach the owner
+// (OrgRules.externalPublishNeedsOwner). These pin both halves — what counts
+// as publishing outside, and that nothing answers it for the owner.
+describe("external publishing", () => {
+  const publishing: Array<[tool: string, summary: string]> = [
+    // Composio actions, as the tool or inside the multi-execute arguments
+    ["GMAIL_SEND_EMAIL", "{}"],
+    ["mcp__composio__GMAIL_REPLY_TO_THREAD", "{}"],
+    ["mcp__composio__COMPOSIO_MULTI_EXECUTE_TOOL", '{"tools":[{"tool_slug":"GMAIL_SEND_EMAIL","arguments":{"recipient_email":"a@b.c"}}]}'],
+    ["mcp__composio__COMPOSIO_MULTI_EXECUTE_TOOL", '{"tools":[{"tool_slug":"SLACK_SENDS_A_MESSAGE_TO_A_SLACK_CHANNEL"}]}'],
+    ["mcp__composio__COMPOSIO_MULTI_EXECUTE_TOOL", '{"tools":[{"tool_slug":"SLACK_CHAT_POST_MESSAGE"}]}'],
+    ["COMPOSIO_MULTI_EXECUTE_TOOL", '{"tool_slug":"TWITTER_CREATION_OF_A_POST"}'],
+    ["COMPOSIO_MULTI_EXECUTE_TOOL", '{"tool_slug":"LINKEDIN_CREATE_LINKED_IN_POST"}'],
+    ["COMPOSIO_MULTI_EXECUTE_TOOL", '{"tool_slug":"DISCORDBOT_CREATE_MESSAGE"}'],
+    ["COMPOSIO_MULTI_EXECUTE_TOOL", '{"tool_slug":"GITHUB_CREATE_A_RELEASE"}'],
+    ["COMPOSIO_MULTI_EXECUTE_TOOL", '{"tool_slug":"NETLIFY_DEPLOY_SITE"}'],
+    ["COMPOSIO_MULTI_EXECUTE_TOOL", '{"tool_slug":"VERCEL_CREATE_DEPLOYMENT"}'],
+    ["COMPOSIO_MULTI_EXECUTE_TOOL", '{"tool_slug":"ACME_CRM_SEND_INVOICE"}'],
+    // other MCP servers' tools
+    ["mcp__gmail__send_email", "{}"],
+    ["slack_post_message", "{}"],
+    ["publish_post", "{}"],
+    ["post_to_xiaohongshu", "{}"],
+    ["mcp__vercel__deploy_project", "{}"],
+    ["vercel_deploy", "{}"],
+    // command lines
+    ["Bash", "npm publish --access public"],
+    ["Bash", "cd site && vercel --prod"],
+    ["Bash", "firebase deploy --only hosting"],
+    ["shell", "wrangler deploy"],
+    ["Bash", "netlify deploy --prod --dir dist"],
+    ["Bash", "gh release create v1.2.0 --notes x"],
+    ["Bash", "git push heroku main"],
+    ["Bash", "docker push acme/app:latest"],
+    ["Bash", "terraform apply -auto-approve"],
+    ["Bash", "npm run deploy"],
+    ["Bash", "echo hi | mail -s 'Launch' team@acme.com"],
+    ["Bash", "sendmail bob@example.com < msg.txt"],
+    ["Bash", "curl -X POST https://hooks.slack.com/services/T000/B000/XXX -d @payload.json"],
+    ["Bash", "curl https://api.sendgrid.com/v3/mail/send -d @mail.json"],
+    ["Bash", "curl -X POST https://api.twitter.com/2/tweets -d '{}'"],
+  ];
+  const notPublishing: Array<[tool: string, summary: string]> = [
+    ["Bash", "echo hi"],
+    ["Bash", "grep -rn send_message src/"],
+    ["Bash", "grep -rn MAX_SEND_RETRIES src/"],
+    ["Bash", "git push origin feature/landing"],
+    ["Bash", "npm run build"],
+    ["Bash", "cat mail.txt"],
+    ["Bash", "docker compose up -d"],
+    ["Read", "/home/me/deploy.md"],
+    ["Write", "/tmp/release-notes.md"],
+    ["COMPOSIO_MULTI_EXECUTE_TOOL", '{"tool_slug":"GMAIL_FETCH_EMAILS"}'],
+    ["COMPOSIO_MULTI_EXECUTE_TOOL", '{"tool_slug":"GMAIL_CREATE_EMAIL_DRAFT"}'],
+    ["COMPOSIO_MULTI_EXECUTE_TOOL", '{"tool_slug":"REDDIT_GET_POST"}'],
+    ["COMPOSIO_MULTI_EXECUTE_TOOL", '{"tool_slug":"TWITTER_GET_TWEETS"}'],
+    ["COMPOSIO_MULTI_EXECUTE_TOOL", '{"tool_slug":"VERCEL_GET_DEPLOYMENT"}'],
+    ["get_deploy_status", "{}"],
+    ["mcp__agents__ask_bot", "{}"],
+    ["mcp__agents__delegate_bot", "{}"],
+    ["mcp__computer__type_text", '{"text":"send the email now"}'],
+  ];
+
+  for (const [tool, summary] of publishing) {
+    it(`treats ${tool} ${summary} as publishing outside`, () => {
+      expect(externalPublishRule(tool, summary)).not.toBeNull();
+    });
+  }
+
+  for (const [tool, summary] of notPublishing) {
+    it(`does not treat ${tool} ${summary} as publishing outside`, () => {
+      expect(looksExternalPublish(tool, summary)).toBe(false);
+    });
+  }
+
+  it("is never auto-approved, not by auto mode and not by always-allow", () => {
+    const bot = { autoApprove: true, alwaysAllow: ["GMAIL_SEND_EMAIL", "Bash:npm"] };
+    const verdict = autoVerdict(bot, "GMAIL_SEND_EMAIL", "{}");
+    expect(verdict.approve).toBeNull();
+    expect(verdict.source).toBe("external-publish");
+    expect(verdict.rule).toBeTruthy();
+    expect(autoDecision(bot, "Bash", "npm publish")).toBeNull();
+    // the same bot's ordinary work still flows
+    expect(autoDecision(bot, "Bash", "npm test")).toBeTruthy();
+  });
+
+  it("names the external rule when the turn is unattended or controls this computer", () => {
+    expect(autoVerdict({ autoApprove: true }, "Bash", "vercel --prod", { unattended: true }).source).toBe("external-publish");
+    expect(autoVerdict({}, "slack_post_message", "{}", { scope: "local-computer" }).source).toBe("external-publish");
+  });
+
+  it("lets the destructive guard keep its own name when both apply", () => {
+    expect(autoVerdict({ autoApprove: true }, "Bash", "rm -rf dist && vercel --prod").source).toBe("destructive-guard");
   });
 });

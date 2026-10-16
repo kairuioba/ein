@@ -60,6 +60,7 @@ import { chiefOfStaffSystemPrompt } from "./chief-of-staff.ts";
 import { reasonLabel } from "./reason-labels.ts";
 import { Dispatcher, dispatchSettings } from "./dispatch.ts";
 import { handleDispatchApi } from "./dispatch-api.ts";
+import { handleOrgApi, isOrgApiPath, type OrgApiDeps } from "./org/api.ts";
 import { candidatesFromInstances, recommendModels, type InstanceLike } from "../shared/model-recommender.ts";
 import { getLocale, isLocale, replyLanguageInstruction, setLocale } from "../shared/i18n.ts";
 import { openMausStatusSystemPrompt } from "./openmaus-status-capsule.ts";
@@ -4368,6 +4369,8 @@ function teamMapSnapshot() {
   return { collaborations, queued, running };
 }
 
+const orgApiDeps: OrgApiDeps = { json, readBody };
+
 const dispatchApiDeps = {
   dispatcher,
   readBody,
@@ -5146,6 +5149,10 @@ const server = createServer(async (req, res) => {
     // optional delegation labels, and timestamps.
     if (path.startsWith("/api/dispatch/")) {
       if (await handleDispatchApi(method, path, url, req, res, dispatchApiDeps, () => dispatchSettings(cfg.dispatch))) return;
+    }
+    // The company layer (org, brief, spend, library) — server/org/*.
+    if (isOrgApiPath(path)) {
+      if (await handleOrgApi(method, path, url, req, res, orgApiDeps)) return;
     }
     if (method === "GET" && path === "/api/team-map") {
       return json(res, 200, teamMapSnapshot());

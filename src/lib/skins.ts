@@ -6,7 +6,7 @@
 
 import { msg } from "@/lib/i18n";
 
-export const SKIN_IDS = ["midnight", "atelier", "foundry", "lagoon"] as const;
+export const SKIN_IDS = ["fog", "midnight", "atelier", "foundry", "lagoon"] as const;
 export type SkinId = (typeof SKIN_IDS)[number];
 
 export type Skin = {
@@ -19,13 +19,14 @@ export type Skin = {
 // Module-level table: msg() marks the copy; the picker renders t(skin.name)
 // and t(skin.tagline).
 export const SKINS: readonly Skin[] = [
+  { id: "fog", name: msg("Fog Daylight"), tagline: msg("Cool grey daylight, black buttons, cobalt for what is working.") },
   { id: "midnight", name: msg("Midnight"), tagline: msg("The original. Cool and dark.") },
   { id: "atelier", name: msg("Atelier"), tagline: msg("Daylight on paper, warm and quiet.") },
   { id: "foundry", name: msg("Foundry"), tagline: msg("Night shift. Dark, warm, lit in brass.") },
   { id: "lagoon", name: msg("Lagoon"), tagline: msg("Cool daylight. Porcelain and deep teal.") },
 ];
 
-export const DEFAULT_SKIN: SkinId = "midnight";
+export const DEFAULT_SKIN: SkinId = "fog";
 
 const KEY = "omb-skin";
 

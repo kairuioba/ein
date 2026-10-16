@@ -119,7 +119,7 @@ export function MiniMonth({ anchor, onSelect }: MiniMonthProps) {
               <span
                 className={`flex size-6 items-center justify-center rounded-full text-[10.5px] transition-colors ${
                   isSelected
-                    ? "bg-accent font-semibold text-white shadow-sm"
+                    ? "bg-primary font-semibold text-primary-ink shadow-sm"
                     : isToday
                       ? "font-semibold text-accent group-hover:bg-accent/12"
                       : isOutsideMonth

@@ -74,7 +74,7 @@ export function MacLocalControl() {
               type="button"
               onClick={() => void openSettings()}
               disabled={pending}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white hover:brightness-110 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-[12.5px] font-medium text-primary-ink hover:brightness-110 disabled:opacity-50"
             >
               {t("Open System Settings")}
             </button>

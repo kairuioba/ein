@@ -191,7 +191,7 @@ function ChiefComposer({ chief, onSend }: { chief: Bot; onSend: (chiefId: string
           type="button"
           disabled={!text.trim()}
           onClick={send}
-          className="flex items-center gap-1 rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-white hover:brightness-110 disabled:opacity-40"
+          className="flex items-center gap-1 rounded-md bg-primary px-2.5 py-1 text-[12px] font-medium text-primary-ink hover:brightness-110 disabled:opacity-40"
         >
           {t("Dispatch")} <ArrowRight size={12} />
         </button>

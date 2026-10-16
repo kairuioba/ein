@@ -51,6 +51,16 @@
   --color-focus: #459ffe;
   --color-accent-text: #7fc0ff;
   --color-bubble-user: #5a5a5a;
+  /* text on your own message bubble (light skins can now use a dark bubble) */
+  --color-bubble-user-ink: #fcfcfc;
+  /* the filled primary button — separate from the accent so a skin can make
+     buttons black while selection, toggles and progress stay coloured */
+  --color-primary: #1084fe;
+  --color-primary-ink: #ffffff;
+  /* selection, toggles, progress and the "working" state */
+  --color-select: #1084fe;
+  /* the surface the main view sits on (chat, workbench, pages) */
+  --color-stage: #070707;
   --color-success: #38d591;
   --color-danger: #ff5667;
   --color-warning: #ff9800;
@@ -97,6 +107,16 @@
   --color-accent-text: #7fc0ff;
   --color-accent-ink: #ffffff;
   --color-bubble-user: #5a5a5a;
+  --color-bubble-user-ink: #fcfcfc;
+  --color-primary: #1084fe;
+  --color-primary-ink: #ffffff;
+  --color-select: #1084fe;
+  --color-stage: #070707;
+  /* the main view as an inset card (Fog) or edge to edge (the rest) */
+  --stage-gap: 0px;
+  --stage-radius: 0px;
+  --stage-border: transparent;
+  --color-focus: #459ffe;
   --color-success: #38d591;
   --color-danger: #ff5667;
   --color-danger-ink: #ffffff;
@@ -141,6 +161,15 @@
   --color-focus: #96551f;         /* the ring rides the accent, not Grok blue */
   --color-accent-ink: #ffffff;
   --color-bubble-user: #f2e9dc;   /* your own messages in the badge beige */
+  --color-bubble-user-ink: #1a1a18;
+  --color-primary: #a05f25;
+  --color-primary-ink: #ffffff;
+  --color-select: #a05f25;
+  --color-stage: #f5f1eb;
+  /* the main view as an inset card (Fog) or edge to edge (the rest) */
+  --stage-gap: 0px;
+  --stage-radius: 0px;
+  --stage-border: transparent;
 
   --color-success: #3f6b47;
   --color-danger: #a33a32;
@@ -193,6 +222,15 @@
   --color-focus: #e0a44c;         /* the ring rides the accent, not Grok blue */
   --color-accent-ink: #1c150c;    /* 7.4:1 on the brass fill */
   --color-bubble-user: #2a2318;   /* your own messages, one step out of the card */
+  --color-bubble-user-ink: #f4efe4;
+  --color-primary: #d99a3e;
+  --color-primary-ink: #1c150c;
+  --color-select: #d99a3e;
+  --color-stage: #100e0b;
+  /* the main view as an inset card (Fog) or edge to edge (the rest) */
+  --stage-gap: 0px;
+  --stage-radius: 0px;
+  --stage-border: transparent;
 
   --color-success: #57b078;
   --color-danger: #e0685e;        /* a lamp, not a paint chip */
@@ -251,6 +289,15 @@
   --color-focus: #0d5f5a;         /* the ring rides the accent, not Grok blue */
   --color-accent-ink: #ffffff;
   --color-bubble-user: #cfe4e1;
+  --color-bubble-user-ink: #14201f;
+  --color-primary: #11736d;
+  --color-primary-ink: #ffffff;
+  --color-select: #11736d;
+  --color-stage: #dfeceb;
+  /* the main view as an inset card (Fog) or edge to edge (the rest) */
+  --stage-gap: 0px;
+  --stage-radius: 0px;
+  --stage-border: transparent;
 
   --color-success: #2f6b4f;
   --color-danger: #a8382f;
@@ -262,6 +309,55 @@
   --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
   --radius-lg: 8px;
+  --radius-xl: 14px;
+}
+
+/* ── Fog Daylight (雾白日光) ───────────────────────────────────────────────
+   The Chinese edition's default. Cool grey daylight with white work surfaces,
+   black primary buttons and a cobalt that only ever means "selected",
+   "working" or "a link" — so status colour, not chrome, is what draws the eye.
+   Your own messages are black bubbles with white text, the way the reference
+   chat app draws them. Corners are generous (10px / 14px) to match the cards.
+   ───────────────────────────────────────────────────────────────────────── */
+[data-skin="fog"] {
+  --color-app: #eceef2;           /* outer ground */
+  --color-panel: #f3f4f7;         /* sidebar */
+  --color-raised: #ffffff;        /* content */
+  --color-raised-hover: #eef0f4;
+  --color-card: #ffffff;
+  --color-inset: #f5f6f9;
+  --color-control: #e3e6ec;
+  --color-hairline: #b9bfca;
+
+  --color-ink: #14161c;
+  --color-ink-secondary: #5a606c;
+
+  --color-accent: #3b5bff;        /* cobalt: selection, links, progress */
+  --color-accent-border: #5c77ff;
+  --color-accent-text: #2e4be0;
+  --color-focus: #3b5bff;
+  --color-accent-ink: #ffffff;
+  --color-bubble-user: #14161c;
+  --color-bubble-user-ink: #ffffff;
+  --color-primary: #14161c;       /* black primary buttons */
+  --color-primary-ink: #ffffff;
+  --color-select: #3b5bff;
+  --color-stage: #ffffff;
+  /* the main view as an inset card (Fog) or edge to edge (the rest) */
+  --stage-gap: 8px;
+  --stage-radius: 14px;
+  --stage-border: #dde1e8;
+
+  --color-success: #15803d;
+  --color-danger: #d92d20;
+  --color-danger-ink: #ffffff;
+  --color-warning: #b45309;
+  --color-scrollbar: #adb4c0;
+  --color-maus-line: #5a606c;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", "Noto Sans CJK SC", "Noto Sans SC", system-ui, sans-serif;
+  --radius-lg: 10px;
   --radius-xl: 14px;
 }
 

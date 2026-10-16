@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, Menu } from "lucide-react";
-import { StoreProvider, useStore } from "@/state/store";
+import { StoreProvider, useStore, type AppView } from "@/state/store";
 import { Onboarding } from "@/components/Onboarding";
 import { emailGateDone, initAnalytics } from "@/lib/analytics";
 import { Sidebar } from "@/components/Sidebar";
@@ -20,6 +20,10 @@ import { LocalVmWorkspace } from "@/components/LocalVmWorkspace";
 import { BrowserWorkspace } from "@/components/BrowserWorkspace";
 import { SkillRecorderPage } from "@/components/SkillRecorderPage";
 import { TeamMapPage } from "@/components/TeamMapPage";
+import { BriefPage } from "@/components/brief/BriefPage";
+import { LibraryPage } from "@/components/library/LibraryPage";
+import { SettingsPage } from "@/components/settings/SettingsPage";
+import { AppsPage } from "@/components/apps/AppsPage";
 import { heldComputerControlBotIds } from "@/lib/computer-control";
 import { skillRecorderEnabled } from "@/lib/feature-flags";
 import { t, tRich } from "@/lib/i18n";
@@ -42,7 +46,7 @@ function Shell() {
   const [browserWorkspaceBotId, setBrowserWorkspaceBotId] = useState<string | null>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const previousViewRef = useRef(state.activeView);
-  const calendarOriginRef = useRef<"chat" | "team-map" | "skill-recorder">("chat");
+  const calendarOriginRef = useRef<Exclude<AppView, "routines">>("chat");
   const group = state.groups.find((g) => g.id === state.selectedId);
   const bot = group ? undefined : (state.bots.find((b) => b.id === state.selectedId) ?? state.bots[0]);
   const calendarFocus = state.activeView === "routines";
@@ -179,6 +183,11 @@ function Shell() {
       dispatch({ type: "showSkillRecorder" });
       return;
     }
+    const origin = calendarOriginRef.current;
+    if (origin === "brief" || origin === "library" || origin === "settings" || origin === "apps") {
+      dispatch({ type: "showPage", page: origin });
+      return;
+    }
     dispatch({ type: "select", id: state.selectedId });
   }, [dispatch, state.config, state.selectedId]);
   const openCalendarRoom = useCallback((id: string) => {
@@ -247,7 +256,26 @@ function Shell() {
           menuButtonRef.current?.focus();
         }}
       />}
-      {state.activeView === "team-map" ? (
+      {/* The stage: the main view and its side panels share one surface. Fog
+          draws it as an inset card (the --stage-* tokens); the other skins
+          keep it edge to edge. */}
+      <div
+        className="flex min-h-0 min-w-0 flex-1"
+        style={{ padding: "var(--stage-gap) var(--stage-gap) var(--stage-gap) 0" }}
+      >
+      <div
+        className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-stage"
+        style={{ borderRadius: "var(--stage-radius)", outline: "1px solid var(--stage-border)", outlineOffset: -1 }}
+      >
+      {state.activeView === "brief" ? (
+        <BriefPage />
+      ) : state.activeView === "library" ? (
+        <LibraryPage />
+      ) : state.activeView === "settings" ? (
+        <SettingsPage />
+      ) : state.activeView === "apps" ? (
+        <AppsPage />
+      ) : state.activeView === "team-map" ? (
         <TeamMapPage />
       ) : state.activeView === "routines" ? (
         <RoutinesPage onBack={closeCalendar} onOpenRoom={openCalendarRoom} />
@@ -293,6 +321,8 @@ function Shell() {
         />
       )}
       {state.inspectorOpen && bot && <InspectorPanel bot={bot} />}
+      </div>
+      </div>
       {state.appSettingsOpen && <SettingsModal />}
       {state.pluginsOpen && <PluginsPanel />}
       {/* mounted after the modals: same z-50 tier, so DOM order keeps the

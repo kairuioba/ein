@@ -66,7 +66,7 @@ export function LocalComputerAutoWarning({
             ref={confirmRef}
             type="button"
             onClick={onConfirm}
-            className="rounded-xl bg-accent px-4 py-2 text-[13px] font-medium text-white hover:brightness-110"
+            className="rounded-xl bg-primary px-4 py-2 text-[13px] font-medium text-primary-ink hover:brightness-110"
           >
             {t("OK")}
           </button>

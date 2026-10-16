@@ -439,7 +439,7 @@ function LocalVmPane({
             type="button"
             onClick={onRelease}
             disabled={controlPending}
-            className="flex shrink-0 items-center gap-1.5 rounded-lg bg-accent px-2.5 py-2 text-[12px] font-medium text-white hover:brightness-110 disabled:opacity-50"
+            className="flex shrink-0 items-center gap-1.5 rounded-lg bg-primary px-2.5 py-2 text-[12px] font-medium text-primary-ink hover:brightness-110 disabled:opacity-50"
           >
             {controlPending ? <Loader2 size={13} className="animate-spin" /> : <Hand size={13} />}
             {t("Hand back")}
@@ -742,7 +742,7 @@ export function LocalVmWorkspace({
   );
 
   return (
-    <main className="flex h-full min-w-0 flex-1 flex-col bg-app">
+    <main className="flex h-full min-w-0 flex-1 flex-col bg-stage">
       <header className="flex min-h-[60px] items-center gap-3 border-b border-hairline/40 px-5 py-3">
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent">
           <Monitor size={18} />

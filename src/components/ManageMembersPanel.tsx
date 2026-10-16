@@ -131,7 +131,7 @@ export function ManageMembersPanel({
           <button
             onClick={save}
             disabled={!memberIds.length}
-            className="flex-1 rounded-lg bg-accent py-2 text-[14px] font-medium text-white hover:brightness-110 disabled:opacity-40"
+            className="flex-1 rounded-lg bg-primary py-2 text-[14px] font-medium text-primary-ink hover:brightness-110 disabled:opacity-40"
           >
             {memberIds.length ? tn(memberIds.length, "Save · {count} bot", "Save · {count} bots") : t("Save")}
           </button>

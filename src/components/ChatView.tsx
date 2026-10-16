@@ -260,7 +260,7 @@ function BubbleEditor({
     if (draft.trim()) onSubmit(draft.trim());
   };
   return (
-    <div className="w-full max-w-[min(42rem,78%)] rounded-2xl border border-hairline/40 bg-bubble-user px-4 py-3">
+    <div className="w-full max-w-[min(42rem,78%)] rounded-2xl border border-hairline/40 bg-bubble-user px-4 py-3 text-bubble-user-ink">
       <textarea
         ref={ref}
         value={draft}
@@ -286,7 +286,7 @@ function BubbleEditor({
         <button
           onClick={submit}
           disabled={!draft.trim()}
-          className="rounded-full bg-accent px-3 py-1 text-[13px] font-medium text-white disabled:opacity-40"
+          className="rounded-full bg-primary px-3 py-1 text-[13px] font-medium text-primary-ink disabled:opacity-40"
         >
           {t("Send")}
         </button>
@@ -396,7 +396,7 @@ function Bubble({
             user && webhookView
               ? "overflow-hidden border border-accent/25 bg-card text-ink shadow-[0_10px_30px_rgba(0,0,0,0.18)]"
               : user
-                ? "bg-bubble-user px-4 py-2.5 whitespace-pre-wrap text-ink"
+                ? "bg-bubble-user px-4 py-2.5 whitespace-pre-wrap text-bubble-user-ink"
                 : "bg-card px-4 py-2.5 text-ink",
           )}
           title={new Date(message.at).toLocaleString(intlLocale())}
@@ -1037,7 +1037,7 @@ export function ChatView({ bot }: { bot: Bot }) {
   };
 
   return (
-    <main className="relative flex h-full min-w-0 flex-1 flex-col bg-app">
+    <main className="relative flex h-full min-w-0 flex-1 flex-col bg-stage">
       {/* Call mode covers the thread while the bot is on the line */}
       <CallOverlay bot={bot} />
       {/* Header */}

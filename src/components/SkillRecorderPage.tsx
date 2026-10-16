@@ -348,7 +348,7 @@ export function SkillRecorderPage() {
   const recording = phase === "recording";
 
   return (
-    <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-app text-ink">
+    <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-stage text-ink">
       <video ref={videoRef} muted playsInline className="pointer-events-none absolute size-px opacity-0" />
       <header className="flex h-[60px] shrink-0 items-center justify-between border-b border-hairline px-6">
         <div>
@@ -416,7 +416,7 @@ export function SkillRecorderPage() {
                   </button>
                 </div>
 
-                <button type="button" disabled={phase === "starting" || !transcriptionConfigured} onClick={() => void start()} className="mt-6 flex w-full items-center justify-center gap-2 rounded-2xl bg-accent px-5 py-3.5 text-[14px] font-semibold text-white hover:brightness-110 disabled:opacity-40">
+                <button type="button" disabled={phase === "starting" || !transcriptionConfigured} onClick={() => void start()} className="mt-6 flex w-full items-center justify-center gap-2 rounded-2xl bg-primary px-5 py-3.5 text-[14px] font-semibold text-primary-ink hover:brightness-110 disabled:opacity-40">
                   {phase === "starting" ? <><Circle size={15} className="animate-pulse" /> {t("Getting ready…")}</> : <><Circle size={14} fill="currentColor" /> {t("Start recording")}</>}
                 </button>
                 <p className="mt-3 text-center text-[11px] text-ink-secondary">{t("macOS will ask for screen, microphone, and action-recording access the first time.")}</p>
@@ -492,7 +492,7 @@ export function SkillRecorderPage() {
                     <div className="flex items-center justify-between"><span className="flex items-center gap-2"><Mic size={13} /> {t("Narration")}</span><span>{transcript ? t("Included") : t("Audio only")}</span></div>
                     <div className="flex items-center justify-between"><span className="flex items-center gap-2"><ShieldCheck size={13} /> {t("Storage")}</span><span>{t("Local")}</span></div>
                   </div>
-                  <button type="button" disabled={!name.trim() || phase === "saving"} onClick={() => void save()} className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-accent px-4 py-3 text-[13px] font-semibold text-white disabled:opacity-40">
+                  <button type="button" disabled={!name.trim() || phase === "saving"} onClick={() => void save()} className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-[13px] font-semibold text-primary-ink disabled:opacity-40">
                     <Sparkles size={15} /> {phase === "saving" ? t("Creating skill…") : t("Create skill")}
                   </button>
                 </aside>

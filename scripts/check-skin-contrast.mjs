@@ -94,7 +94,9 @@ const SURFACES = ["--color-app", "--color-panel", "--color-raised", "--color-rai
 const PAIRS = [
   ...SURFACES.map((s) => ["--color-ink", s, 4.5]),
   ...SURFACES.map((s) => ["--color-ink-secondary", s, 4.5]),
-  ["--color-ink", "--color-bubble-user", 4.5],
+  ["--color-bubble-user-ink", "--color-bubble-user", 4.5],
+  ["--color-primary-ink", "--color-primary", 4.5],
+  ["--color-select", "--color-card", 3],
   ["--color-accent-ink", "--color-accent", 4.5],
   ["--color-danger-ink", "--color-danger", 4.5],
   ["--color-accent-text", "--color-app", 4.5],
@@ -140,6 +142,8 @@ const skins = parseSkins(css);
 // must not get worse; every other below-target pair is a regression.
 const BASELINE_FLOORS = new Map([
   ["midnight|--color-accent-ink|--color-accent", 3.65],
+  // the primary button copies Midnight's accent fill, gap and all
+  ["midnight|--color-primary-ink|--color-primary", 3.65],
   ["midnight|--color-danger-ink|--color-danger", 3.10],
 ]);
 const BASELINE_DRIFT = 0.01;

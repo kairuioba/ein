@@ -66,7 +66,7 @@ export function BrowserWorkspace({ bot, onClose }: { bot: Bot; onClose: () => vo
   }, [bot.id, dispatch]);
 
   return (
-    <main className="flex h-full min-w-0 flex-1 flex-col bg-app">
+    <main className="flex h-full min-w-0 flex-1 flex-col bg-stage">
       <header className="flex min-h-[60px] items-center gap-3 border-b border-hairline/40 px-5 py-3">
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent">
           <Globe size={18} />

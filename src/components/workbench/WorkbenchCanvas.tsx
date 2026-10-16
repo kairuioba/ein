@@ -419,7 +419,7 @@ function BotCard({
         <button
           type="button"
           onPointerDown={onPlugDown}
-          className="absolute -bottom-[11px] left-1/2 flex h-[22px] -translate-x-1/2 cursor-crosshair items-center gap-1 rounded-full border border-accent/60 bg-accent px-2.5 text-[10.5px] font-semibold text-white shadow-md hover:brightness-110"
+          className="absolute -bottom-[11px] left-1/2 flex h-[22px] -translate-x-1/2 cursor-crosshair items-center gap-1 rounded-full border border-accent/60 bg-primary px-2.5 text-[10.5px] font-semibold text-primary-ink shadow-md hover:brightness-110"
           title={t("Drag a cable to a team member to let this Chief dispatch to them")}
         >
           {t("Dispatch")}

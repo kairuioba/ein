@@ -398,6 +398,11 @@ export type AppSettingsSection =
   | "computer"
   | "usage";
 
+/** Full-width pages the main column can show. "chat" covers a bot or a group. */
+export type AppView = "chat" | "team-map" | "routines" | "skill-recorder" | "brief" | "library" | "settings" | "apps";
+/** The pages that open from the sidebar's top navigation. */
+export type AppPage = "brief" | "library" | "settings" | "apps";
+
 export interface AppState {
   bots: Bot[];
   groups: Group[];
@@ -405,7 +410,7 @@ export interface AppState {
   config: ConfigStatus | null;
   /** selected chat — a bot id OR a group id */
   selectedId: string;
-  activeView: "chat" | "team-map" | "routines" | "skill-recorder";
+  activeView: AppView;
   routines: Routine[];
   routineRuns: RoutineRun[];
   webhooks: WebhookTrigger[];
@@ -504,6 +509,7 @@ export type Action =
       computerControl: Record<string, { held: boolean; helpReason: string | null }>;
     }
   | { type: "showRoutines" }
+  | { type: "showPage"; page: AppPage }
   | { type: "showTeamMap" }
   | { type: "showSkillRecorder" }
   | { type: "routinesHydrated"; routines: Routine[]; runs: RoutineRun[] }
@@ -727,6 +733,16 @@ export function reducer(state: AppState, action: Action): AppState {
       return {
         ...state,
         activeView: "routines",
+        settingsOpen: false,
+        computerOpen: false,
+        inspectorOpen: false,
+        appSettingsOpen: false,
+        pluginsOpen: false,
+      };
+    case "showPage":
+      return {
+        ...state,
+        activeView: action.page,
         settingsOpen: false,
         computerOpen: false,
         inspectorOpen: false,

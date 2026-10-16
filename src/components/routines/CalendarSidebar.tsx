@@ -39,7 +39,7 @@ export function CalendarSidebar({ bots, anchor, onSelectDate, onCreate }: Calend
         <button
           type="button"
           onClick={onCreate}
-          className="group flex h-11 w-full items-center justify-center gap-2 rounded-full bg-accent px-5 text-[13px] font-semibold text-white shadow-lg shadow-accent/15 transition hover:-translate-y-px hover:brightness-110 hover:shadow-xl hover:shadow-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-offset-2 focus-visible:ring-offset-panel active:translate-y-0"
+          className="group flex h-11 w-full items-center justify-center gap-2 rounded-full bg-primary px-5 text-[13px] font-semibold text-primary-ink shadow-lg shadow-accent/15 transition hover:-translate-y-px hover:brightness-110 hover:shadow-xl hover:shadow-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-offset-2 focus-visible:ring-offset-panel active:translate-y-0"
         >
           <Plus size={17} strokeWidth={2.5} aria-hidden="true" />
           {t("Create")}

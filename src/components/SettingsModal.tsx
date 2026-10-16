@@ -393,7 +393,7 @@ function BrowserProfilesRow() {
                         className="rounded-md bg-inset px-2 py-1 text-[13px] text-ink outline-none"
                         aria-label={t("Profile name")}
                       />
-                      <button type="submit" disabled={busy !== null} className="rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-accent-ink disabled:opacity-50">
+                      <button type="submit" disabled={busy !== null} className="rounded-md bg-primary px-2.5 py-1 text-[12px] font-medium text-primary-ink disabled:opacity-50">
                         {t("Save")}
                       </button>
                       <button type="button" onClick={() => setRenaming(null)} className="text-[12px] text-ink-secondary hover:text-ink">

@@ -117,7 +117,7 @@ export function MacMenu({ x, y, items, onClose }: { x: number; y: number; items:
             className={cn(
               "flex h-[26px] w-full items-center gap-2 rounded-[5px] px-2.5 text-left outline-none",
               item.disabled && "opacity-40",
-              highlighted && !item.disabled && (item.danger ? "bg-danger text-white" : "bg-accent text-white"),
+              highlighted && !item.disabled && (item.danger ? "bg-danger text-white" : "bg-primary text-primary-ink"),
               !highlighted && item.danger && "text-danger",
             )}
           >

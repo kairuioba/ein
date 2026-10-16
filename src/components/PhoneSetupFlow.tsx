@@ -924,7 +924,7 @@ export function PhoneSetupFlowView({
         <button
           onClick={c.start}
           disabled={!c.state || c.busy || c.accountBusy}
-          className="mt-5 w-full max-w-[320px] rounded-lg bg-accent py-2.5 text-[14px] font-medium text-white hover:opacity-90 disabled:cursor-wait disabled:opacity-40"
+          className="mt-5 w-full max-w-[320px] rounded-lg bg-primary py-2.5 text-[14px] font-medium text-primary-ink hover:opacity-90 disabled:cursor-wait disabled:opacity-40"
         >
           {variant === "settings"
             ? c.state?.devices.length
@@ -1020,7 +1020,7 @@ export function PhoneSetupFlowView({
             <button
               disabled={c.accountBusy || (!c.codeSent && !canSubmitEmail) || (c.codeSent && c.code.length !== 8)}
               onClick={c.codeSent ? c.verifyCode : c.requestCode}
-              className="rounded-lg bg-accent py-2.5 text-[14px] font-medium text-white hover:opacity-90 disabled:opacity-40"
+              className="rounded-lg bg-primary py-2.5 text-[14px] font-medium text-primary-ink hover:opacity-90 disabled:opacity-40"
             >
               {c.accountBusy ? t("Working…") : c.codeSent ? t("Verify and continue") : t("Email me a code")}
             </button>
@@ -1043,7 +1043,7 @@ export function PhoneSetupFlowView({
           <button
             disabled={c.accountBusy}
             onClick={c.retryAccount}
-            className="mt-5 rounded-lg bg-accent py-2.5 text-[14px] font-medium text-white disabled:opacity-40"
+            className="mt-5 rounded-lg bg-primary py-2.5 text-[14px] font-medium text-primary-ink disabled:opacity-40"
           >
             {c.accountBusy ? t("Trying again…") : t("Try secure access again")}
           </button>
@@ -1125,7 +1125,7 @@ export function PhoneSetupFlowView({
             c.finish();
             onComplete?.();
           }}
-          className="mt-5 w-full max-w-[280px] rounded-lg bg-accent py-2.5 text-[14px] font-medium text-white"
+          className="mt-5 w-full max-w-[280px] rounded-lg bg-primary py-2.5 text-[14px] font-medium text-primary-ink"
         >
           {variant === "onboarding" ? t("Start using OpenMausBot") : t("Done")}
         </button>
@@ -1163,7 +1163,7 @@ export function PhoneSetupFlowView({
         <p className="mt-3 text-[11.5px] text-ink-secondary">{t("Code expires in {seconds}s", { seconds: c.secondsLeft })}</p>
       )}
       {c.pairingExpired && (
-        <button onClick={c.refreshCode} className="mt-5 rounded-lg bg-accent px-5 py-2.5 text-[14px] font-medium text-white">
+        <button onClick={c.refreshCode} className="mt-5 rounded-lg bg-primary px-5 py-2.5 text-[14px] font-medium text-primary-ink">
           {t("Create a new code")}
         </button>
       )}

@@ -485,7 +485,7 @@ function NewRoomPanel({ onClose }: { onClose: () => void }) {
         <button
           onClick={create}
           disabled={!picked.size}
-          className="mt-3 w-full rounded-lg bg-accent py-2 text-[14px] font-medium text-white hover:brightness-110 disabled:opacity-40"
+          className="mt-3 w-full rounded-lg bg-primary py-2 text-[14px] font-medium text-primary-ink hover:brightness-110 disabled:opacity-40"
         >
           {picked.size
             ? tn(picked.size, "Create Channel · {count} bot", "Create Channel · {count} bots")

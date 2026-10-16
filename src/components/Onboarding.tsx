@@ -222,7 +222,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
             <button
               onClick={saveProfile}
               disabled={!valid}
-              className="mt-3 w-full rounded-lg bg-accent py-2.5 text-[15px] font-medium text-white disabled:opacity-40"
+              className="mt-3 w-full rounded-lg bg-primary py-2.5 text-[15px] font-medium text-primary-ink disabled:opacity-40"
             >
               {t("Continue")}
             </button>
@@ -276,7 +276,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
             </div>
             <button
               onClick={() => setStep(capabilities.dictation.available ? 2 : 3)}
-              className="mt-5 w-full shrink-0 rounded-lg bg-accent py-2.5 text-[15px] font-medium text-white"
+              className="mt-5 w-full shrink-0 rounded-lg bg-primary py-2.5 text-[15px] font-medium text-primary-ink"
             >
               {t("Continue")}
             </button>
@@ -326,7 +326,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
                   triggers on the first real capture in the Computer panel,
                   which is the moment the user has context for the dialog. */}
             </div>
-            <button onClick={() => setStep(3)} className="mt-5 w-full rounded-lg bg-accent py-2.5 text-[15px] font-medium text-white">
+            <button onClick={() => setStep(3)} className="mt-5 w-full rounded-lg bg-primary py-2.5 text-[15px] font-medium text-primary-ink">
               {t("Continue")}
             </button>
             <button onClick={() => setStep(3)} className="mt-3 text-[12px] text-ink-secondary hover:text-ink">

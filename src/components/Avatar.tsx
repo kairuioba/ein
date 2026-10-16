@@ -22,6 +22,9 @@ import {
 } from "./CursorAvatar";
 import { botAvatarProfile, type BotAvatarCrop } from "../../shared/bot-avatar";
 import { t } from "@/lib/i18n";
+import { BotTile, type TileState } from "@/components/mascot/Mascot";
+import { mascotForBot } from "@/lib/engine-mascots";
+import { useStore } from "@/state/store";
 
 /**
  * The pack's baked-in silhouette was exported with the body fill hardcoded
@@ -217,27 +220,41 @@ export type BotAvatarProps = Omit<MausAvatarProps, "color"> & {
     color: MausColor;
     avatarUrl?: string | null;
     avatarCrop?: BotAvatarCrop;
+    /** the engine decides the mascot; without it the default engine's shows */
+    modelSelection?: { instanceId: string; model?: string } | null;
+    chiefOfStaff?: boolean;
   };
+  /** draw the chief's crown above the tile (default: the bot's own flag) */
+  crown?: boolean;
+  /** the amber "waiting on you" diamond or the blue "working" pixels */
+  marker?: TileState;
 };
+
+/** Mascot states that mean "working" on a tile; everything else is quiet. */
+const WORKING_STATES = new Set<MausState>(["working", "thinking", "searching"]);
 
 /**
  * The one renderer for a bot's chosen profile image. Malformed persisted
  * values and images that fail to load both fall back to the animated mascot,
  * so an old/corrupt profile can never leave a broken-image icon in the app.
  */
-export function BotAvatar({ bot, size = 44, label, ...mascotProps }: BotAvatarProps) {
+export function BotAvatar({ bot, size = 44, label, crown, marker, state }: BotAvatarProps) {
   const profile = botAvatarProfile(bot);
   const [imageFailed, setImageFailed] = useState(false);
+  const { state: app } = useStore();
 
   useEffect(() => setImageFailed(false), [profile.avatarUrl]);
 
   if (profile.avatarCrop === "mascot" || !profile.avatarUrl || imageFailed) {
+    // The bot's face is its engine's mascot: a pixel character drawn from the
+    // engine's name. The chief wears the crown.
     return (
-      <MausAvatar
-        {...mascotProps}
-        color={bot.color}
+      <BotTile
+        kind={mascotForBot(bot, app.instances)}
         size={size}
-        label={label ?? bot.name}
+        chief={crown ?? bot.chiefOfStaff ?? false}
+        state={marker ?? (state && WORKING_STATES.has(state) ? "working" : null)}
+        title={label ?? bot.name}
       />
     );
   }

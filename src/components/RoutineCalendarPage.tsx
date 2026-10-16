@@ -431,7 +431,7 @@ function EventEditor({
               </div>
               {recurrence === "custom" && (
                 <div className="flex flex-wrap gap-1.5">
-                  {ALL_DAYS.map((day) => <button key={day} type="button" onClick={() => setWeekdays((current) => current.includes(day) ? (current.length === 1 ? current : current.filter((value) => value !== day)) : [...current, day].sort())} className={cn("size-8 rounded-full text-[10px] font-semibold", weekdays.includes(day) ? "bg-accent text-white" : "bg-inset text-ink-secondary hover:bg-raised hover:text-ink")}>{weekdayName(day, "narrow")}</button>)}
+                  {ALL_DAYS.map((day) => <button key={day} type="button" onClick={() => setWeekdays((current) => current.includes(day) ? (current.length === 1 ? current : current.filter((value) => value !== day)) : [...current, day].sort())} className={cn("size-8 rounded-full text-[10px] font-semibold", weekdays.includes(day) ? "bg-primary text-primary-ink" : "bg-inset text-ink-secondary hover:bg-raised hover:text-ink")}>{weekdayName(day, "narrow")}</button>)}
                 </div>
               )}
             </div>
@@ -494,7 +494,7 @@ function EventEditor({
 
         <div className="sticky bottom-0 flex items-center justify-end gap-2 border-t border-hairline/40 bg-panel/95 px-5 py-3.5 backdrop-blur">
           <button onClick={onClose} className="rounded-lg px-4 py-2 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink">{t("Cancel")}</button>
-          <button onClick={save} disabled={saving || !valid} className="flex items-center gap-2 rounded-lg bg-accent px-5 py-2 text-[12.5px] font-semibold text-white hover:brightness-110 disabled:opacity-40">{saving && <Loader2 size={14} className="animate-spin" />}{existingRoutine || existingCall ? t("Save") : kind === "call" ? t("Schedule call") : t("Schedule routine")}</button>
+          <button onClick={save} disabled={saving || !valid} className="flex items-center gap-2 rounded-lg bg-primary px-5 py-2 text-[12.5px] font-semibold text-primary-ink hover:brightness-110 disabled:opacity-40">{saving && <Loader2 size={14} className="animate-spin" />}{existingRoutine || existingCall ? t("Save") : kind === "call" ? t("Schedule call") : t("Schedule routine")}</button>
         </div>
       </div>
     </div>
@@ -631,7 +631,7 @@ function QuickComposer({
       </div>
       <div className="flex items-center justify-end gap-2 border-t border-hairline/40 px-4 py-3">
         <button onClick={() => onMore({ ...seed, kind, botIds, name, description })} className="rounded-lg px-3 py-2 text-[12px] font-medium text-accent hover:bg-accent/10">{t("More options")}</button>
-        <button onClick={save} disabled={!valid || working} className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-2 text-[12px] font-semibold text-white hover:brightness-110 disabled:opacity-40">{working && <Loader2 size={13} className="animate-spin" />}{t("Save")}</button>
+        <button onClick={save} disabled={!valid || working} className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-[12px] font-semibold text-primary-ink hover:brightness-110 disabled:opacity-40">{working && <Loader2 size={13} className="animate-spin" />}{t("Save")}</button>
       </div>
     </div>
   );
@@ -814,7 +814,7 @@ function CalendarGrid({
         {starts.map((start) => {
           const date = new Date(start);
           const isToday = start === today;
-          return <div key={start} role="columnheader" className={cn("border-b border-r border-hairline/40 px-2 py-2 text-center last:border-r-0", isToday && "bg-accent/[0.035]")}><div className={cn("text-[10px] font-medium uppercase tracking-[0.14em]", isToday ? "text-accent" : "text-ink-secondary")}>{weekdayName(date.getDay())}</div><div className={cn("mx-auto mt-1 flex size-8 items-center justify-center rounded-full text-[15px] font-medium", isToday ? "bg-accent text-white" : "text-ink")}>{date.getDate()}</div></div>;
+          return <div key={start} role="columnheader" className={cn("border-b border-r border-hairline/40 px-2 py-2 text-center last:border-r-0", isToday && "bg-accent/[0.035]")}><div className={cn("text-[10px] font-medium uppercase tracking-[0.14em]", isToday ? "text-accent" : "text-ink-secondary")}>{weekdayName(date.getDay())}</div><div className={cn("mx-auto mt-1 flex size-8 items-center justify-center rounded-full text-[15px] font-medium", isToday ? "bg-primary text-primary-ink" : "text-ink")}>{date.getDate()}</div></div>;
         })}
       </div>
       <div role="grid" aria-label={t("Routine and call calendar")} onDragEnd={() => setDragPreview(null)} className="relative grid" style={{ height: HOUR_HEIGHT * 24, gridTemplateColumns, minWidth }}>
@@ -945,9 +945,9 @@ function EventDetails({
         </div>
 
         <div className="flex flex-wrap items-center gap-2 border-t border-hairline/40 px-4 py-3">
-          {roomId && <button onClick={() => onOpenRoom(roomId)} className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-[12px] font-semibold text-white hover:brightness-110"><ExternalLink size={13} />{t("Join room")}</button>}
-          {call && call.botIds.length > 1 && <button onClick={joinRoom} disabled={working} className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-[12px] font-semibold text-white hover:brightness-110 disabled:opacity-50"><ExternalLink size={13} />{t("Join room")}</button>}
-          {routine && <button onClick={() => void invoke(`/api/routines/${routine.id}/run`)} disabled={working} className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-[12px] font-semibold text-white hover:brightness-110 disabled:opacity-50"><Play size={13} />{t("Run now")}</button>}
+          {roomId && <button onClick={() => onOpenRoom(roomId)} className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-[12px] font-semibold text-primary-ink hover:brightness-110"><ExternalLink size={13} />{t("Join room")}</button>}
+          {call && call.botIds.length > 1 && <button onClick={joinRoom} disabled={working} className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-[12px] font-semibold text-primary-ink hover:brightness-110 disabled:opacity-50"><ExternalLink size={13} />{t("Join room")}</button>}
+          {routine && <button onClick={() => void invoke(`/api/routines/${routine.id}/run`)} disabled={working} className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-[12px] font-semibold text-primary-ink hover:brightness-110 disabled:opacity-50"><Play size={13} />{t("Run now")}</button>}
           {run?.threadId && primary && <button onClick={() => { dispatch({ type: "select", id: primary.id }); dispatch({ type: "switchTask", botId: primary.id, threadId: run.threadId! }); onClose(); }} className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-[12px] text-ink-secondary hover:bg-raised hover:text-ink"><ExternalLink size={13} />{t("Open task")}</button>}
           {run && ["queued", "running", "waiting"].includes(run.status) && <button onClick={() => void invoke(`/api/routine-runs/${run.id}/cancel`)} disabled={working} className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-[12px] text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-40"><X size={13} />{t("Cancel run")}</button>}
           {routine && <button onClick={() => void invoke(`/api/routines/${routine.id}`, "PATCH")} className="hidden" aria-hidden />}
@@ -1116,7 +1116,7 @@ export function RoutinesPage({ onBack, onOpenRoom }: { onBack: () => void; onOpe
   };
 
   return (
-    <main className="flex h-full min-w-0 flex-1 flex-col bg-app animate-workspace-in">
+    <main className="flex h-full min-w-0 flex-1 flex-col bg-stage animate-workspace-in">
       <header
         className={cn("shrink-0 border-b border-hairline/35 bg-app py-3 pr-4", macInset ? "pl-[86px]" : "pl-4")}
         style={windowDragStyle}
@@ -1159,7 +1159,7 @@ export function RoutinesPage({ onBack, onOpenRoom }: { onBack: () => void; onOpe
         <div className="flex min-h-0 flex-1">
           <div className="hidden shrink-0 lg:block"><CalendarSidebar bots={visibleBots} anchor={anchor} onSelectDate={(at) => setAnchor(startOfDay(at))} onCreate={() => openCreate()} /></div>
           <CalendarGrid anchor={rangeStart} days={viewDays} items={items} bots={state.bots} onOpen={(item) => { setSelected(item); if (item.kind === "routine" && item.run && ["failed", "missed"].includes(item.run.status) && !item.run.seenAt) dispatch({ type: "markRoutineRunSeen", runId: item.run.id }); }} onCreate={openCreate} onMove={(item, at) => void moveEvent(item, at)} onResize={(item, duration) => void resizeEvent(item, duration)} />
-          <button onClick={() => openCreate()} disabled={!visibleBots.length} className="fixed bottom-5 right-5 z-30 flex size-12 items-center justify-center rounded-2xl bg-accent text-white shadow-xl shadow-black/30 hover:brightness-110 disabled:opacity-40 lg:hidden" aria-label={t("Create event")}><Plus size={20} /></button>
+          <button onClick={() => openCreate()} disabled={!visibleBots.length} className="fixed bottom-5 right-5 z-30 flex size-12 items-center justify-center rounded-2xl bg-primary text-primary-ink shadow-xl shadow-black/30 hover:brightness-110 disabled:opacity-40 lg:hidden" aria-label={t("Create event")}><Plus size={20} /></button>
         </div>
       )}
 

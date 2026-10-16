@@ -132,7 +132,7 @@ export function LinuxLocalControl() {
             type="button"
             disabled={busy}
             onClick={() => void run("enable")}
-            className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-accent py-2 text-[13px] font-medium text-white hover:opacity-90 disabled:opacity-50"
+            className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-primary py-2 text-[13px] font-medium text-primary-ink hover:opacity-90 disabled:opacity-50"
           >
             {pending === "enable" ? <Loader2 size={14} className="animate-spin" /> : <Power size={14} />}
             {t("Enable local control (Beta)")}

@@ -742,7 +742,7 @@ export function BrowserPanel({
           disabled={controlPending || busy || profileBusy || operationPending}
           className={cn(
             "flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-60",
-            control.held ? "bg-accent text-accent-ink" : "bg-control text-ink hover:bg-raised-hover",
+            control.held ? "bg-primary text-primary-ink" : "bg-control text-ink hover:bg-raised-hover",
           )}
         >
           <Hand size={14} aria-hidden="true" />
@@ -806,7 +806,7 @@ export function BrowserPanel({
             <button
               type="submit"
               disabled={!newProfileName.trim() || profileBusy || profileChangesLocked}
-              className="rounded-md bg-accent px-3 py-1.5 text-[13px] font-medium text-accent-ink outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50"
+              className="rounded-md bg-primary px-3 py-1.5 text-[13px] font-medium text-primary-ink outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50"
             >
               {t("Add")}
             </button>

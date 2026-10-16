@@ -83,7 +83,7 @@ function CommandRow({ command, actionLabel }: { command: string; actionLabel: st
           <button
             type="button"
             onClick={() => void openTerminal()}
-            className="mt-2 flex w-full items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-accent px-3 py-2 text-[12.5px] font-semibold text-white hover:brightness-110"
+            className="mt-2 flex w-full items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-primary px-3 py-2 text-[12.5px] font-semibold text-primary-ink hover:brightness-110"
           >
             {status === "opened" ? <Check size={14} /> : <TerminalSquare size={14} />}
             {status === "opened" ? t("Terminal opened") : actionLabel}

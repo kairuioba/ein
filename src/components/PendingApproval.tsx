@@ -208,7 +208,7 @@ export function PendingApprovalActions({
         disabled={isSkillRequest && !reviewedSha256}
         className={cn(
           base,
-          "bg-accent font-medium text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40",
+          "bg-primary font-medium text-primary-ink hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40",
         )}
       >
         {isSkillRequest ? t("Enable") : isRoutineRequest ? t("Confirm") : t("Allow once")}

@@ -280,7 +280,7 @@ function LearnedSkillsCard({ bot }: { bot: Bot }) {
                 type="button"
                 disabled={working === reviewing.skill.name}
                 onClick={() => void enableReviewed()}
-                className="rounded-lg bg-accent px-4 py-2 text-[13px] font-semibold text-white disabled:opacity-40"
+                className="rounded-lg bg-primary px-4 py-2 text-[13px] font-semibold text-primary-ink disabled:opacity-40"
               >
                 {t("Enable reviewed skill")}
               </button>
@@ -675,7 +675,7 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
             <div className="flex items-center gap-3">
               <span className={cn(
                 "flex size-8 shrink-0 items-center justify-center rounded-lg",
-                bot.chiefOfStaff ? "bg-accent text-white" : "bg-control text-ink-secondary",
+                bot.chiefOfStaff ? "bg-primary text-primary-ink" : "bg-control text-ink-secondary",
               )}>
                 <Crown size={17} />
               </span>

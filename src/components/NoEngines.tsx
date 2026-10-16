@@ -42,7 +42,7 @@ export function NoEngines() {
   };
 
   return (
-    <main className="flex h-full min-w-0 flex-1 flex-col overflow-y-auto bg-app">
+    <main className="flex h-full min-w-0 flex-1 flex-col overflow-y-auto bg-stage">
       <div className="mx-auto w-full max-w-[560px] px-6 py-12">
         <h1 className="text-[20px] font-semibold text-ink">{t("Install an AI engine to get started")}</h1>
         <p className="mt-1.5 text-[13.5px] leading-relaxed text-ink-secondary">

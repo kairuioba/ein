@@ -366,7 +366,7 @@ export function WorkbenchPage({ onEditSectionContext }: { onEditSectionContext?:
   const chiefs = bots.filter((bot) => bot.chiefOfStaff);
 
   return (
-    <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-app text-ink">
+    <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-stage text-ink">
       <header className="flex h-[52px] shrink-0 items-center gap-3 border-b border-hairline/40 bg-panel/70 px-4 backdrop-blur-xl max-md:pl-12">
         <div className="flex min-w-0 items-center gap-2">
           <Network size={17} className="text-accent" />

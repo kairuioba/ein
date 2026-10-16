@@ -95,7 +95,7 @@ export function DispatchBoard(props: Props) {
                 </div>
                 <span className={cn("shrink-0 rounded-full px-2 py-0.5 text-[10.5px] font-medium", RUN_TONE[run.status])}>{runStatusLabel(run.status)}</span>
                 {run.status === "awaiting-approval" && (
-                  <button type="button" onClick={() => props.onApprove(run.id)} className="flex shrink-0 items-center gap-1 rounded-md bg-accent px-2 py-1 text-[11.5px] font-medium text-white hover:brightness-110">
+                  <button type="button" onClick={() => props.onApprove(run.id)} className="flex shrink-0 items-center gap-1 rounded-md bg-primary px-2 py-1 text-[11.5px] font-medium text-primary-ink hover:brightness-110">
                     <CirclePlay size={12} /> {t("Start")}
                   </button>
                 )}

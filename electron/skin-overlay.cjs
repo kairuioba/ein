@@ -8,13 +8,14 @@
 "use strict";
 
 const SKIN_CHROME = Object.freeze({
+  fog: Object.freeze({ color: "#eceef2", symbolColor: "#5a606c" }),
   midnight: Object.freeze({ color: "#070707", symbolColor: "#b5b5b5" }),
   atelier: Object.freeze({ color: "#f5f1eb", symbolColor: "#6b6559" }),
   foundry: Object.freeze({ color: "#100e0b", symbolColor: "#b0a696" }),
   lagoon: Object.freeze({ color: "#dfeceb", symbolColor: "#4d5c5b" }),
 });
 
-const DEFAULT_SKIN = "midnight";
+const DEFAULT_SKIN = "fog";
 
 /** The chrome colours for a skin id sent by the renderer. Anything that is
  * not a known skin — a renamed skin, a stale value, a non-string — falls

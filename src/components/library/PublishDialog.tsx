@@ -6,6 +6,7 @@ import { Loader2, X } from "lucide-react";
 import { Button, Dialog } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
+import { derivedSummary } from "@/lib/library-view";
 import { publishLibraryDoc } from "@/state/org-api";
 import type { Bot } from "@/state/store";
 import type { LibraryDoc } from "../../../shared/org-types";
@@ -37,6 +38,12 @@ export function PublishDialog({
   const [ownerBotId, setOwnerBotId] = useState(existing?.ownerBotId ?? "");
   const [text, setText] = useState(seed.text ?? "");
   const [note, setNote] = useState("");
+  // The server writes the summary from the text's first line when a publish
+  // names none, so carry over only one somebody wrote by hand — a derived one
+  // would freeze the old text's first line onto the new version.
+  const [summary, setSummary] = useState(() =>
+    existing?.summary && existing.summary !== derivedSummary(seed.text ?? "", existing.title) ? existing.summary : "",
+  );
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
   const first = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
@@ -47,14 +54,18 @@ export function PublishDialog({
     setWorking(true);
     setError("");
     try {
-      const doc = await publishLibraryDoc({
+      // POST /api/library also takes `summary`; publishLibraryDoc's input type
+      // (src/state/org-api.ts) does not list it yet, so widen it here.
+      const input: Parameters<typeof publishLibraryDoc>[0] & { summary?: string } = {
         id: existing?.id,
         title: title.trim(),
         section: section.trim() || null,
         text,
         note: note.trim() || undefined,
         ownerBotId: ownerBotId || undefined,
-      });
+        summary: summary.trim() || undefined,
+      };
+      const doc = await publishLibraryDoc(input);
       onPublished(doc);
       onClose();
     } catch (cause) {
@@ -98,6 +109,16 @@ export function PublishDialog({
             </select>
           </label>
         </div>
+        <label className="block">
+          <span className="mb-1.5 block text-[12px] font-semibold text-ink-secondary">{t("One-line summary (optional)")}</span>
+          <input
+            value={summary}
+            onChange={(event) => setSummary(event.target.value)}
+            placeholder={existing ? t("Leave empty to use the text's first line") : t("e.g. Three prices: launch, early-bird and channel")}
+            className={FIELD}
+            maxLength={120}
+          />
+        </label>
         <label className="block">
           <span className="mb-1.5 block text-[12px] font-semibold text-ink-secondary">{t("Content")}</span>
           <textarea

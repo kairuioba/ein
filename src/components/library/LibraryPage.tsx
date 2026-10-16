@@ -5,7 +5,7 @@
 // bots. Data: useLibrary / readLibraryDoc / publishLibraryDoc (/api/library,
 // built by the org layer); until that answers, the page shows its empty state.
 import { useMemo, useState } from "react";
-import { ChevronDown, Check, Lock, Plus, Search, TriangleAlert } from "lucide-react";
+import { ChevronDown, Check, Eye, Lock, Plus, Search, TriangleAlert } from "lucide-react";
 
 import { BotAvatar } from "@/components/Avatar";
 import { Button } from "@/components/ui";
@@ -78,7 +78,7 @@ export function LibraryPage() {
         if (!needle) return true;
         const owner = doc.ownerBotId ? state.bots.find((bot) => bot.id === doc.ownerBotId)?.name ?? "" : "";
         const version = currentVersion(doc);
-        return `${doc.title} ${doc.section ?? ""} ${owner} v${version?.version ?? ""} ${version?.note ?? ""}`.toLowerCase().includes(needle);
+        return `${doc.title} ${doc.summary ?? ""} ${doc.section ?? ""} ${owner} v${version?.version ?? ""} ${version?.note ?? ""}`.toLowerCase().includes(needle);
       })
       .sort((a, b) => (sort === "name" ? a.title.localeCompare(b.title) : b.updatedAt - a.updatedAt));
   }, [docs, filter, query, sort, levels, state.bots]);
@@ -174,7 +174,7 @@ export function LibraryPage() {
                           <span className="truncate">{doc.title}</span>
                           {version && <em className={cn("inline-grid h-[18px] shrink-0 place-items-center rounded-[5px] px-[5px] font-mono text-[11px] font-semibold not-italic", on ? "bg-select/15 text-accent-text" : "bg-control/70 text-ink-secondary")}>v{version.version}</em>}
                         </b>
-                        <span className="truncate text-[11.5px] text-ink-secondary">{version?.note || t("{size} characters", { size: version?.size ?? 0 })}</span>
+                        <span className="truncate text-[11.5px] text-ink-secondary">{doc.summary || version?.note || t("{size} characters", { size: version?.size ?? 0 })}</span>
                       </span>
                       <span className="min-w-0"><LevelTag level={level} /></span>
                       <span className="flex min-w-0 items-center gap-[5px] text-[12.5px] text-ink-secondary">
@@ -191,6 +191,8 @@ export function LibraryPage() {
                           </span>
                         ) : level.kind === "isolated" ? (
                           <span className="inline-flex h-[22px] items-center gap-1 rounded-[7px] bg-control/70 px-2 text-[12px] font-semibold text-ink"><Lock size={11} />{t("Request only")}</span>
+                        ) : level.kind === "department" ? (
+                          <span className="inline-flex h-[22px] items-center gap-1 rounded-[7px] bg-control/60 px-2 text-[12px] text-ink-secondary"><Eye size={11} />{t("Department only")}</span>
                         ) : (
                           <span className="inline-flex items-center gap-1 text-[12px] text-ink-secondary"><Check size={12} className="text-success" />{t("Up to date")}</span>
                         )}

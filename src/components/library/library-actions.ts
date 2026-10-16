@@ -1,15 +1,13 @@
-// Library writes the page needs beyond publishLibraryDoc (src/state/org-api.ts).
-// Contract proposed to the org layer (agent A1): PATCH /api/library/:id with
-// { subscribers: string[] } replaces who is told about new versions and
-// returns the updated LibraryDoc.
+// Library writes the page needs beyond publishLibraryDoc (src/state/org-api.ts):
+// POST /api/library/:id/subscribe {botId, on} → LibraryDoc (server/org/api.ts).
 import { refreshApi } from "@/state/org-api";
 import type { LibraryDoc } from "../../../shared/org-types";
 
-export async function setLibrarySubscribers(id: string, subscribers: string[]): Promise<LibraryDoc> {
-  const res = await fetch(`/api/library/${encodeURIComponent(id)}`, {
-    method: "PATCH",
+export async function setLibrarySubscription(id: string, botId: string, on: boolean): Promise<LibraryDoc> {
+  const res = await fetch(`/api/library/${encodeURIComponent(id)}/subscribe`, {
+    method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ subscribers }),
+    body: JSON.stringify({ botId, on }),
   });
   const payload = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error((payload as { error?: string }).error || `${res.status}`);

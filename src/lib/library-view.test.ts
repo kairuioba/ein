@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { changeHunks, currentVersion, diffLines, docLevel, downloadName, oldestStaleVersion, staleUsers, summaryOf } from "./library-view";
+import { changeHunks, currentVersion, derivedSummary, diffLines, docLevel, downloadName, oldestStaleVersion, staleUsers, summaryOf } from "./library-view";
 
 const doc = {
   section: null,
@@ -56,5 +56,14 @@ describe("library view", () => {
     expect(summaryOf("Line one\nline two\n\nNext")).toBe("Line one line two");
     expect(summaryOf("# 价格表\n\n发布会三款机型的定价。\n\n附表", 140, "价格表")).toBe("发布会三款机型的定价。");
     expect(downloadName("价格表 / 定稿", 4)).toBe("价格表 - 定稿-v4.md");
+  });
+
+  it("derives the summary the way the server does when a publish names none", () => {
+    // the same cases as server/org/library.test.ts
+    expect(derivedSummary("# 价格表\n\n三款定价 · 发布价与早鸟价\n旗舰款", "价格表")).toBe("三款定价 · 发布价与早鸟价");
+    expect(derivedSummary("价格表\n旗舰款 ¥799", "价格表")).toBe("旗舰款 ¥799");
+    expect(derivedSummary("# 只有标题", "x")).toBe("只有标题");
+    expect(derivedSummary("", "x")).toBe("");
+    expect(derivedSummary("字".repeat(70), "x")).toBe(`${"字".repeat(59)}…`);
   });
 });

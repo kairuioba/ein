@@ -518,7 +518,14 @@ export function WeekGrid({
         >
           <div className="relative">
             {Array.from({ length: 24 }, (_, hour) => hour === 0 ? null : (
-              <div key={hour} className="absolute right-2 -translate-y-1/2 text-[11px] tabular-nums text-ink-secondary/70" style={{ top: hour * HOUR_HEIGHT }}>{hourLabel(hour)}</div>
+              <div
+                key={hour}
+                // the now pill covers an hour label it sits on
+                className={cn("absolute right-2 -translate-y-1/2 text-[11px] tabular-nums text-ink-secondary/70", showsToday && Math.abs(hour * HOUR_HEIGHT - nowTop) < 16 && "invisible")}
+                style={{ top: hour * HOUR_HEIGHT }}
+              >
+                {hourLabel(hour)}
+              </div>
             ))}
             {showsToday && (
               <span className="absolute left-1.5 z-30 grid h-[18px] w-[44px] -translate-y-1/2 place-items-center rounded-[6px] bg-danger text-[11px] font-bold tabular-nums text-white" style={{ top: nowTop }}>

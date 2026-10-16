@@ -910,7 +910,7 @@ export function ComputerPanel({
         </span>
         <b className="mr-1 truncate text-[15.5px]">{t("{name}'s computer", { name: bot.name })}</b>
         <Pill tone={status.tone} dot className="h-6">{status.label}</Pill>
-        {panelView === "computer" && (
+        {(canTakeOver || control.held) && (
           control.held
             ? <Pill tone="amber" className="h-6"><Hand size={12} />{t("You're driving")}</Pill>
             : <Pill tone="grey" className="h-6 bg-raised shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_45%,transparent)]"><Eye size={12} />{t("You're watching · read-only")}</Pill>
@@ -1127,16 +1127,18 @@ export function ComputerPanel({
 
         <StepStrip steps={steps} replay={replay} onReplay={setReplay} />
 
-        {/* the 接管 rule */}
-        <div className="flex min-h-11 items-center gap-2.5 rounded-xl bg-raised py-2 pl-2 pr-3.5 text-[12.5px] text-ink shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_45%,transparent)]">
-          <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-warning/12 text-warning"><Hand size={15} /></span>
-          <span className="min-w-0 flex-1">
-            {control.held
-              ? t("You have the wheel — the bot's clicks and keystrokes are refused until you hand it back.")
-              : t("Taking over pauses {name}; hand it back to {name} and it carries on from the current screen.", { name: bot.name })}
-          </span>
-          {!control.held && <span className="hidden shrink-0 text-[11.5px] text-ink-secondary/80 xl:inline">{t("While read-only, your clicks don't reach the computer")}</span>}
-        </div>
+        {/* the 接管 rule, only where taking over is possible */}
+        {(canTakeOver || control.held) && (
+          <div className="flex min-h-11 items-center gap-2.5 rounded-xl bg-raised py-2 pl-2 pr-3.5 text-[12.5px] text-ink shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_45%,transparent)]">
+            <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-warning/12 text-warning"><Hand size={15} /></span>
+            <span className="min-w-0 flex-1">
+              {control.held
+                ? t("You have the wheel — the bot's clicks and keystrokes are refused until you hand it back.")
+                : t("Taking over pauses {name}; hand it back to {name} and it carries on from the current screen.", { name: bot.name })}
+            </span>
+            {!control.held && <span className="hidden shrink-0 text-[11.5px] text-ink-secondary/80 xl:inline">{t("While read-only, your clicks don't reach the computer")}</span>}
+          </div>
+        )}
 
         {/* everything else the panel could always do */}
         <div className="flex flex-wrap gap-2">

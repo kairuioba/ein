@@ -14,7 +14,7 @@ import { changeHunks, currentVersion, diffLines, downloadName, staleUsers, summa
 import { readLibraryDoc } from "@/state/org-api";
 import { useStore, type Bot } from "@/state/store";
 import type { LibraryDoc } from "../../../shared/org-types";
-import { downloadText, setLibrarySubscribers } from "./library-actions";
+import { downloadText, setLibrarySubscription } from "./library-actions";
 import { DecisionTag, LevelTag } from "./LibraryTags";
 
 function Label({ children, right }: { children: React.ReactNode; right?: React.ReactNode }) {
@@ -46,7 +46,10 @@ export function DocPanel({
   const { dispatch } = useStore();
   const current = currentVersion(doc);
   const versions = useMemo(() => [...doc.versions].sort((a, b) => b.version - a.version), [doc.versions]);
-  const [shown, setShown] = useState(current?.version ?? 0);
+  // an older version picked from the history; null follows the current one,
+  // so a newly published version takes over the panel
+  const [picked, setPicked] = useState<number | null>(null);
+  const shown = picked ?? current?.version ?? 0;
   const [texts, setTexts] = useState<Record<number, string>>({});
   const [loadError, setLoadError] = useState("");
   const [fullOpen, setFullOpen] = useState(false);
@@ -60,8 +63,11 @@ export function DocPanel({
   const subscribers = doc.subscribers.flatMap((id) => bots.find((bot) => bot.id === id) ?? []);
   const shownVersion = versions.find((version) => version.version === shown);
 
+  // a reminder was about the version that was current then
+  useEffect(() => setReminded(null), [current?.version]);
+
   useEffect(() => {
-    setShown(currentVersion(doc)?.version ?? 0);
+    setPicked(null);
     setTexts({});
     setEditingSubs(false);
     setReminded(null);
@@ -105,10 +111,9 @@ export function DocPanel({
     setReminded(Date.now());
   };
   const toggleSubscriber = async (botId: string) => {
-    const next = doc.subscribers.includes(botId) ? doc.subscribers.filter((id) => id !== botId) : [...doc.subscribers, botId];
     setSubsError("");
     try {
-      await setLibrarySubscribers(doc.id, next);
+      await setLibrarySubscription(doc.id, botId, !doc.subscribers.includes(botId));
     } catch (cause) {
       setSubsError(cause instanceof Error ? cause.message : String(cause));
     }
@@ -139,7 +144,7 @@ export function DocPanel({
             <span className="inline-flex h-[22px] items-center rounded-[7px] bg-select/10 px-2 text-[12px] font-semibold text-accent-text">{t("Current v{version}", { version: current?.version ?? 0 })}</span>
             {current && <span className="ml-0.5 text-[12px] text-ink-secondary">{t("published {when}", { when: dayTimeLabel(current.at) })}</span>}
           </div>
-          <p className="m-0 text-[13px] leading-[1.6] text-ink-secondary">{text === undefined ? (loadError ? t("Couldn't load this version: {error}", { error: loadError }) : t("Loading…")) : summaryOf(text, 140, doc.title) || t("This version is empty.")}</p>
+          <p className="m-0 text-[13px] leading-[1.6] text-ink-secondary">{text === undefined ? (loadError ? t("Couldn't load this version: {error}", { error: loadError }) : t("Loading…")) : (shown === current?.version && doc.summary) || summaryOf(text, 140, doc.title) || t("This version is empty.")}</p>
           <div className="flex flex-wrap gap-1.5">
             <Button size="sm" onClick={() => setFullOpen(true)} disabled={text === undefined}><ExternalLink size={13} />{t("Open")}</Button>
             <Button size="sm" variant="soft" onClick={() => text !== undefined && downloadText(downloadName(doc.title, shown), text)} disabled={text === undefined}><Download size={13} />{t("Download")}</Button>
@@ -166,7 +171,7 @@ export function DocPanel({
             {versions.map((version) => {
               const on = version.version === shown;
               return (
-                <button key={version.version} type="button" onClick={() => setShown(version.version)} className="relative flex h-[30px] items-center gap-2 text-left text-[12.5px]">
+                <button key={version.version} type="button" onClick={() => setPicked(version.version === current?.version ? null : version.version)} className="relative flex h-[30px] items-center gap-2 text-left text-[12.5px]">
                   <i className={cn("size-[11px] shrink-0 rounded-full bg-stage", on ? "shadow-[inset_0_0_0_3.5px_var(--color-select)]" : "shadow-[inset_0_0_0_2px_color-mix(in_oklab,var(--color-hairline)_80%,transparent)]")} />
                   <b className={cn("w-[26px] shrink-0 font-mono text-[12px] font-bold", !on && "text-ink-secondary")}>v{version.version}</b>
                   <span className="w-[64px] shrink-0 truncate text-[12px] text-ink-secondary">{shortWhen(version.at)}</span>
@@ -220,7 +225,7 @@ export function DocPanel({
               {bots.map((bot) => {
                 const on = doc.subscribers.includes(bot.id);
                 return (
-                  <button key={bot.id} type="button" onClick={() => void toggleSubscriber(bot.id)} className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-[12.5px] hover:bg-raised-hover">
+                  <button key={bot.id} type="button" role="checkbox" aria-checked={on} onClick={() => void toggleSubscriber(bot.id)} className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-[12.5px] hover:bg-raised-hover">
                     <BotAvatar bot={bot} size={20} />
                     <span className="min-w-0 flex-1 truncate">{bot.name}</span>
                     <span className={cn("grid size-4 place-items-center rounded-[5px]", on ? "bg-select text-white" : "shadow-[inset_0_0_0_1.5px_color-mix(in_oklab,var(--color-hairline)_80%,transparent)]")}>{on && <Check size={11} strokeWidth={3} />}</span>

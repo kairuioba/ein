@@ -115,6 +115,19 @@ export function summaryOf(text: string, max = 140, title?: string): string {
   return paragraph.length > max ? `${paragraph.slice(0, max - 1)}…` : paragraph;
 }
 
+/** The summary the server writes when a publish names none (summaryOf in
+ * server/org/library.ts): the first body line that is neither a heading nor
+ * the title, else the first heading, cut to 60 characters. */
+export function derivedSummary(text: string, title: string): string {
+  const lines = text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const body = lines.find((line) => !line.startsWith("#") && line !== title.trim());
+  const chars = Array.from((body ?? lines[0]?.replace(/^#+\s*/, "") ?? "").trim());
+  return chars.length > 60 ? `${chars.slice(0, 59).join("")}…` : chars.join("");
+}
+
 /** A filename for downloading a version: "价格表-v4.md". */
 export function downloadName(title: string, version: number): string {
   const safe = title.trim().replace(/[\\/:*?"<>|]+/g, "-").slice(0, 60) || "document";

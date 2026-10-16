@@ -278,6 +278,8 @@ const appConfigSchema = z.object({
   workbuddy: z
     .object({ apiKey: optionalText, environment: z.enum(["international", "internal", "ioa"]).optional() })
     .optional(),
+  /** Spend display (server/org/usage.ts): the USD → CNY rate; absent = 7.2. */
+  usage: z.object({ usdToCny: z.number().positive().max(1_000).optional() }).optional(),
   instances: instanceConfigMapSchema.optional(),
 });
 const storedAppConfigSchema = appConfigSchema.extend({
@@ -308,6 +310,8 @@ export interface AppConfig {
   locale?: "zh-CN" | "en";
   dispatch?: Partial<import("../shared/dispatch-types.ts").DispatchSettings>;
   workbuddy?: { apiKey?: string; environment?: "international" | "internal" | "ioa" };
+  /** Spend display: the USD → CNY rate costs are shown at (default 7.2). */
+  usage?: { usdToCny?: number };
   instances?: InstanceConfigMap;
 }
 export type BrowserProfile = z.output<typeof browserProfileSchema> & {
@@ -608,7 +612,7 @@ export function saveConfig(patch: Partial<AppConfig>): void {
   // back after we have successfully recognized the legacy list.
   const storedProfiles = storedBrowserProfilesSchema.safeParse(disk.browserProfiles);
   if (storedProfiles.success) disk.browserProfiles = storedProfiles.data;
-  for (const key of ["xai", "openaiCompat", "composio", "box", "opencodeGo", "tts", "imageGen", "profile", "rooms", "localVm", "features", "dispatch", "workbuddy"] as const) {
+  for (const key of ["xai", "openaiCompat", "composio", "box", "opencodeGo", "tts", "imageGen", "profile", "rooms", "localVm", "features", "dispatch", "workbuddy", "usage"] as const) {
     const section = checkedPatch[key];
     if (!section) continue;
     const current = jsonObjectSchema.safeParse(disk[key]);

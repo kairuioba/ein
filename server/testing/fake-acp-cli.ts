@@ -573,7 +573,10 @@ function handle(msg: any) {
       if (mode === "interleave") playInterleaveTurn();
       else if (mode !== "empty-reply") playTurn();
       if (mode === "permission") {
-        // ask the client to approve a tool, then complete once answered
+        // ask the client to approve a tool, then complete once answered.
+        // FAKE_ACP_PERMISSION_COMMAND swaps the command asked about (the
+        // company-layer e2e asks to publish outside).
+        const command = process.env.FAKE_ACP_PERMISSION_COMMAND || "echo hi";
         pendingPermissionId = 9001;
         onPermissionAnswered = complete;
         out({
@@ -581,7 +584,7 @@ function handle(msg: any) {
           id: pendingPermissionId,
           method: "session/request_permission",
           params: {
-            toolCall: { kind: "execute", rawInput: { command: "echo hi" }, title: "echo hi" },
+            toolCall: { kind: "execute", rawInput: { command }, title: command },
             options: [
               { optionId: "allow-once", kind: "allow_once" },
               { optionId: "reject", kind: "reject_once" },

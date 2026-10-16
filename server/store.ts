@@ -62,6 +62,11 @@ export interface OptionCardData {
   /** A durable learned-skill proposal. The skill stays staged until the
    * user confirms this card — it never rides the prompt before that. */
   skillRequest?: SkillRequestCardData;
+  /** Company layer (server/org): the rule that sent this card to the owner,
+   * e.g. "External publishing always needs your approval" (localized). */
+  rule?: string;
+  /** Company layer: the decision (决议 #n) answering this card recorded. */
+  decisionId?: number;
 }
 
 export interface ConnectorCardData {

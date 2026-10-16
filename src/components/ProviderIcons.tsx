@@ -130,6 +130,28 @@ export function WorkBuddyMark({ size = 16, className }: IconProps) {
   return <Handshake size={size} strokeWidth={2} aria-hidden className={cn("text-[#3b82f6]", className)} />;
 }
 
+/** Marks drawn light (for dark grounds); every other one-colour mark paints with --color-ink. */
+const LIGHT_MARKS = new Set(["hermesAgent", "cursorAgent"]);
+
+/** An engine's official mark on its own small square, legible in every skin
+ * and on any plate: white with light-skin ink for most marks, dark for the
+ * marks drawn light (Hermes, Cursor). Never recolours the mark itself. */
+export function ProviderMarkTile({ driverKind, size, markSize, className }: { driverKind?: string; size: number; markSize: number; className?: string }) {
+  const dark = driverKind !== undefined && LIGHT_MARKS.has(driverKind);
+  return (
+    <span
+      style={{ width: size, height: size }}
+      className={cn(
+        "grid shrink-0 place-items-center overflow-hidden rounded-[4px]",
+        dark ? "bg-[#2A2E37]" : "bg-white text-[#14161C] [--color-ink-secondary:#5A606C] [--color-ink:#14161C]",
+        className,
+      )}
+    >
+      {driverKind ? <ProviderMark driverKind={driverKind} size={markSize} /> : null}
+    </span>
+  );
+}
+
 export function ProviderMark({ driverKind, size, className }: IconProps & { driverKind: string }) {
   switch (driverKind) {
     case "grok":

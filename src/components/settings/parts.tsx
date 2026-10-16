@@ -3,29 +3,13 @@
 // checkbox and the label/value rows the Fog designs use.
 import { useEffect, useState, type ReactNode } from "react";
 import { Check, Loader2, Minus, Plus, TriangleAlert } from "lucide-react";
-import { ProviderMark } from "@/components/ProviderIcons";
+import { ProviderMarkTile } from "@/components/ProviderIcons";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 
-// marks drawn light, for dark grounds; every other one-colour mark paints with --color-ink
-const LIGHT_MARKS = new Set(["hermesAgent", "cursorAgent"]);
-
-/** The little square behind an engine's mark on a dark name plate. White with
- * light-skin ink, so one-colour marks show in every skin; the marks drawn
- * light (Hermes, Cursor) sit on a dark square instead. */
+/** The little square behind an engine's mark (see ProviderMarkTile). */
 export function MarkTile({ driverKind, size, markSize }: { driverKind?: string; size: number; markSize: number }) {
-  const dark = driverKind !== undefined && LIGHT_MARKS.has(driverKind);
-  return (
-    <span
-      style={{ width: size, height: size }}
-      className={cn(
-        "grid shrink-0 place-items-center overflow-hidden rounded-[4px]",
-        dark ? "bg-[#2A2E37]" : "bg-white text-[#14161C] [--color-ink-secondary:#5A606C] [--color-ink:#14161C]",
-      )}
-    >
-      {driverKind ? <ProviderMark driverKind={driverKind} size={markSize} /> : null}
-    </span>
-  );
+  return <ProviderMarkTile driverKind={driverKind} size={size} markSize={markSize} />;
 }
 
 export type SaveState = { kind: "idle" } | { kind: "saving" } | { kind: "saved" } | { kind: "error"; message: string };

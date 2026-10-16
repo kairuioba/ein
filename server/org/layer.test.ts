@@ -139,6 +139,16 @@ describe("OrgLayer", () => {
       expect(layer.eventsSince(0)[0]).toMatchObject({ groupId: "g1", botId: "chief" });
     });
 
+    it("quotes the library docs the meeting cited as the decision's basis", () => {
+      const doc = layer.publishDoc({ title: "价格表", section: null, text: "v1", ownerBotId: "designer" });
+      layer.publishDoc({ id: doc.id, title: "价格表", section: null, text: "v2" });
+      host.threads.set("t-room", [
+        { id: "m1", role: "bot", kind: "text", at: 90, text: "按价格表 v1 旗舰款是 699", from: { botId: "writer" } },
+        question("q2", 100, {}, "chief"),
+      ]);
+      expect(layer.onOptionsAnswered("t-room", "q2", "799")?.basis).toEqual(["价格表 v1"]);
+    });
+
     it("ignores approvals, the onboarding quiz, empty answers and unknown messages", () => {
       host.threads.set("t-writer", [
         question("approval", 1, { tool: "Bash", options: ["Allow", "Deny"] }),

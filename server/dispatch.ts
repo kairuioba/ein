@@ -774,7 +774,8 @@ export class Dispatcher {
     }
     // a report turn in flight just finishes; nobody waits for it any more
     if (this.synthesisWatch.get(run.sourceThreadId) === run.id) this.synthesisWatch.delete(run.sourceThreadId);
-    this.host.activity(run.sourceThreadId, t("Dispatch canceled: “{goal}”", { goal: clip(run.goal, 60) }), false);
+    // canceling is something you did, not a failure: a plain system line
+    this.host.activity(run.sourceThreadId, t("Dispatch canceled: “{goal}”", { goal: clip(run.goal, 60) }));
     this.finishRun(run, "canceled");
     // the department teams working on its subtasks stop too
     for (const child of this.runs.filter((entry) => entry.parentRunId === run.id && !isFinished(entry.status))) void this.cancel(child.id);
@@ -1270,7 +1271,9 @@ export class Dispatcher {
         name,
         title: person.roleLabel,
         description: t("{role} — joined {squad} to speed up “{goal}”.", { role: person.roleLabel, squad: squadLetterName(firstSquad + group), goal: clip(run.goal, 60) }),
-        section: chief?.section,
+        // a newcomer joins the department whose work it takes over (the org
+        // chief has none of its own), else its chief's
+        section: this.host.bot(first.assigneeBotId)?.section || chief?.section,
         modelSelection: model.selection,
       });
       created.push(bot);

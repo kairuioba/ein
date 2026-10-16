@@ -123,6 +123,10 @@ describe("people states", () => {
     expect(map.get("c")!.isNew).toBe(true);
     expect(map.get("a")!.isNew).toBe(false);
     expect(headcount(map.values())).toEqual({ working: 2, waiting: 0, trouble: 0, idle: 3 });
+    // with nothing in flight the chief still leads, but it is not at work
+    const quiet = states([]);
+    expect(quiet.get("chief")).toMatchObject({ status: "leading", tone: "grey" });
+    expect(headcount(quiet.values()).working).toBe(0);
   });
 
   it("derives department numbers from runs unless the brief has them", () => {

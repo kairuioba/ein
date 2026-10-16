@@ -274,6 +274,11 @@ describe("card previews", () => {
     expect(cardLine({ title: "Your bot has a question", subtitle: "Pick the  hero\nimage", requestId: "r" })).toBe("Pick the hero image");
     expect(cardLine({ title: "Approval needed", subtitle: "git push", requestId: "r", tool: "Bash" })).toBe("Approval needed");
     expect(cardLine({ title: "", subtitle: "Which one?" })).toBe("Which one?");
+    // once settled the line says how it ended
+    expect(cardLine({ title: "Approval needed", subtitle: "npm  publish", requestId: "r", tool: "shell", answered: "allow" })).toBe("Allowed · npm publish");
+    expect(cardLine({ title: "Approval needed", subtitle: "rm -rf", requestId: "r", tool: "shell", answered: "deny" })).toBe("Denied · rm -rf");
+    expect(cardLine({ title: "Price?", subtitle: "", answered: "799" })).toBe("You chose 799");
+    expect(cardLine({ title: "Approval needed", subtitle: "x", requestId: "r", tool: "shell", answered: "expired" })).toBe("Voided");
   });
 
   it("previews a message by its text, card or tool", () => {

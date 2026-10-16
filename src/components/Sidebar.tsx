@@ -1588,7 +1588,8 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     if (!bots.length && !groups.length) return;
     views.set(id, {
       id,
-      label: sidebarSectionLabel(id),
+      // with departments around, the bots outside them are "not in a department"
+      label: id === BOTS_SECTION_ID && departments.length ? t("No department") : sidebarSectionLabel(id),
       color: BUILTIN_COLORS[id],
       count: bots.length + groups.length,
       rows: [

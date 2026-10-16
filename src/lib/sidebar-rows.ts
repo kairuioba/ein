@@ -220,7 +220,7 @@ export function latestGroupDecision(decisions: readonly OrgDecision[], groupId: 
   return latest;
 }
 
-type PreviewCard = { title: string; subtitle?: string; requestId?: string; tool?: string };
+type PreviewCard = { title: string; subtitle?: string; requestId?: string; tool?: string; answered?: string };
 
 type PreviewMessage = {
   role: string;
@@ -235,8 +235,19 @@ type PreviewMessage = {
  * title is the generic "Your bot has a question"); an approval or an options
  * card leads with its title. */
 export function cardLine(card: PreviewCard): string {
-  const asked = card.requestId && !card.tool ? card.subtitle || card.title : card.title || card.subtitle || "";
-  return asked.replace(/\s+/g, " ").trim();
+  const oneLine = (text: string | undefined) => (text ?? "").replace(/\s+/g, " ").trim();
+  const answer = card.answered?.trim();
+  if (answer) {
+    // settled: say how, not what was asked
+    if (answer === "expired") return t("Voided");
+    if (card.tool) {
+      const verdict = /^allow/i.test(answer) ? t("Allowed") : /^deny/i.test(answer) ? t("Denied") : answer;
+      const what = oneLine(card.subtitle || card.title);
+      return what ? `${verdict} · ${what}` : verdict;
+    }
+    return t("You chose {choice}", { choice: answer });
+  }
+  return oneLine(card.requestId && !card.tool ? card.subtitle || card.title : card.title || card.subtitle);
 }
 
 /** A message's one-line preview: its text, the card it carries, or the tool it ran. */

@@ -407,7 +407,8 @@ const sameDay = (a: number, b: number) => new Date(a).toDateString() === new Dat
 export function headcount(states: Iterable<PersonState>) {
   const out = { working: 0, waiting: 0, trouble: 0, idle: 0 };
   for (const state of states) {
-    if (state.status === "working" || state.status === "leading" || state.status === "overseeing") out.working += 1;
+    // the chief always "leads"; it is at work only while something is in flight
+    if (state.status === "working" || state.status === "overseeing" || (state.status === "leading" && state.tone === "blue")) out.working += 1;
     else if (state.status === "waiting" || state.status === "stuck") out.waiting += 1;
     else if (state.status === "failed" || state.status === "disagree") out.trouble += 1;
     else out.idle += 1;

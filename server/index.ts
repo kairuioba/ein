@@ -30,7 +30,8 @@ import {
   type BrowserCleanupWireRequest,
 } from "./browser-lifecycle-cleanup.ts";
 import * as checkpoints from "./checkpoints.ts";
-import { appendDecision, readDecisions } from "./decision-log.ts";
+// company layer: every decision row also feeds the org event log — see appendDecision below
+import { appendDecision as writeDecisionRow, readDecisions, type DecisionRow } from "./decision-log.ts";
 import { validateBotCwd } from "./bot-cwd.ts";
 import {
   attachmentExists,
@@ -62,6 +63,7 @@ import { Dispatcher, dispatchSettings } from "./dispatch.ts";
 import { handleDispatchApi } from "./dispatch-api.ts";
 import { handleOrgApi, isOrgApiPath, type OrgApiDeps } from "./org/api.ts";
 import { OrgEventLog } from "./org/events.ts";
+import { OrgLayer } from "./org/layer.ts";
 import { candidatesFromInstances, recommendModels, type InstanceLike } from "../shared/model-recommender.ts";
 import { getLocale, isLocale, replyLanguageInstruction, setLocale } from "../shared/i18n.ts";
 import { openMausStatusSystemPrompt } from "./openmaus-status-capsule.ts";
@@ -142,6 +144,7 @@ import {
   type GroupDefaultResponder,
   type GroupRecord,
   type Message,
+  type OptionCardData,
   type TaskRecord,
 } from "./store.ts";
 import * as tts from "./tts/index.ts";
@@ -329,7 +332,8 @@ function agentsIntegration(
   threadId: string,
   depth: number,
   skillAuthoring: boolean,
-  dispatch?: { maxSubtasks: number },
+  // only: a department lead's subtask turn for the org chief — submit_plan alone (server/dispatch.ts)
+  dispatch?: { maxSubtasks: number; only?: boolean },
 ) {
   return {
     command: process.execPath,
@@ -343,6 +347,7 @@ function agentsIntegration(
       OMB_TURN_DEPTH: String(depth),
       OMB_SKILL_AUTHORING_ENABLED: skillAuthoring ? "1" : "0",
       OMB_DISPATCH_ENABLED: dispatch ? "1" : "0",
+      OMB_DISPATCH_ONLY: dispatch?.only ? "1" : "0",
       OMB_DISPATCH_MAX_SUBTASKS: String(dispatch?.maxSubtasks ?? 8),
     },
   };
@@ -1147,6 +1152,8 @@ async function answerRequest(
       source: "user",
     });
   }
+  // company layer: picking an option on a bot's question card is a decision (决议 #n)
+  if (outcome !== "unavailable" && behavior === "answer" && cardMessage) orgLayer.onOptionsAnswered(threadId, cardMessage.id, message);
   if (outcome === "unavailable") {
     // The in-flight map is memory-only. After a restart the card is still on
     // the thread, so fall back to the request it carries — otherwise an
@@ -1641,20 +1648,37 @@ bus.subscribe((event: RuntimeEvent) => {
           requestId: event.requestId,
           tool: permission ? event.tool : undefined,
           // the exact grant "always allow" would remember, decided here so
-          // client and server can never derive it differently
+          // client and server can never derive it differently. Publishing
+          // outside can never be "always allowed" (company layer rule).
           allowKey:
-            permission && !event.approvalScope
+            permission && !event.approvalScope && verdict?.source !== "external-publish"
               ? approvalKey(event.tool, event.summary, event.approvalScope)
               : undefined,
           // in auto mode a card can only mean the guard stopped it — say so
           held:
-            permission && asker?.autoApprove
+            permission && asker?.autoApprove && verdict?.source !== "external-publish"
               ? t("This looked destructive, so auto mode stopped to ask.")
               : undefined,
+          // company layer: the rule that sent this card to the owner
+          rule: verdict?.source === "external-publish" ? t("External publishing always needs your approval") : undefined,
           approvalScope: event.approvalScope,
         },
       });
       if (event.requestId) askMessageByRequest.set(`${event.threadId}:${event.requestId}`, message.id);
+      // company layer: an approval shown while nobody is at the keyboard is
+      // voided after rules.unattendedExpiryMin minutes (server/org/expiry.ts)
+      if (permission && unattended && asker && event.requestId) {
+        orgLayer.trackUnattended({
+          threadId: event.threadId,
+          requestId: event.requestId,
+          messageId: message.id,
+          botId: asker.id,
+          botName: asker.name,
+          tool: event.tool,
+          summary: event.summary,
+          instanceId: event.providerInstanceId ?? asker.modelSelection.instanceId,
+        });
+      }
       const reviewMode = resolveAutoReviewMode(asker?.autoReview);
       let reviewTask: Promise<boolean> | undefined;
       if (
@@ -1781,6 +1805,9 @@ bus.subscribe((event: RuntimeEvent) => {
       lastReply.delete(event.threadId);
       const lastReported = turnUsage.get(event.threadId);
       turnUsage.delete(event.threadId);
+      // company layer: one timestamped spend-ledger row per settled turn, 1:1
+      // or room (the speaker pays), for today's and this week's spend
+      orgLayer.recordTurnUsage(bot?.id ?? groupSpeakers.get(event.threadId)?.botId, event.usage ?? lastReported, event.cost);
       // group turns run on the room's thread — the speaking bot's task
       // tally is not the right home for a shared room's spend, so only
       // 1:1 task turns are tallied for now.
@@ -1859,7 +1886,9 @@ bus.subscribe((event: RuntimeEvent) => {
         ? t("Delegated turn did not finish — {reason}", { reason: reasonLabel(event.stopReason.trim().slice(0, 120)) })
         : undefined;
       finalizeDelegationWatch(event.threadId, event.ok, reply, delegationFailureName);
-      dispatcher.onTurnSettled(event.threadId, event.ok, reply, event.ok ? undefined : event.stopReason ?? undefined);
+      // the stop reason goes along even when ok: ACP and pi engines settle a
+      // user's Stop as ok + "cancelled", and a stopped subtask is never retried
+      dispatcher.onTurnSettled(event.threadId, event.ok, reply, event.stopReason ?? undefined);
       // group busy/unread settle in the group turn engine, which knows
       // whether more member turns are queued behind this one
       break;
@@ -2089,9 +2118,17 @@ const dispatcher = new Dispatcher({
   startTurn: async (botId, text, opts) => {
     await startTurn(botId, text, {
       threadId: opts.threadId,
-      // workers and the synthesis turn never get team tools: no re-dispatch loops
+      // workers and the synthesis turn never get team tools: no re-dispatch loops…
       commsDepth: MAX_COMMS_DEPTH,
+      // …except a department lead doing a subtask for the org chief, who may
+      // plan it for its own team with submit_plan alone (its workers cannot)
+      ...(opts.mayPlan ? { dispatchOnly: true } : {}),
       ...(opts.continuation ? { cardContinuation: true } : {}),
+      // dispatched work inherits the planner's unattended window, like delegations
+      unattended: isUnattended(store.botByThread(opts.sourceThreadId ?? opts.threadId)?.id),
+      // setup runs after startTurn resolves and never emits turn.completed on
+      // failure: report it so the subtask settles instead of running forever
+      onDispatchError: (message, info) => opts.onError?.(info?.cancelled ? "interrupted" : message),
     });
   },
   interrupt: async (botId, threadId) => {
@@ -2099,17 +2136,36 @@ const dispatcher = new Dispatcher({
     const instance = bot ? registry.get(bot.modelSelection.instanceId) : null;
     await instance?.adapter.interruptTurn(threadId);
   },
+  // cost, engine names and the company timeline for adding people mid-run
+  usage: (botId, threadId) => store.taskByThread(botId, threadId)?.usage ?? null,
+  engineName: (instanceId) => registry.get(instanceId)?.displayName ?? instanceId,
+  modelLabel: (selection) => {
+    const instance = registry.get(selection.instanceId);
+    const label = instance?.models.options.find((option) => option.id === selection.model)?.label ?? selection.model;
+    return `${instance?.displayName ?? selection.instanceId} · ${label}`;
+  },
+  event: (event) => orgEvents.append(event),
   activity: (threadId, label, ok) => {
     store.appendMessage(threadId, { role: "bot", kind: "activity", tool: { name: label, ...(ok === false ? { ok: false } : {}) } });
   },
   recommend: (task, policy) => recommendModels(task, candidatesFromInstances(recommenderInstances), policy, { limit: 1 })[0] ?? null,
-  broadcast: (run) => broadcast({ type: "dispatch.run", run }),
-  broadcastRoutes: (routes) => broadcast({ type: "dispatch.routes", routes }),
+  // SSE frames are keyed on `kind` (broadcast() reads payload.kind; `type`
+  // sent them unnamed). Company layer: run/subtask transitions → org events.
+  broadcast: (run) => {
+    broadcast({ kind: "dispatch.run", run });
+    orgLayer.onDispatchRun(run);
+  },
+  broadcastRoutes: (routes) => broadcast({ kind: "dispatch.routes", routes }),
   settings: () => dispatchSettings(cfg.dispatch),
   maxBots: MAX_WORKSPACE_BOTS,
 });
 dispatcher.load();
 setTimeout(() => dispatcher.resumeAll(), 3_000).unref?.();
+// an engine throttling a worker (429s the driver retries) feeds the
+// "is an engine rate limiting us?" question when people are added mid-run
+bus.subscribe((event: RuntimeEvent) => {
+  if (event.type === "turn.retrying" && !shouldIgnoreProviderEvent(event)) dispatcher.onTurnRetrying(event.threadId, event.reason);
+});
 
 const delegationRetryBots = new Set<string>();
 function retryDelegationsWaitingOn(botId: string): void {
@@ -2320,7 +2376,11 @@ async function startTurn(
     /** Stable identity supplied by the composer so a network retry cannot
      * dispatch the same user action twice. */
     sendId?: string;
-    onDispatchError?: (message: string) => void;
+    /** A department lead's subtask turn for the org chief (server/dispatch.ts):
+     * at the comms cap, yet it gets submit_plan (and list_bots) alone. */
+    dispatchOnly?: boolean;
+    /** `cancelled`: someone stopped the turn during setup (not a failure). */
+    onDispatchError?: (message: string, info?: { cancelled?: boolean }) => void;
   },
 ) {
   const bot = store.bot(botId);
@@ -2678,6 +2738,8 @@ async function startTurn(
           !candidate.hidden &&
           sectionKey(candidate.section) === sectionKey(bot.section),
       );
+      // dispatch: a section's chief of staff, or the org's chief (主 Bot)
+      const plans = (bot.chiefOfStaff || dispatcher.isOrgChief(bot.id)) && dispatchSettings(cfg.dispatch).enabled;
       if (
         commsDepth < MAX_COMMS_DEPTH &&
         instance.adapter.capabilities.agentsMcp === true
@@ -2687,34 +2749,43 @@ async function startTurn(
           threadId,
           commsDepth,
           skillAuthoring,
-          bot.chiefOfStaff && dispatchSettings(cfg.dispatch).enabled ? { maxSubtasks: dispatchSettings(cfg.dispatch).maxSubtasks } : undefined,
+          plans ? { maxSubtasks: dispatchSettings(cfg.dispatch).maxSubtasks } : undefined,
         );
+      } else if (opts?.dispatchOnly && bot.chiefOfStaff && plans && instance.adapter.capabilities.agentsMcp === true) {
+        // a department lead's subtask for the org chief: submit_plan alone
+        integrations.agents = agentsIntegration(bot.id, threadId, commsDepth, false, {
+          maxSubtasks: dispatchSettings(cfg.dispatch).maxSubtasks,
+          only: true,
+        });
       }
+      const planOnly = Boolean(opts?.dispatchOnly && integrations.agents);
       // @mentions in the user's message (the composer's tagging UI) become
       // an explicit coordination nudge. The agent still chooses the matching
       // peer tool, so the harness stays the single owner of turns/permissions.
-      const tagged = integrations.agents
+      const tagged = integrations.agents && !planOnly
         ? mentionedBots(
             text,
             sectionPeers,
           )
         : [];
-      const coordinationPrompt = bot.chiefOfStaff
+      const coordinationPrompt = bot.chiefOfStaff || dispatcher.isOrgChief(bot.id)
         ? chiefOfStaffSystemPrompt(
             bot.id,
             store.bots,
             Boolean(integrations.agents),
             openMausStatusSystemPrompt(),
-            dispatchSettings(cfg.dispatch),
+            // the org chief's departments, and a lead's plan-only turn
+            { ...dispatchSettings(cfg.dispatch), ...dispatcher.chiefContext(bot.id), planOnly },
             replyLanguageInstruction(),
           )
         : integrations.agents && sectionPeers.length > 0
           ? "You can work with the other bots in your section through the agents tools. list_bots shows who's available. Use delegate_bot for assigned or independent work so you remain available; use ask_bot only for a short consultation whose reply is required in your current answer."
           : "";
-      const credentialPrompt = integrations.agents
+      // a plan-only turn mounts no credential or routine tools
+      const credentialPrompt = integrations.agents && !planOnly
         ? " If a supported API key is missing, use request_credential to show the secure in-app card. Never ask the user to paste credentials into chat."
         : "";
-      const routinePrompt = integrations.agents
+      const routinePrompt = integrations.agents && !planOnly
         ? " If the user explicitly asks to list or review, schedule, run, or change routines, use list_routines and propose_routine or propose_routine_action. A proposal is not applied until the user confirms its in-app card, so never claim the action completed before that confirmation."
         : "";
       const learnPrompt = skillAuthoring
@@ -2799,6 +2870,8 @@ async function startTurn(
           routinePrompt +
           learnPrompt +
           sectionContextSystemPrompt(bot.section) +
+          // company layer: latest versions of the library docs this bot subscribes to (capped)
+          orgLayer.libraryPrompt(bot) +
           (privateWorkspace ? memorySystemPrompt(bot.id) + skillsSystemPrompt(bot.id) : "") +
           skillInstructions +
           packagePlaybooks +
@@ -2852,7 +2925,7 @@ async function startTurn(
         turnUsage.delete(threadId);
       }
       if (e instanceof DirectTurnSetupCancelled) {
-        opts?.onDispatchError?.(e.message);
+        opts?.onDispatchError?.(e.message, { cancelled: true });
         if (ownsLatestGeneration && store.bot(bot.id)?.busy) {
           store.setActivity(bot.id, "idle");
           retryDelegationsWaitingOn(bot.id);
@@ -3447,6 +3520,8 @@ async function runGroupMemberTurn(
     system +
     (integrations.browser ? BUILT_IN_BROWSER_SYSTEM_PROMPT : "") +
     sectionContextSystemPrompt(bot.section) +
+    // company layer: latest versions of the library docs this bot subscribes to (capped)
+    orgLayer.libraryPrompt(bot) +
     (workspace ? `\n${memorySystemPrompt(bot.id).trim()}${skillsSystemPrompt(bot.id)}` : "") +
     renderSkillInstructions(selectedSkills, { includeRoot: Boolean(workspace) }) +
     installedPlaybookInstructions(text, bot.playbooks);
@@ -4372,7 +4447,43 @@ function teamMapSnapshot() {
 
 /** What changed in the company, for "since you last looked" and the timeline. */
 const orgEvents = new OrgEventLog(DATA_DIR);
-const orgApiDeps: OrgApiDeps = { json, readBody, events: orgEvents };
+// The company layer (server/org/layer.ts): org config, decisions, the inbox,
+// the brief, spend and the library — all read from the live harness state
+// below. Its hooks in this file are one line each, marked "company layer".
+const orgLayer = new OrgLayer(
+  {
+    dataDir: DATA_DIR,
+    bots: () => store.bots,
+    groups: () => store.groups,
+    messages: (threadId) => store.messagesFor(threadId),
+    patchCard: (threadId, messageId, card) => void store.patchMessage(threadId, messageId, { card: card as OptionCardData }),
+    chip: (threadId, text, ok) => void store.appendMessage(threadId, { role: "bot", kind: "activity", tool: { name: text, ok } }),
+    runs: () => dispatcher.list(),
+    maxAttempts: () => dispatchSettings(cfg.dispatch).maxAttempts,
+    usdToCny: () => cfg.usage?.usdToCny,
+    decisionRows: (limit) => readDecisions(DATA_DIR, limit),
+    logDecision: (row) => appendDecision(DATA_DIR, row),
+    // a provider ask raised by this process and not yet settled
+    isLiveRequest: (threadId, requestId) => askMessageByRequest.has(`${threadId}:${requestId}`),
+    deny: async (instanceId, threadId, requestId, message) => {
+      const instance = registry.get(instanceId);
+      if (!instance) return false;
+      return (await instance.adapter.respondToRequest(threadId, requestId, { behavior: "deny", message })) !== "unavailable";
+    },
+  },
+  orgEvents,
+  // test seam, like OMB_TURN_STALL_MS: expire unattended approvals after this many ms
+  { expiryMs: Number(process.env.OMB_UNATTENDED_EXPIRY_MS) || undefined },
+);
+const orgApiDeps: OrgApiDeps = { json, readBody, events: orgEvents, org: orgLayer };
+
+/** The decision log, plus the company layer's view of it: every row is also
+ * an org event (approval requested / resolved / auto / expired). Declared as
+ * a function so the call sites above keep their name and stay unchanged. */
+function appendDecision(dataDir: string, row: Omit<DecisionRow, "at">): void {
+  writeDecisionRow(dataDir, row);
+  orgLayer.onDecisionRow(row);
+}
 
 const dispatchApiDeps = {
   dispatcher,
@@ -6911,7 +7022,9 @@ const server = createServer(async (req, res) => {
           ...(body.dismissed !== undefined ? { dismissed: body.dismissed } : {}),
         },
       });
-      return json(res, 200, { message: patched });
+      // company layer: a picked option on a choice card is a decision (决议 #n); the onboarding quiz is not
+      const decision = typeof body.answered === "string" && !existing.card.answered ? orgLayer.onOptionsAnswered(bot.threadId, m[2], body.answered) : null;
+      return json(res, 200, { message: decision ? store.messagesFor(bot.threadId).find((msg) => msg.id === m![2]) : patched });
     }
     m = path.match(/^\/api\/bots\/([\w-]+)\/messages$/);
     if (m && method === "POST") {

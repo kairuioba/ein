@@ -720,7 +720,7 @@ function LibraryCard({ model, style, onOpen }: { model: WorkbenchModel; style: C
               {latest === 0 && <span className="inline-flex h-[18px] items-center rounded-full bg-warning/12 px-1.5 text-[11px] font-semibold text-warning">{t("Missing")}</span>}
               <em className="ml-auto text-[11.5px] text-ink-secondary not-italic">
                 {today ? `${clock(doc.updatedAt)} · ` : ""}
-                {t("{count} subscribed", { count: doc.subscribers.length })}
+                {t("{count} subscribers", { count: doc.subscribers.length })}
               </em>
             </button>
           );

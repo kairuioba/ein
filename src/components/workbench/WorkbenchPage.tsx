@@ -437,8 +437,8 @@ function Header({
       <div role="radiogroup" aria-label={t("Workbench view")} className="inline-flex shrink-0 items-center gap-0.5 rounded-[10px] bg-control p-0.5">
         {(
           [
-            { id: "people", label: t("People"), icon: <Users size={14} /> },
-            { id: "work", label: t("Work"), icon: <Network size={14} /> },
+            { id: "people", label: t("Look at people"), icon: <Users size={14} /> },
+            { id: "work", label: t("Look at work"), icon: <Network size={14} /> },
           ] as const
         ).map((option) => (
           <button

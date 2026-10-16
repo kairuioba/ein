@@ -8,6 +8,8 @@ import {
   activeRunsByLead,
   botRowStatus,
   callOccursBetween,
+  cardLine,
+  messageLine,
   departmentDelivered,
   foldDepartmentMembers,
   groupRowPreview,
@@ -211,6 +213,13 @@ describe("rows", () => {
     ).toBe("5 bots · Designer: 1 of 4 ready");
     expect(groupRowPreview({ memberCount: 1, last: { role: "user", kind: "text", text: "go" } })).toBe("1 bot · You: go");
     expect(groupRowPreview({ memberCount: 2 })).toBe("No messages yet");
+    // a card has no text: the preview reads the card instead of going blank
+    expect(
+      groupRowPreview({
+        memberCount: 4,
+        last: { role: "bot", kind: "options", from: { name: "Ajie" }, card: { title: "Approval needed", subtitle: "git push", requestId: "r1", tool: "Bash" } },
+      }),
+    ).toBe("4 bots · Ajie: Approval needed");
 
     const decisions: OrgDecision[] = [
       { id: 1, title: "", choice: "a", options: [], decidedBy: "owner", at: 10, source: { kind: "group", id: "g" }, actionItems: [] },
@@ -257,5 +266,20 @@ describe("departments", () => {
 
     expect(foldDepartmentMembers(members, { hasLead: true, expanded: true, keep }).shown).toHaveLength(4);
     expect(foldDepartmentMembers(members, { hasLead: false, expanded: false, keep }).shown).toHaveLength(4);
+  });
+});
+
+describe("card previews", () => {
+  it("reads a bot's question from its subtitle and an approval from its title", () => {
+    expect(cardLine({ title: "Your bot has a question", subtitle: "Pick the  hero\nimage", requestId: "r" })).toBe("Pick the hero image");
+    expect(cardLine({ title: "Approval needed", subtitle: "git push", requestId: "r", tool: "Bash" })).toBe("Approval needed");
+    expect(cardLine({ title: "", subtitle: "Which one?" })).toBe("Which one?");
+  });
+
+  it("previews a message by its text, card or tool", () => {
+    expect(messageLine(undefined)).toBe("");
+    expect(messageLine({ role: "bot", kind: "text", text: " hi\n there " })).toBe("hi there");
+    expect(messageLine({ role: "bot", kind: "options", card: { title: "Price?", subtitle: "" } })).toBe("Price?");
+    expect(messageLine({ role: "bot", kind: "activity", tool: { name: "Read" } })).toBe("Read");
   });
 });

@@ -100,6 +100,8 @@ import {
   activeRunsByLead,
   addedSquadsBySection,
   botRowStatus,
+  cardLine,
+  messageLine,
   departmentDelivered,
   foldDepartmentMembers,
   groupRowPreview,
@@ -234,17 +236,15 @@ function UpdateButton() {
 function lastLine(visible: readonly Message[]): string {
   const last = visible.at(-1);
   if (!last) return "";
-  if (last.kind === "options" && last.card) return last.card.title;
-  if (last.kind === "activity" && last.tool) return last.tool.name;
   if (last.kind === "screen") return t("Screen frame");
-  return (last.text ?? "").replace(/\s+/g, " ").trim();
+  return messageLine(last);
 }
 
 /** The open question in a bot's own thread, when it is waiting on you. */
 function openQuestion(visible: readonly Message[]): string | undefined {
   for (let index = visible.length - 1; index >= 0; index -= 1) {
     const card = visible[index]!.card;
-    if (card && !card.answered && !card.dismissed) return card.title;
+    if (card && !card.answered && !card.dismissed) return cardLine(card) || undefined;
   }
   return undefined;
 }

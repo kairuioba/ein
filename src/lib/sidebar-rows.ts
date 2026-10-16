@@ -220,13 +220,32 @@ export function latestGroupDecision(decisions: readonly OrgDecision[], groupId: 
   return latest;
 }
 
+type PreviewCard = { title: string; subtitle?: string; requestId?: string; tool?: string };
+
 type PreviewMessage = {
   role: string;
   kind: string;
   text?: string;
   tool?: { name: string };
   from?: { name: string };
+  card?: PreviewCard;
 };
+
+/** One line for a card in a preview: a bot's question is its subtitle (the
+ * title is the generic "Your bot has a question"); an approval or an options
+ * card leads with its title. */
+export function cardLine(card: PreviewCard): string {
+  const asked = card.requestId && !card.tool ? card.subtitle || card.title : card.title || card.subtitle || "";
+  return asked.replace(/\s+/g, " ").trim();
+}
+
+/** A message's one-line preview: its text, the card it carries, or the tool it ran. */
+export function messageLine(message: PreviewMessage | undefined): string {
+  if (!message) return "";
+  if (message.card && (message.kind === "options" || !message.text)) return cardLine(message.card);
+  if (message.kind === "activity" && message.tool) return message.tool.name;
+  return (message.text ?? "").replace(/\s+/g, " ").trim();
+}
 
 /** A group row's second line: who is talking now, the decision it reached, or
  * its last message with the member count in front. */
@@ -241,8 +260,7 @@ export function groupRowPreview(input: {
   if (input.decision && !input.unread) return t("Decision #{id} made · {choice}", { id: input.decision.id, choice: input.decision.choice });
   const last = input.last;
   if (!last) return t("No messages yet");
-  const text = last.kind === "activity" && last.tool ? last.tool.name : (last.text ?? "");
-  const oneLine = text.replace(/\s+/g, " ").trim();
+  const oneLine = messageLine(last);
   if (last.role === "user") return tn(input.memberCount, "{count} bot · You: {text}", "{count} bots · You: {text}", { text: oneLine });
   if (last.from?.name) return tn(input.memberCount, "{count} bot · {name}: {text}", "{count} bots · {name}: {text}", { name: last.from.name, text: oneLine });
   return tn(input.memberCount, "{count} bot · {text}", "{count} bots · {text}", { text: oneLine });

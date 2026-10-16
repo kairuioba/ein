@@ -120,6 +120,8 @@ export interface OrgEvent {
   decisionId?: number;
   docId?: string;
   severity?: "info" | "warn" | "error";
+  /** the bare subject of the event (an approval's action, a failure's reason), already in the app's language */
+  detail?: string;
 }
 
 // ── decisions (决议 #n) ───────────────────────────────────────────────────────
@@ -131,8 +133,9 @@ export interface OrgDecision {
   options: string[];
   decidedBy: DecisionLevel;
   at: number;
-  /** where it was asked: a group (meeting) or a 1:1 chat */
-  source: { kind: "group" | "chat"; id: string; messageId?: string };
+  /** where it was asked: a group (meeting) or a 1:1 chat. `id` is the group id
+   * or the bot id; `threadId` is the exact conversation (task) it was asked in. */
+  source: { kind: "group" | "chat"; id: string; messageId?: string; threadId?: string };
   /** sources quoted when asking, e.g. "价格表 v3" */
   basis?: string[];
   /** work it produced; each becomes a task tagged "from decision #n" */
@@ -161,6 +164,8 @@ export interface InboxItem {
   options?: string[];
   /** for approvals: the request to answer through the existing approval API */
   requestId?: string;
+  /** for a dispatch plan waiting to be started: POST /api/dispatch/runs/:runId/approve */
+  runId?: string;
 }
 
 // ── spend ─────────────────────────────────────────────────────────────────────
@@ -174,6 +179,10 @@ export interface UsageSummary {
   byBot: Array<{ botId: string; cost: number; tokens: number }>;
   /** engines that report tokens but no price are counted as 0 here */
   unpricedTokens: number;
+  /** this week's spend so far (Monday 00:00 on), CNY */
+  weekCost?: number;
+  /** the USD → CNY rate the costs were converted at */
+  usdToCny?: number;
 }
 
 // ── the daily brief (简报) ─────────────────────────────────────────────────────
@@ -197,8 +206,10 @@ export interface Brief {
   total: number;
   departments: BriefDepartment[];
   needsYou: InboxItem[];
-  /** approved for you by a rule */
+  /** approved for you by a rule (today, newest first, at most 50) */
   autoApproved: Array<{ id: string; title: string; botId: string; at: number; rule: string }>;
+  /** how many were approved by a rule today (the list carries only the newest) */
+  autoApprovedTotal?: number;
   /** voided because nobody answered in time */
   expired: Array<{ id: string; title: string; botId: string; at: number }>;
   /** events since `since` (the caller's last visit), newest first */
@@ -233,6 +244,8 @@ export interface LibraryDoc {
   /** which version each bot last used — a lower one than current is stale */
   inUse: Array<{ botId: string; version: number }>;
   updatedAt: number;
+  /** one line under the title ("三款定价 · 发布价与早鸟价"): given when publishing, else the text's first line */
+  summary?: string;
 }
 
 // ── adding people mid-run (中途加人) ──────────────────────────────────────────

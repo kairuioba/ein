@@ -5,7 +5,9 @@
 // real app-server, it never exits on its own — the driver kills it.
 //
 //   FAKE_CODEX_MODE   happy (default) | approval | resume | stream | windows-command |
-//                     mcp-elicitation | logged-in-stdout | logged-out | unauthorized
+//                     mcp-elicitation | question | logged-in-stdout | logged-out | unauthorized
+//                     (question: asks the user to pick a price through
+//                     item/tool/requestUserInput, then finishes the turn)
 //   FAKE_CODEX_DUMP   path to write {argv, env, calls, decision} as JSON
 //
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
@@ -183,6 +185,16 @@ process.stdin.on("data", (chunk) => {
               requestedSchema: { type: "object", properties: {} },
             },
           });
+        } else if (mode === "question") {
+          out({
+            jsonrpc: "2.0",
+            id: 100,
+            method: "item/tool/requestUserInput",
+            params: {
+              questions: [{ id: "price", header: "Price", question: "Flagship price: 699 or 799?", options: [{ label: "699" }, { label: "799" }] }],
+            },
+          });
+          // turn continues from the response handler above
         } else if (mode === "approval" || mode === "windows-command") {
           const approvalCommand = mode === "windows-command" ? command : "rm -rf scratch";
           out({ jsonrpc: "2.0", id: 100, method: "execCommandApproval", params: { command: approvalCommand } });

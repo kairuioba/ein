@@ -2,6 +2,7 @@
 // and the workbench UI. See server/dispatch.ts for how runs execute.
 import type { Capability, Level } from "./model-profiles.ts";
 import type { RecommendationPolicy } from "./model-recommender.ts";
+import type { RunDiagnosis } from "./org-types.ts";
 
 // ── settings ───────────────────────────────────────────────────────────
 
@@ -38,6 +39,9 @@ export const DEFAULT_DISPATCH_SETTINGS: DispatchSettings = {
   maxAttempts: 2,
 };
 
+/** The largest plan a chief may submit (the org chief plans across departments). */
+export const MAX_PLAN_SUBTASKS = 30;
+
 const clampInt = (value: unknown, min: number, max: number, fallback: number): number =>
   Number.isFinite(value) ? Math.min(max, Math.max(min, Math.trunc(Number(value)))) : fallback;
 
@@ -50,7 +54,7 @@ export function dispatchSettings(raw: Partial<DispatchSettings> | undefined): Di
     autoCreate: typeof raw?.autoCreate === "boolean" ? raw.autoCreate : d.autoCreate,
     policy: policy === "quality" || policy === "economy" || policy === "balanced" ? policy : d.policy,
     maxConcurrent: clampInt(raw?.maxConcurrent, 1, 8, d.maxConcurrent),
-    maxSubtasks: clampInt(raw?.maxSubtasks, 1, 20, d.maxSubtasks),
+    maxSubtasks: clampInt(raw?.maxSubtasks, 1, MAX_PLAN_SUBTASKS, d.maxSubtasks),
     maxNewBots: clampInt(raw?.maxNewBots, 0, 10, d.maxNewBots),
     autoSynthesize: typeof raw?.autoSynthesize === "boolean" ? raw.autoSynthesize : d.autoSynthesize,
     requireApproval: typeof raw?.requireApproval === "boolean" ? raw.requireApproval : d.requireApproval,
@@ -80,8 +84,52 @@ export interface DispatchSubtask {
   threadId?: string;
   result?: string;
   error?: string;
+  /** when the latest attempt started */
   startedAt?: number;
+  /** when it settled (done, failed, skipped or canceled) */
   finishedAt?: number;
+  /** A department lead handed this subtask to its own team: the run doing
+   * it. The subtask stays "running" until that run finishes. */
+  childRunId?: string;
+  /** The squad it was moved to when people were added mid-run. */
+  squad?: string;
+  /** When an engine throttled this subtask (rate limited), newest last, at most 20. */
+  rateLimitedAt?: number[];
+  /** Attempts that ended because the engine was rate limited (not the worker's fault). */
+  throttledAttempts?: number;
+}
+
+/** The 30-minute check after people were added: did the run speed up? */
+export interface DispatchSquadReview {
+  at: number;
+  /** subtasks finished per hour before the squad joined, and since */
+  speedBefore: number;
+  speedAfter: number;
+  faster: boolean;
+}
+
+/** People added to a running job (中途加人): one squad per addition. The
+ * original team is implicitly "Squad A"; added squads are B, C, … */
+export interface DispatchSquad {
+  /** "Squad B", already in the app's language */
+  name: string;
+  /** the first new person: works too, and is who the others ask */
+  leadBotId: string;
+  botIds: string[];
+  /** not-started subtasks handed to the squad */
+  subtaskIds: string[];
+  addedAt: number;
+  /** the owner from the workbench, or the run's chief within its rules */
+  by: "owner" | "chief";
+  /** when the speed review is due (addedAt + 30 minutes) */
+  reviewAt: number;
+  /** the estimate shown when they were added, epoch ms */
+  etaBefore?: number;
+  etaAfter?: number;
+  /** filled once reviewAt has passed (or the run finished first) */
+  review?: DispatchSquadReview;
+  /** the run finished and the squad dissolved; its bots stay on the team */
+  endedAt?: number;
 }
 
 export interface DispatchRun {
@@ -96,6 +144,17 @@ export interface DispatchRun {
   updatedAt: number;
   /** The Chief's synthesis turn has been asked for. */
   synthesisStarted?: boolean;
+  /** When the run reached done, failed or canceled. */
+  finishedAt?: number;
+  /** The Chief's consolidated report, once its synthesis turn completed. */
+  report?: string;
+  /** A department lead's plan for one subtask of the org chief's run. */
+  parentRunId?: string;
+  parentSubtaskId?: string;
+  /** Squads added while the run was going. */
+  squads?: DispatchSquad[];
+  /** This run's own concurrency once people were added (else the setting). */
+  maxConcurrent?: number;
 }
 
 export interface DispatchRoute {
@@ -104,4 +163,51 @@ export interface DispatchRoute {
   /** false = unplugged: removes a default same-section member. */
   enabled: boolean;
   updatedAt: number;
+}
+
+// ── adding people mid-run ───────────────────────────────────────────────
+
+/** POST /api/dispatch/runs/:id/diagnose answers a RunDiagnosis (see
+ * shared/org-types.ts) plus what the add-people sheet draws. */
+export interface DispatchDiagnosis extends RunDiagnosis {
+  at: number;
+  /** every subtask that is done, running or not started, in plan order */
+  remaining: Array<
+    RunDiagnosis["remaining"][number] & {
+      assigneeBotId: string;
+      /** who would do it after the suggestion: the original team is "Squad A" */
+      squad: string;
+      /** a not-started subtask the suggestion hands to the new squad */
+      moved: boolean;
+    }
+  >;
+  suggestion?: NonNullable<RunDiagnosis["suggestion"]> & {
+    /** lines if everyone reported to the lead directly (不分组) */
+    linesUngrouped: number;
+    /** the new people, squad lead first */
+    people: Array<{
+      name: string;
+      role: string;
+      modelSelection: { instanceId: string; model: string; effort?: string };
+      modelLabel: string;
+      subtaskIds: string[];
+    }>;
+    /** the onboarding pack (入职包) the squad reads instead of the history */
+    pack: Array<{ id: "acceptance" | "examples" | "scope" | "goal" | "contact"; text: string }>;
+    /** subtasks running at once after adding */
+    concurrency: number;
+  };
+  /** finished subtasks per hour so far; absent before anything finished */
+  speedPerHour?: number;
+}
+
+/** POST /api/dispatch/runs/:id/amend → this. */
+export interface DispatchAmendResult {
+  ok: true;
+  /** ids of the bots created, squad lead first */
+  added: string[];
+  squad: DispatchSquad;
+  /** the subtasks handed to the new squad */
+  moved: string[];
+  run: DispatchRun;
 }

@@ -36,6 +36,7 @@ export interface OptionCardData {
   title: string;
   subtitle: string;
   options: string[];
+  /** the chosen option; "expired" when nobody answered in time while unattended */
   answered?: string;
   dismissed?: boolean;
   /** Present when this card is a live provider ask (approval/question). */
@@ -51,6 +52,12 @@ export interface OptionCardData {
   routineRequest?: RoutineRequestCardData;
   /** Staged learned skill; enabled only after the user confirms this card. */
   skillRequest?: SkillRequestCardData;
+  /** Company layer: the rule that sent this card to the owner, already
+   * localized (e.g. "对外发布一律要你批"). Cards with a rule carry no allowKey,
+   * so they never offer "always allow". */
+  rule?: string;
+  /** Company layer: the decision (决议 #n) answering this card recorded. */
+  decisionId?: number;
 }
 
 export interface ConnectorCardData {

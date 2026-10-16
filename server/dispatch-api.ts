@@ -1,11 +1,11 @@
 // HTTP surface of the dispatch hub, kept out of index.ts so the harness only
-// wires it in. Public routes serve the workbench; the internal route is what
-// a Chief's submit_plan tool calls (index.ts has already checked the comms
-// token for every /api/internal/* request before handing one over).
+// wires it in. Public routes serve the workbench; the internal routes are what
+// a Chief's submit_plan / add_people tools call (index.ts has already checked
+// the comms token for every /api/internal/* request before handing one over).
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { t } from "../shared/i18n.ts";
-import type { DispatchRun } from "../shared/dispatch-types.ts";
+import type { DispatchDiagnosis, DispatchRun } from "../shared/dispatch-types.ts";
 import type { Dispatcher } from "./dispatch.ts";
 
 export interface DispatchApiDeps {
@@ -20,8 +20,14 @@ export interface DispatchApiDeps {
   modelLabel(botId: string): string | undefined;
 }
 
-const RUN_ACTION = /^\/api\/dispatch\/runs\/([\w-]+)\/(approve|cancel)$/;
+const RUN_ACTION = /^\/api\/dispatch\/runs\/([\w-]+)\/(approve|cancel|diagnose|amend)$/;
 const RETRY = /^\/api\/dispatch\/runs\/([\w-]+)\/subtasks\/([\w-]+)\/retry$/;
+
+const optionalNumber = (value: unknown): number | undefined => {
+  if (value === undefined || value === null || value === "") return undefined;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : undefined;
+};
 
 /** Handle a dispatch route. Returns false when `path` is not one. */
 export async function handleDispatchApi(
@@ -36,6 +42,8 @@ export async function handleDispatchApi(
   const { dispatcher, json } = deps;
 
   if (method === "GET" && path === "/api/dispatch/state") {
+    // the workbench polls this: a squad's 30-minute review lands here too
+    dispatcher.checkReviews();
     json(res, 200, {
       runs: dispatcher.list(),
       routes: dispatcher.routes(),
@@ -74,6 +82,20 @@ export async function handleDispatchApi(
   const action = method === "POST" ? RUN_ACTION.exec(path) : null;
   if (action) {
     const [, runId, verb] = action;
+    if (verb === "diagnose") {
+      // body (optional): { add } = "add N people", { total } = "up to N people"
+      const body = (await deps.readBody(req)) ?? {};
+      const result = dispatcher.diagnose(runId!, { add: optionalNumber(body.add), total: optionalNumber(body.total) });
+      json(res, "error" in result ? 404 : 200, result);
+      return true;
+    }
+    if (verb === "amend") {
+      // the owner's call from the workbench always goes through
+      const body = (await deps.readBody(req)) ?? {};
+      const result = dispatcher.amend(runId!, Number(body.add), { by: "owner" });
+      json(res, "error" in result ? 400 : 200, result);
+      return true;
+    }
     const result = verb === "approve" ? dispatcher.approve(runId!) : await dispatcher.cancel(runId!);
     json(res, "error" in result ? 400 : 200, "error" in result ? result : { run: result });
     return true;
@@ -108,7 +130,66 @@ export async function handleDispatchApi(
     return true;
   }
 
+  // add_people: a chief asks to speed up one of its own runs
+  if (method === "POST" && path === "/api/internal/dispatch/amend") {
+    const body = await deps.readBody(req);
+    const fromBotId = String(body.fromBotId ?? "");
+    if (!deps.botName(fromBotId)) {
+      json(res, 403, { error: "unknown sender" });
+      return true;
+    }
+    const named = String(body.runId ?? "").trim();
+    const run = named
+      ? dispatcher.get(named)
+      : dispatcher.list().find((entry) => entry.chiefBotId === fromBotId && (entry.status === "running" || entry.status === "awaiting-approval"));
+    if (!run || run.chiefBotId !== fromBotId) {
+      json(res, 200, { error: named ? `Run ${named} is not one of your dispatch runs.` : "You have no dispatch run in progress." });
+      return true;
+    }
+    const asked = optionalNumber(body.add);
+    const diagnosis = dispatcher.diagnose(run.id, asked ? { add: asked } : {});
+    if ("error" in diagnosis) {
+      json(res, 200, { error: diagnosis.error });
+      return true;
+    }
+    if (diagnosis.verdict !== "add-helps" || !diagnosis.suggestion) {
+      json(res, 200, { error: `Adding people would not help: ${diagnosis.reason ?? ""}`.trim(), checks: checkLines(diagnosis) });
+      return true;
+    }
+    const result = dispatcher.amend(run.id, asked ?? diagnosis.suggestion.add, { by: "chief", botId: fromBotId });
+    if ("error" in result) {
+      json(res, 200, { error: result.error, checks: checkLines(diagnosis) });
+      return true;
+    }
+    json(res, 200, {
+      runId: run.id,
+      squad: result.squad.name,
+      added: result.added.map((id) => ({ name: deps.botName(id) ?? id, model: deps.modelLabel(id) })),
+      moved: result.moved.length,
+      etaBefore: result.squad.etaBefore,
+      etaAfter: result.squad.etaAfter,
+      checks: checkLines(diagnosis),
+    });
+    return true;
+  }
+
+  // the org chief's list_bots: who it can plan through
+  if (method === "GET" && path === "/api/internal/dispatch/team") {
+    const self = url.searchParams.get("self") ?? "";
+    if (!deps.botName(self)) {
+      json(res, 403, { error: "unknown sender" });
+      return true;
+    }
+    json(res, 200, { orgChief: dispatcher.isOrgChief(self), ...dispatcher.chiefContext(self) });
+    return true;
+  }
+
   return false;
+}
+
+/** The four answers as plain lines for a planning model. */
+function checkLines(diagnosis: DispatchDiagnosis): string[] {
+  return diagnosis.checks.map((check) => `${check.ok ? "ok" : "PROBLEM"} ${check.id}: ${check.finding}${check.evidence ? ` (${check.evidence})` : ""}`);
 }
 
 /** What submit_plan reports back to the planning model. */

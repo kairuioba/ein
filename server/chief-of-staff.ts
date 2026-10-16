@@ -32,7 +32,15 @@ export interface ChiefDispatchOptions {
   /** The dispatcher may create specialists when nobody fits. */
   autoCreate: boolean;
   maxSubtasks: number;
+  /** Set for the org's chief (主 Bot): the departments it plans through,
+   * each run by its lead (see Dispatcher.chiefContext). */
+  departments?: ReadonlyArray<{ section: string; leadName: string; leadTitle?: string; people: number }>;
+  /** A department lead doing a subtask for the org's chief: this turn has
+   * submit_plan (and list_bots) only. */
+  planOnly?: boolean;
 }
+
+const ROSTER_MAX_DEPARTMENTS = 20;
 
 export function chiefOfStaffSystemPrompt(
   chiefId: string,
@@ -62,7 +70,11 @@ export function chiefOfStaffSystemPrompt(
         .join("\n") + (overflow > 0 ? `\n- …and ${overflow} more (use list_bots for the full roster).` : "")
     : "- No other visible bots are available yet.";
 
-  const delegation = canDelegate
+  const departments = dispatch?.departments?.length ? dispatch.departments : undefined;
+  const planOnly = Boolean(dispatch?.planOnly && dispatch.enabled && canDelegate);
+  const delegation = planOnly
+    ? "You are doing a subtask your department received from the company's chief. In this turn you may call submit_plan once to hand it to your own section's team — they run it, then you are asked for one consolidated result, which goes back automatically — or do it yourself and reply with the finished result. delegate_bot, ask_bot and create_bot are not available in this turn."
+    : canDelegate
     ? [
         "Use list_bots to confirm the live roster and IDs. When assigning work to a teammate, use delegate_bot: it returns immediately, keeps you available to the user, and delivers the teammate's completed result back into this conversation automatically.",
         "After delegate_bot accepts the task, acknowledge the handoff and continue with any independent work or end your turn. Do not call wait_delegation or repeatedly poll check_delegation in the same turn.",
@@ -73,24 +85,42 @@ export function chiefOfStaffSystemPrompt(
       ].join(" ")
     : "Your current engine cannot contact teammates. Be honest about that limitation and ask the user to choose a delegation-compatible engine before promising coordinated work.";
 
-  const planning = canDelegate && dispatch?.enabled
+  const planning = canDelegate && dispatch?.enabled && !planOnly
     ? [
         "AUTOMATIC DISPATCH: whenever a request contains two or more distinct pieces of work, or would benefit from different specialists, do not do it all yourself and do not send several delegate_bot calls — call submit_plan ONCE with the whole plan.",
         "Break the goal into concrete subtasks with a self-contained brief each (the specialist cannot see this conversation), the role it needs, its needs and difficulty (these pick the model), and depends_on for any subtask that needs another's result.",
+        departments
+          ? "You plan across departments: give each department's part of the work to its lead by setting assignee to the lead's name (or the department's name). The lead plans that part with its own team and its result comes back to you; do not assign a department's members directly."
+          : "",
         dispatch.autoCreate
           ? "OpenMausBot assigns each subtask to the best-fitting teammate and creates a specialist with a recommended model when nobody fits, so describe roles precisely instead of creating bots yourself."
           : "Creating specialists is turned off: name an assignee from list_bots for any subtask your current team cannot obviously cover.",
         `Keep a plan to at most ${dispatch.maxSubtasks} subtasks. Handle a small, single-step request yourself without a plan.`,
         "After submit_plan succeeds, summarize the plan for the user in a few lines and end your turn. The subtasks run in the background; when they finish you will receive their results and must reply with one consolidated deliverable.",
-      ].join(" ")
+        "If the user says a running plan is too slow or asks for more people, call add_people: it checks whether more people would actually help before adding any.",
+      ].filter(Boolean).join(" ")
+    : "";
+
+  const departmentRoster = departments
+    ? [
+        "Departments (each run by its lead, who reports to you):",
+        ...departments.slice(0, ROSTER_MAX_DEPARTMENTS).map((department) => {
+          const lead = clip(department.leadName, ROSTER_NAME_MAX);
+          const role = department.leadTitle?.trim() ? ` — ${clip(department.leadTitle.trim(), ROSTER_ROLE_MAX)}` : "";
+          return `- ${clip(department.section, ROSTER_NAME_MAX)}: lead ${lead}${role} (${department.people} people)`;
+        }),
+      ].join("\n")
     : "";
 
   return [
-    `You are the Chief of Staff for the ${sectionName} section. You are the user's primary contact for this section's team of bots.`,
+    departments
+      ? "You are the company's chief (主 Bot) and the user's primary contact. Departments run their own teams; you set the plan across them, follow progress, and report back."
+      : `You are the Chief of Staff for the ${sectionName} section. You are the user's primary contact for this section's team of bots.`,
     "Own the outcome: understand the request, decide what to handle yourself, coordinate the right specialists when useful, and return one concise consolidated answer.",
     "Do not delegate trivial work merely to appear busy. Never invent a teammate's progress or result. Normal permission and approval rules still apply.",
     delegation,
     planning,
+    departmentRoster,
     `Current ${sectionName} section team:`,
     roster,
     trustedOpenMausStatus,

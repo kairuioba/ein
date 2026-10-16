@@ -2,7 +2,8 @@
 //
 // Two ways in — the bot is in auto mode, or the user pressed "Always
 // allow" for that one tool — and one way out: anything that reads as
-// destructive stops and asks a human anyway.
+// destructive stops and asks a human anyway, and so does anything that
+// publishes outside (sends, posts, goes live): that one is the owner's.
 //
 // The guard is deliberately tiny and literal. It is NOT a security
 // boundary (an agent set on damage has a thousand spellings for `rm`);
@@ -32,6 +33,58 @@ const SENSITIVE = [
   /\bcredentials?\.json\b|\bserviceaccount\b/i,
 ];
 
+// Publishing outside: anything that sends, posts or goes live in the world —
+// email, chat messages to people, social posts, releases and deploys. The
+// company rule is that these always reach the owner (OrgRules
+// .externalPublishNeedsOwner, fixed true): no auto mode, no "always allow",
+// no reviewer may answer for them. Deliberately literal and biased towards
+// asking; a false match costs one card, a miss sends something in the
+// owner's name. Tool names and the request text are matched separately, so
+// a bot grepping its code for `send_message` is not mistaken for one sending.
+//
+// The part of a Composio action slug that sends, posts or goes live:
+// GMAIL_SEND_EMAIL, SLACK_SENDS_A_MESSAGE_TO_A_SLACK_CHANNEL,
+// SLACK_CHAT_POST_MESSAGE, TWITTER_CREATION_OF_A_POST,
+// LINKEDIN_CREATE_LINKED_IN_POST, NETLIFY_DEPLOY_SITE, … — but not
+// REDDIT_GET_POST, TWITTER_GET_TWEETS or VERCEL_GET_DEPLOYMENT, which only read.
+const SENDING_ACTION =
+  "(?:(?:SENDS?|PUBLISH(?:ES)?|BROADCASTS?|RETWEETS?|FORWARD|REPLY|(?:RE)?DEPLOY)(?:_[A-Z0-9]+)*" +
+  "|(?:POST|SCHEDULE)_(?:A_|AN_)?(?:MESSAGE|TWEET|STATUS|UPDATE|COMMENT|REPLY|PHOTO|VIDEO|STORY|TO)(?:_[A-Z0-9]+)*" +
+  "|(?:CREATE|CREATION_OF|SUBMIT|ADD|NEW|TRIGGER)(?:_[A-Z0-9]+)*?_(?:POST|TWEET|STORY|REEL|CAMPAIGN|RELEASE|DEPLOYMENT|MESSAGE|COMMENT))";
+const slugThatSends = (app: string) => `${app}(?:_[A-Z0-9]+)*?_${SENDING_ACTION}`;
+const PUBLISHING_APPS =
+  "(?:GMAIL|OUTLOOK|MICROSOFT_OUTLOOK|SLACK|SLACKBOT|DISCORD|DISCORDBOT|TELEGRAM|WHATSAPP|MICROSOFT_TEAMS|GOOGLECHAT|TWITTER|" +
+  "LINKEDIN|FACEBOOK|INSTAGRAM|THREADS|REDDIT|YOUTUBE|TIKTOK|PINTEREST|MASTODON|BLUESKY|MEDIUM|WORDPRESS|GHOST|MAILCHIMP|" +
+  "SENDGRID|MAILGUN|RESEND|POSTMARK|BREVO|TWILIO|HUBSPOT|INTERCOM|ZENDESK|FRESHDESK|LARK|FEISHU|DINGTALK|WECHAT|WECOM|WEIBO|" +
+  "GITHUB|GITLAB|VERCEL|NETLIFY|RENDER|RAILWAY|HEROKU|CLOUDFLARE)";
+const EXTERNAL_PUBLISH_TOOL = [
+  // a Composio action as the tool itself (optionally behind an MCP prefix)
+  new RegExp(`^(?:mcp__[\\w-]+__)?${slugThatSends("[A-Z][A-Z0-9]*")}$`),
+  // snake_case tools from other MCP servers: send_email, post_message, publish_post, …
+  /(?:^|[^a-z0-9])(?:send|post|publish|tweet|broadcast|reply|forward)_(?:an?_)?(?:e?mail|message|msg|dm|sms|text|tweet|post|status|newsletter|campaign|comment|reply|notification|invite|invitation)s?(?:$|[^a-z0-9])/i,
+  /(?:^|[^a-z0-9])(?:post|publish|share)_(?:to_|on_)?(?:twitter|x|weibo|xiaohongshu|xhs|douyin|wechat|weixin|linkedin|facebook|instagram|reddit|threads|tiktok|bilibili|zhihu|mastodon|bluesky)(?:$|[^a-z0-9])/i,
+  // publish / deploy tools: deploy, deploy_project, publish_site, vercel_deploy, create_deployment
+  /(?:^|__)(?:publish|deploy)(?:_[a-z0-9]+)*$|_(?:publish|deploy)$|(?:^|__|_)(?:create|trigger|start)_deployment$/i,
+];
+const EXTERNAL_PUBLISH_TEXT = [
+  // Composio actions inside COMPOSIO_MULTI_EXECUTE_TOOL's arguments: a
+  // messaging, posting or hosting app's slug, or any quoted sending slug
+  new RegExp(`\\b${slugThatSends(PUBLISHING_APPS)}\\b`),
+  new RegExp(`["']${slugThatSends("[A-Z][A-Z0-9]*")}["']`),
+  // command lines: mail senders, package and app releases, deploys
+  /(?:^|[;&|(]\s*|\s)(?:sendmail|mailx|mutt|swaks|msmtp)\b/,
+  /(?:^|[;&|(]\s*)mail\s+-s\b/,
+  /\b(?:npm|pnpm|yarn|bun)\s+(?:npm\s+)?publish\b|\b(?:cargo|poetry|flit)\s+publish\b|\btwine\s+upload\b|\bgem\s+push\b|\bdotnet\s+nuget\s+push\b|\bdocker\s+push\b/,
+  /\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:deploy|release)(?::[\w-]+)?\b/,
+  /\b(?:vercel|netlify|firebase|flyctl|fly|wrangler|serverless|sls|amplify|eb|railway|cf|surge)\s+(?:[^|;&\n]*\s)?(?:deploy|publish|up|push|--prod)\b/,
+  /\bgh\s+release\s+create\b|\bgit\s+push\s+(?:\S+\s+)*(?:heroku|dokku|production|prod|live)\b/,
+  /\b(?:terraform|tofu)\s+apply\b|\bpulumi\s+up\b|\bkubectl\s+(?:apply|rollout\s+restart|set\s+image)\b|\bhelm\s+(?:upgrade|install)\b/,
+  /\bfastlane\s+(?:deliver|pilot|supply|upload_to_app_store|upload_to_play_store)\b|\beas\s+submit\b|\baltool\s+--upload-app\b/,
+  // raw HTTP to messaging and posting endpoints
+  /hooks\.slack\.com\/|discord(?:app)?\.com\/api\/webhooks\/|api\.telegram\.org\/bot|oapi\.dingtalk\.com\/robot\/send|qyapi\.weixin\.qq\.com\/cgi-bin\/webhook\/send|open\.(?:feishu\.cn|larksuite\.com)\/open-apis\/bot\/v2\/hook/i,
+  /api\.sendgrid\.com\/v3\/mail\/send|api\.mailgun\.net\/v3\/\S+\/messages|api\.resend\.com\/emails|api\.postmarkapp\.com\/email|api\.twilio\.com\/\S+\/Messages|api\.(?:twitter|x)\.com\/2\/tweets|graph\.facebook\.com\/\S+\/(?:feed|media_publish|photos|messages)|api\.linkedin\.com\/(?:v2\/ugcPosts|rest\/posts)/i,
+];
+
 /** First matching pattern's source, so a verdict can NAME the rule that
  * made it — the decision log's whole value is "which rule", and deriving
  * the match a second time at the call site is how the log and the verdict
@@ -47,6 +100,16 @@ export function looksSensitive(text: string): boolean {
 
 export function looksDestructive(text: string): boolean {
   return matchFirst(DESTRUCTIVE, text) !== null;
+}
+
+/** The external-publishing rule a request matches (tool name or request
+ * text), or null. Such a request always goes to the owner. */
+export function externalPublishRule(tool: string, summary: string): string | null {
+  return matchFirst(EXTERNAL_PUBLISH_TOOL, tool) ?? matchFirst(EXTERNAL_PUBLISH_TEXT, summary);
+}
+
+export function looksExternalPublish(tool: string, summary: string): boolean {
+  return externalPublishRule(tool, summary) !== null;
 }
 
 /** The key an "Always allow" remembers.
@@ -79,13 +142,16 @@ export interface AutoApprover {
 
 /** Why a verdict landed the way it did. `unattended-block` exists only in
  * contrast: a grant WOULD have fired, and the only thing that stopped it
- * was that nobody started this turn — the most audit-worthy card of all. */
+ * was that nobody started this turn — the most audit-worthy card of all.
+ * `external-publish` is the company rule that posting, emailing and going
+ * live always reach the owner. */
 export type AutoVerdictSource =
   | "always-allow"
   | "auto-mode"
   | "unattended-block"
   | "local-computer-block"
   | "destructive-guard"
+  | "external-publish"
   | "sensitive-guard"
   | "no-grant";
 
@@ -119,14 +185,16 @@ export function autoVerdict(
   // the guards outrank the grants, so an "always allow" can never widen
   // into them
   const destructive = matchFirst(DESTRUCTIVE, summary) ?? matchFirst(DESTRUCTIVE, tool);
-  const sensitive = destructive ? null : matchFirst(SENSITIVE, summary);
+  // publishing outside is the owner's call in every mode: no grant reaches it
+  const external = destructive ? null : externalPublishRule(tool, summary);
+  const sensitive = destructive || external ? null : matchFirst(SENSITIVE, summary);
   // The grant is computed even when a hard block will refuse it: the row
   // worth auditing is "this WOULD have auto-approved, and only the block
   // stood in the way", which cannot be told apart from an ordinary
   // "nobody granted this" card without knowing both halves.
   const key = approvalKey(tool, summary, context?.scope);
   const grant =
-    destructive || sensitive
+    destructive || external || sensitive
       ? null
       : bot.alwaysAllow?.includes(key)
         ? { approve: t("auto-approved {key} (always allowed)", { key }), source: "always-allow" as const, rule: key }
@@ -143,6 +211,7 @@ export function autoVerdict(
     // thing that changed the outcome.
     if (grant) return { approve: null, source: "unattended-block", rule: grant.rule };
     if (destructive) return { approve: null, source: "destructive-guard", rule: destructive };
+    if (external) return { approve: null, source: "external-publish", rule: external };
     if (sensitive) return { approve: null, source: "sensitive-guard", rule: sensitive };
     return { approve: null, source: "no-grant" };
   }
@@ -152,10 +221,12 @@ export function autoVerdict(
     // (click/type) may auto-approve; destructive/sensitive still card.
     if (grant) return { approve: null, source: "local-computer-block", rule: grant.rule };
     if (destructive) return { approve: null, source: "destructive-guard", rule: destructive };
+    if (external) return { approve: null, source: "external-publish", rule: external };
     if (sensitive) return { approve: null, source: "sensitive-guard", rule: sensitive };
     return { approve: null, source: "no-grant" };
   }
   if (destructive) return { approve: null, source: "destructive-guard", rule: destructive };
+  if (external) return { approve: null, source: "external-publish", rule: external };
   if (sensitive) return { approve: null, source: "sensitive-guard", rule: sensitive };
   if (grant) return { approve: grant.approve, source: grant.source, rule: grant.rule };
   return { approve: null, source: "no-grant" };

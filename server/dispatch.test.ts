@@ -1,23 +1,31 @@
 // Dispatch hub: plan validation, team matching and specialist creation,
 // dependency-ordered execution, retries, skipping, routes, and synthesis —
-// against an in-memory host that stands in for the harness.
-import { mkdtempSync } from "node:fs";
+// against an in-memory host that stands in for the harness. Also: turns
+// whose setup fails after startTurn resolved, the owner's Stop, the org's
+// chief planning through department leads, and adding people mid-run.
+import { mkdtempSync, writeFileSync } from "node:fs";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { Recommendation } from "../shared/model-recommender.ts";
+import { DEFAULT_ORG_RULES } from "../shared/org-types.ts";
+import { handleDispatchApi } from "./dispatch-api.ts";
 import {
   Dispatcher,
   dispatchSettings,
   findCycle,
+  readOrgSnapshot,
   roleSimilarity,
   uniqueName,
   validatePlan,
   type DispatchBot,
   type DispatchHost,
+  type DispatchOrgEvent,
   type DispatchRun,
   type DispatchSettings,
+  type DispatchTurnOptions,
 } from "./dispatch.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
 
@@ -26,7 +34,11 @@ interface Turn {
   text: string;
   threadId: string;
   continuation?: boolean;
+  mayPlan?: boolean;
+  sourceThreadId?: string;
 }
+
+const MIN = 60_000;
 
 class FakeHost implements DispatchHost {
   bots_: DispatchBot[] = [];
@@ -34,8 +46,15 @@ class FakeHost implements DispatchHost {
   chips: Array<{ threadId: string; label: string; ok?: boolean }> = [];
   created: DispatchBot[] = [];
   interrupted: string[] = [];
+  events: DispatchOrgEvent[] = [];
   broadcasts = 0;
   failStart = new Set<string>();
+  /** botId → messages: the next turns resolve, then their setup fails (the
+   * harness's async catch path, which never emits turn.completed) */
+  setupFailures = new Map<string, string[]>();
+  /** threadId → what that task conversation has spent, USD */
+  costs = new Map<string, number>();
+  dispatcher?: Dispatcher;
   maxBots = 100;
   settingsValue: DispatchSettings = dispatchSettings({});
   recommendation: Recommendation | null = {
@@ -69,11 +88,21 @@ class FakeHost implements DispatchHost {
   createTask(botId: string, _title: string) {
     return this.bot(botId) ? { threadId: `task-${++this.taskCount}` } : null;
   }
-  async startTurn(botId: string, text: string, opts: { threadId: string; continuation?: boolean }) {
+  async startTurn(botId: string, text: string, opts: DispatchTurnOptions) {
     if (this.failStart.has(botId)) throw new Error("engine unavailable");
     const bot = this.bot(botId)!;
     bot.busy = true;
-    this.turns.push({ botId, text, threadId: opts.threadId, continuation: opts.continuation });
+    this.turns.push({ botId, text, threadId: opts.threadId, continuation: opts.continuation, mayPlan: opts.mayPlan, sourceThreadId: opts.sourceThreadId });
+    const failure = this.setupFailures.get(botId)?.shift();
+    if (failure !== undefined) {
+      // like index.ts: the setup runs after startTurn resolved; on failure the
+      // bot goes idle, onDispatchError fires, and the idle hook follows
+      setTimeout(() => {
+        bot.busy = false;
+        opts.onError?.(failure);
+        queueMicrotask(() => this.dispatcher?.onBotIdle(botId));
+      }, 0);
+    }
   }
   async interrupt(_botId: string, threadId: string) {
     this.interrupted.push(threadId);
@@ -91,11 +120,17 @@ class FakeHost implements DispatchHost {
   settings() {
     return this.settingsValue;
   }
-  /** Settle the worker turn running in `threadId`. */
-  finish(dispatcher: Dispatcher, threadId: string, ok: boolean, reply: string) {
-    const turn = this.turns.find((entry) => entry.threadId === threadId)!;
+  usage(_botId: string, threadId: string) {
+    return this.costs.has(threadId) ? { costUsd: this.costs.get(threadId)! } : null;
+  }
+  event(event: DispatchOrgEvent) {
+    this.events.push(event);
+  }
+  /** Settle the latest turn running in `threadId`. */
+  finish(dispatcher: Dispatcher, threadId: string, ok: boolean, reply: string, reason: string | undefined = ok ? undefined : "provider error") {
+    const turn = this.turns.filter((entry) => entry.threadId === threadId).at(-1)!;
     this.bot(turn.botId)!.busy = false;
-    dispatcher.onTurnSettled(threadId, ok, reply, ok ? undefined : "provider error");
+    dispatcher.onTurnSettled(threadId, ok, reply, reason);
     dispatcher.onBotIdle(turn.botId);
   }
   workerTurns() {
@@ -104,6 +139,10 @@ class FakeHost implements DispatchHost {
 }
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+/** Let queued microtasks and the fake host's async setup failures run. */
+const settle = async () => {
+  for (let i = 0; i < 5; i += 1) await flush();
+};
 
 describe("plan validation", () => {
   it("accepts a DAG and normalizes fields", () => {
@@ -153,6 +192,13 @@ describe("plan validation", () => {
     const plan = validatePlan({ goal: "g", subtasks: JSON.stringify([{ title: "A", brief: "b" }]) }, 8);
     expect("error" in plan).toBe(false);
   });
+
+  it("allows plans of up to 30 subtasks", () => {
+    expect(dispatchSettings({ maxSubtasks: 99 }).maxSubtasks).toBe(30);
+    expect(dispatchSettings({ maxSubtasks: 24 }).maxSubtasks).toBe(24);
+    const thirty = Array.from({ length: 30 }, (_, i) => ({ title: `P${i + 1}`, brief: "做一页" }));
+    expect("error" in validatePlan({ goal: "24 页详情页", subtasks: thirty }, dispatchSettings({ maxSubtasks: 30 }).maxSubtasks)).toBe(false);
+  });
 });
 
 describe("matching helpers", () => {
@@ -170,6 +216,20 @@ describe("matching helpers", () => {
   it("clamps settings", () => {
     expect(dispatchSettings({ maxConcurrent: 99, policy: "nonsense" as never })).toMatchObject({ maxConcurrent: 8, policy: "balanced" });
   });
+
+  it("reads an org config defensively", () => {
+    expect(readOrgSnapshot(undefined)).toMatchObject({ chiefBotId: null, departments: [], rules: DEFAULT_ORG_RULES });
+    expect(readOrgSnapshot("garbage")).toMatchObject({ chiefBotId: null });
+    const org = readOrgSnapshot({
+      chiefBotId: " boss ",
+      departments: [{ section: "技术部", budgetPerDay: 20, color: "#F59E0B" }, { section: "" }, null, { section: 3 }],
+      rules: { spanOfControl: 1, budgetPerDay: -5, chiefMay: { addPeople: false } },
+    });
+    expect(org.chiefBotId).toBe("boss");
+    expect(org.departments).toEqual([{ section: "技术部", budgetPerDay: 20 }]);
+    // nonsense numbers fall back; known flags are kept
+    expect(org.rules).toMatchObject({ spanOfControl: 5, budgetPerDay: 60, chiefMay: { addPeople: false, newSpecialist: true, switchModel: false } });
+  });
 });
 
 describe("Dispatcher", () => {
@@ -184,6 +244,7 @@ describe("Dispatcher", () => {
     host.add({ id: "writer", name: "小文", title: "文案策划", description: "负责公众号与发布会文案", section: "市场部" });
     host.add({ id: "other", name: "Ops", title: "运维工程师", section: "技术部" });
     dispatcher = new Dispatcher(host, dir);
+    host.dispatcher = dispatcher;
     dispatcher.load();
   });
 
@@ -255,7 +316,7 @@ describe("Dispatcher", () => {
     expect(result.created).toEqual([host.created[0]!.id]);
   });
 
-  it("runs subtasks in dependency order and feeds results forward", async () => {
+  it("runs subtasks in dependency order, feeds results forward, and is done when the report is", async () => {
     const result = submit([
       { id: "research", title: "竞品调研", brief: "调研三家竞品", role: "文案策划" },
       { id: "copy", title: "发布会文案", brief: "根据调研写文案", role: "文案策划", depends_on: ["research"] },
@@ -266,6 +327,7 @@ describe("Dispatcher", () => {
     const first = host.workerTurns()[0]!;
     expect(first.botId).toBe("writer");
     expect(first.text).toContain("竞品调研");
+    expect(first.sourceThreadId).toBe("chief-thread");
     host.finish(dispatcher, first.threadId, true, "竞品A 99元，竞品B 129元");
     await flush();
     expect(host.workerTurns()).toHaveLength(2);
@@ -278,7 +340,14 @@ describe("Dispatcher", () => {
     const synthesis = host.turns.find((turn) => turn.continuation);
     expect(synthesis).toMatchObject({ botId: "chief", threadId: "chief-thread" });
     expect(synthesis!.text).toContain("发布会文案定稿");
-    expect(dispatcher.get(result.run.id)!.status).toBe("done");
+    // the run is done when the report turn completes, not when it starts
+    expect(dispatcher.get(result.run.id)!.status).toBe("synthesizing");
+    host.finish(dispatcher, "chief-thread", true, "两份材料都已完成：……");
+    expect(dispatcher.get(result.run.id)).toMatchObject({ status: "done", report: "两份材料都已完成：……", finishedAt: expect.any(Number) });
+    // every subtask records when it started and finished
+    for (const subtask of dispatcher.get(result.run.id)!.subtasks) {
+      expect(subtask.finishedAt! >= subtask.startedAt!).toBe(true);
+    }
   });
 
   it("runs independent subtasks in parallel up to the concurrency limit", async () => {
@@ -311,6 +380,7 @@ describe("Dispatcher", () => {
     await flush();
     const run = dispatcher.get(result.run.id)!;
     expect(run.subtasks.map((subtask) => subtask.status)).toEqual(["failed", "skipped"]);
+    expect(run.subtasks.every((subtask) => typeof subtask.finishedAt === "number")).toBe(true);
     expect(run.status).toBe("failed");
     expect(host.turns.some((turn) => turn.continuation)).toBe(false);
   });
@@ -397,5 +467,536 @@ describe("Dispatcher", () => {
     host.bots_ = host.bots_.filter((bot) => bot.id !== "writer");
     dispatcher.onBotDeleted("writer");
     expect(dispatcher.get(result.run.id)!.subtasks[0]!.status).toBe("failed");
+  });
+
+  // ── turns that never report back, and the owner's Stop ──
+
+  describe("settling every turn", () => {
+    it("settles a subtask whose setup fails after startTurn resolved", async () => {
+      host.setupFailures.set("writer", ["connected apps could not start"]);
+      host.settingsValue = dispatchSettings({ maxAttempts: 1, autoSynthesize: false });
+      const result = submit([{ id: "a", title: "文案", brief: "写", role: "文案策划" }]);
+      if ("error" in result) throw new Error(result.error);
+      await settle();
+      const run = dispatcher.get(result.run.id)!;
+      expect(run.subtasks[0]).toMatchObject({ status: "failed", error: "connected apps could not start", finishedAt: expect.any(Number) });
+      expect(run.status).toBe("failed");
+      expect(dispatcher._watching()).toEqual([]);
+      // a late, duplicate report of the same failure changes nothing
+      dispatcher.onTurnSettled(run.subtasks[0]!.threadId!, false, "", "late");
+      expect(run.subtasks[0]).toMatchObject({ status: "failed", attempts: 1, error: "connected apps could not start" });
+    });
+
+    it("retries after an asynchronous setup failure and finishes the run", async () => {
+      host.setupFailures.set("writer", ["provider instance is unavailable"]);
+      const result = submit([{ id: "a", title: "文案", brief: "写", role: "文案策划" }]);
+      if ("error" in result) throw new Error(result.error);
+      await settle();
+      expect(host.workerTurns()).toHaveLength(2);
+      expect(host.chips.some((chip) => chip.label.includes("will retry") && chip.label.includes("provider instance is unavailable"))).toBe(true);
+      host.finish(dispatcher, host.workerTurns()[1]!.threadId, true, "文案");
+      await flush();
+      host.finish(dispatcher, "chief-thread", true, "汇总");
+      expect(dispatcher.get(result.run.id)).toMatchObject({ status: "done", report: "汇总" });
+      expect(dispatcher.get(result.run.id)!.subtasks[0]).toMatchObject({ status: "done", attempts: 2 });
+    });
+
+    it("never retries a subtask the owner stopped", async () => {
+      host.add({ id: "w2", name: "设计", title: "视觉设计师", section: "市场部" });
+      const result = submit([
+        { id: "a", title: "文案", brief: "写", role: "文案策划" },
+        { id: "b", title: "海报", brief: "画", role: "视觉设计师" },
+        { id: "c", title: "推文", brief: "用文案发推", role: "文案策划", depends_on: ["a"] },
+      ]);
+      if ("error" in result) throw new Error(result.error);
+      await flush();
+      const [copy, poster] = host.workerTurns();
+      host.finish(dispatcher, copy!.threadId, false, "", "interrupted");
+      await flush();
+      const run = dispatcher.get(result.run.id)!;
+      expect(run.subtasks[0]).toMatchObject({ status: "canceled", error: "Stopped by you", attempts: 1 });
+      expect(run.subtasks[2]!.status).toBe("skipped");
+      expect(host.workerTurns()).toHaveLength(2);
+      expect(host.chips.some((chip) => chip.label.includes("will not be retried"))).toBe(true);
+      // the rest of the run carries on and still reports
+      host.finish(dispatcher, poster!.threadId, true, "海报");
+      await flush();
+      expect(run.status).toBe("synthesizing");
+      // the owner can still retry it from the workbench
+      expect(dispatcher.retry(run.id, "a")).toMatchObject({ status: "running" });
+    });
+
+    it("treats an engine's ok-but-cancelled settle as a stop, not a finished deliverable", async () => {
+      host.settingsValue = dispatchSettings({ autoSynthesize: false });
+      const result = submit([{ id: "a", title: "文案", brief: "写", role: "文案策划" }]);
+      if ("error" in result) throw new Error(result.error);
+      await flush();
+      host.finish(dispatcher, host.workerTurns()[0]!.threadId, true, "半截文案", "cancelled");
+      const subtask = dispatcher.get(result.run.id)!.subtasks[0]!;
+      expect(subtask).toMatchObject({ status: "canceled", error: "Stopped by you" });
+      expect(subtask.result).toBeUndefined();
+      expect(host.workerTurns()).toHaveLength(1);
+    });
+
+    it("does not retry a turn stopped during its setup", async () => {
+      // index.ts reports a setup the owner cancelled as "interrupted"
+      host.setupFailures.set("writer", ["interrupted"]);
+      const result = submit([{ id: "a", title: "文案", brief: "写", role: "文案策划" }]);
+      if ("error" in result) throw new Error(result.error);
+      await settle();
+      expect(dispatcher.get(result.run.id)!.subtasks[0]).toMatchObject({ status: "canceled", attempts: 1 });
+      expect(host.workerTurns()).toHaveLength(1);
+    });
+
+    it("settles a watched turn whose bot went idle without a turn.completed", async () => {
+      const result = submit([{ id: "a", title: "文案", brief: "写", role: "文案策划" }]);
+      if ("error" in result) throw new Error(result.error);
+      await flush();
+      // a provider reload released the bot but no turn.completed came
+      host.bot("writer")!.busy = false;
+      dispatcher.onBotIdle("writer");
+      expect(dispatcher.get(result.run.id)!.subtasks[0]).toMatchObject({ status: "running", attempts: 2 });
+      expect(host.workerTurns()).toHaveLength(2);
+    });
+
+    it("posts the fallback when the report turn's setup fails after resolving", async () => {
+      host.setupFailures.set("chief", ["engine unavailable"]);
+      const result = submit([{ id: "a", title: "文案", brief: "写", role: "文案策划" }]);
+      if ("error" in result) throw new Error(result.error);
+      await flush();
+      host.finish(dispatcher, host.workerTurns()[0]!.threadId, true, "文案");
+      await settle();
+      const run = dispatcher.get(result.run.id)!;
+      expect(run).toMatchObject({ status: "done", synthesisStarted: false });
+      expect(run.report).toBeUndefined();
+      expect(host.chips.at(-1)).toMatchObject({ threadId: "chief-thread", label: "All subtasks finished — open the workbench to read the results" });
+      // the report's late turn.completed no longer touches the run
+      dispatcher.onTurnSettled("chief-thread", true, "迟到的汇总");
+      expect(run.report).toBeUndefined();
+    });
+
+    it("posts the fallback when the report turn cannot start at all", async () => {
+      host.failStart.add("chief");
+      const result = submit([{ id: "a", title: "文案", brief: "写", role: "文案策划" }]);
+      if ("error" in result) throw new Error(result.error);
+      await flush();
+      host.finish(dispatcher, host.workerTurns()[0]!.threadId, true, "文案");
+      await settle();
+      expect(dispatcher.get(result.run.id)).toMatchObject({ status: "done", synthesisStarted: false });
+      expect(host.chips.some((chip) => chip.label.includes("open the workbench"))).toBe(true);
+    });
+
+    it("finishes a run whose report the owner stopped, without the fallback", async () => {
+      const result = submit([{ id: "a", title: "文案", brief: "写", role: "文案策划" }]);
+      if ("error" in result) throw new Error(result.error);
+      await flush();
+      host.finish(dispatcher, host.workerTurns()[0]!.threadId, true, "文案");
+      await flush();
+      const chips = host.chips.length;
+      host.finish(dispatcher, "chief-thread", false, "", "interrupted");
+      expect(dispatcher.get(result.run.id)!.status).toBe("done");
+      expect(host.chips.slice(chips).some((chip) => chip.label.includes("open the workbench"))).toBe(false);
+    });
+  });
+
+  // ── the org's chief (主 Bot) plans across departments ──
+
+  describe("org chief", () => {
+    const writeOrg = (org: Record<string, unknown>) => writeFileSync(join(dir, "org.json"), JSON.stringify(org));
+
+    beforeEach(() => {
+      host.add({ id: "boss", name: "总控台", title: "我的幕僚长", chiefOfStaff: true });
+      host.add({ id: "tech", name: "阿杰", title: "前端主管", description: "负责落地页和商品详情页的前端", chiefOfStaff: true, section: "技术部" });
+      host.add({ id: "fe1", name: "前端 1", title: "前端", description: "做商品详情页", section: "技术部" });
+      host.add({ id: "helper", name: "翻译", title: "翻译", description: "中英互译" });
+    });
+
+    const orgPlan = (subtasks: unknown[]) => dispatcher.submitPlan("boss", "boss-thread", { goal: "新品发布会全套材料", subtasks });
+
+    it("behaves as before without an org config: the chief's team is its own section", () => {
+      expect(dispatcher.isOrgChief("boss")).toBe(false);
+      expect(dispatcher.team("boss").map((bot) => bot.id)).toEqual(["helper"]);
+      expect(dispatcher.chiefContext("boss")).toEqual({});
+    });
+
+    it("reaches every department lead, the unsectioned bots and wired routes", () => {
+      writeOrg({ chiefBotId: "boss" });
+      expect(dispatcher.isOrgChief("boss")).toBe(true);
+      expect(dispatcher.team("boss").map((bot) => bot.id).sort()).toEqual(["chief", "helper", "tech"]);
+      dispatcher.setRoute("boss", "fe1", true);
+      dispatcher.setRoute("boss", "chief", false);
+      expect(dispatcher.team("boss").map((bot) => bot.id).sort()).toEqual(["fe1", "helper", "tech"]);
+      // a section chief's team is unchanged
+      expect(dispatcher.team("tech").map((bot) => bot.id).sort()).toEqual(["fe1", "other"]);
+      expect(dispatcher.chiefContext("boss").departments).toEqual([{ section: "技术部", leadId: "tech", leadName: "阿杰", leadTitle: "前端主管", people: 3 }]);
+    });
+
+    it("gives each department's part to its lead", () => {
+      writeOrg({ chiefBotId: "boss" });
+      const result = orgPlan([
+        { id: "page", title: "落地页", brief: "做发布会落地页", role: "前端工程师" },
+        { id: "copy", title: "发布会文案", brief: "写主持稿", role: "文案策划" },
+        { id: "qa", title: "上线检查", brief: "检查落地页", assignee: "技术部" },
+        { id: "en", title: "英文版", brief: "翻译新闻稿", role: "翻译" },
+      ]);
+      if ("error" in result) throw new Error(result.error);
+      expect(result.run.subtasks.map((subtask) => subtask.assigneeBotId)).toEqual(["tech", "chief", "tech", "helper"]);
+      expect(host.created).toHaveLength(0);
+      // the org chief need not be a chief of staff
+      host.bot("boss")!.chiefOfStaff = false;
+      expect("error" in orgPlan([{ id: "x", title: "英文版", brief: "翻译", role: "翻译" }])).toBe(false);
+    });
+
+    it("lets a lead plan its part with its own team; the subtask finishes with the lead's report", async () => {
+      writeOrg({ chiefBotId: "boss" });
+      const top = orgPlan([{ id: "page", title: "落地页", brief: "做发布会落地页", role: "前端工程师" }]);
+      if ("error" in top) throw new Error(top.error);
+      await flush();
+      const leadTurn = host.workerTurns()[0]!;
+      expect(leadTurn).toMatchObject({ botId: "tech", mayPlan: true, sourceThreadId: "boss-thread" });
+      expect(leadTurn.text).toContain("You lead the 技术部 department");
+      expect(leadTurn.text).toContain("submit_plan");
+      // from inside the subtask, the lead hands it to its team
+      const child = dispatcher.submitPlan("tech", leadTurn.threadId, {
+        goal: "落地页",
+        subtasks: [{ id: "build", title: "页面开发", brief: "写页面", role: "前端" }],
+      });
+      if ("error" in child) throw new Error(child.error);
+      expect(child.run).toMatchObject({ parentRunId: top.run.id, parentSubtaskId: "page", chiefBotId: "tech", sourceThreadId: leadTurn.threadId });
+      expect(child.run.subtasks[0]!.assigneeBotId).toBe("fe1");
+      expect(dispatcher.get(top.run.id)!.subtasks[0]!.childRunId).toBe(child.run.id);
+      // a second plan for the same subtask is refused
+      expect(dispatcher.submitPlan("tech", leadTurn.threadId, { goal: "again", subtasks: [{ title: "x", brief: "y" }] })).toMatchObject({
+        error: expect.stringContaining("already handed"),
+      });
+      // the lead's planning turn ends; the subtask keeps waiting on the team
+      host.finish(dispatcher, leadTurn.threadId, true, "已派给前端 1");
+      await flush();
+      expect(dispatcher.get(top.run.id)!.subtasks[0]!.status).toBe("running");
+      const workerTurn = host.workerTurns().find((turn) => turn.botId === "fe1")!;
+      // the lead's workers cannot plan
+      expect(workerTurn.mayPlan).toBeUndefined();
+      expect(dispatcher.submitPlan("tech", workerTurn.threadId, { goal: "x", subtasks: [{ title: "x", brief: "y" }] })).toMatchObject({
+        error: expect.stringContaining("dispatched subtask"),
+      });
+      host.finish(dispatcher, workerTurn.threadId, true, "页面完成");
+      await flush();
+      // the lead writes its department's report in the subtask's conversation
+      const leadReport = host.turns.find((turn) => turn.continuation && turn.botId === "tech")!;
+      expect(leadReport.threadId).toBe(leadTurn.threadId);
+      expect(leadReport.text).toContain("@总控台");
+      expect(leadReport.text).toContain("页面完成");
+      host.finish(dispatcher, leadTurn.threadId, true, "落地页已上线");
+      await flush();
+      expect(dispatcher.get(child.run.id)).toMatchObject({ status: "done", report: "落地页已上线" });
+      expect(dispatcher.get(top.run.id)!.subtasks[0]).toMatchObject({ status: "done", result: "落地页已上线" });
+      // and the org chief writes the company report
+      const bossReport = host.turns.find((turn) => turn.continuation && turn.botId === "boss")!;
+      expect(bossReport.text).toContain("落地页已上线");
+      host.finish(dispatcher, "boss-thread", true, "全套材料就绪");
+      expect(dispatcher.get(top.run.id)).toMatchObject({ status: "done", report: "全套材料就绪" });
+    });
+
+    it("lets only a lead working for the org chief plan from inside a subtask", async () => {
+      writeOrg({ chiefBotId: "boss" });
+      // a section chief's run: its wired lead is just a worker there
+      dispatcher.setRoute("chief", "tech", true);
+      const run = submit([{ id: "a", title: "落地页", brief: "做页面", assignee: "阿杰" }]);
+      if ("error" in run) throw new Error(run.error);
+      await flush();
+      const turn = host.workerTurns()[0]!;
+      expect(turn.mayPlan).toBeUndefined();
+      expect(dispatcher.submitPlan("tech", turn.threadId, { goal: "x", subtasks: [{ title: "x", brief: "y" }] })).toMatchObject({
+        error: expect.stringContaining("dispatched subtask"),
+      });
+      // a non-lead doing the org chief's subtask gets no planning either
+      const top = orgPlan([{ id: "en", title: "英文版", brief: "翻译", role: "翻译" }]);
+      if ("error" in top) throw new Error(top.error);
+      await flush();
+      expect(host.workerTurns().find((entry) => entry.botId === "helper")!.mayPlan).toBeUndefined();
+    });
+
+    it("stopping the lead stops its team and nothing is retried", async () => {
+      writeOrg({ chiefBotId: "boss" });
+      const top = orgPlan([{ id: "page", title: "落地页", brief: "做落地页", role: "前端工程师" }]);
+      if ("error" in top) throw new Error(top.error);
+      await flush();
+      const leadTurn = host.workerTurns()[0]!;
+      const child = dispatcher.submitPlan("tech", leadTurn.threadId, { goal: "落地页", subtasks: [{ id: "build", title: "页面开发", brief: "写", role: "前端" }] });
+      if ("error" in child) throw new Error(child.error);
+      host.finish(dispatcher, leadTurn.threadId, false, "", "interrupted");
+      await settle();
+      expect(dispatcher.get(top.run.id)!.subtasks[0]).toMatchObject({ status: "canceled", error: "Stopped by you" });
+      expect(dispatcher.get(child.run.id)!.status).toBe("canceled");
+      expect(host.workerTurns().filter((turn) => turn.botId === "tech")).toHaveLength(1);
+    });
+
+    it("fails the lead's subtask when its team's plan produced nothing", async () => {
+      writeOrg({ chiefBotId: "boss" });
+      host.settingsValue = dispatchSettings({ maxAttempts: 1 });
+      const top = orgPlan([{ id: "page", title: "落地页", brief: "做落地页", role: "前端工程师" }]);
+      if ("error" in top) throw new Error(top.error);
+      await flush();
+      const leadTurn = host.workerTurns()[0]!;
+      const child = dispatcher.submitPlan("tech", leadTurn.threadId, { goal: "落地页", subtasks: [{ id: "build", title: "页面开发", brief: "写", role: "前端" }] });
+      if ("error" in child) throw new Error(child.error);
+      host.finish(dispatcher, leadTurn.threadId, true, "已派出");
+      await flush();
+      host.finish(dispatcher, host.workerTurns().find((turn) => turn.botId === "fe1")!.threadId, false, "");
+      await flush();
+      expect(dispatcher.get(child.run.id)!.status).toBe("failed");
+      expect(dispatcher.get(top.run.id)!.subtasks[0]).toMatchObject({ status: "failed", error: "The team's plan finished without results" });
+      expect(dispatcher.get(top.run.id)!.status).toBe("failed");
+    });
+
+    it("keeps a lead's subtask waiting on its team across a restart", async () => {
+      writeOrg({ chiefBotId: "boss" });
+      const top = orgPlan([{ id: "page", title: "落地页", brief: "做落地页", role: "前端工程师" }]);
+      if ("error" in top) throw new Error(top.error);
+      await flush();
+      const leadTurn = host.workerTurns()[0]!;
+      const child = dispatcher.submitPlan("tech", leadTurn.threadId, { goal: "落地页", subtasks: [{ id: "build", title: "页面开发", brief: "写", role: "前端" }] });
+      if ("error" in child) throw new Error(child.error);
+      host.finish(dispatcher, leadTurn.threadId, true, "已派出");
+      await flush();
+      for (const bot of host.bots_) bot.busy = false;
+      const reloaded = new Dispatcher(host, dir);
+      host.dispatcher = reloaded;
+      reloaded.load();
+      expect(reloaded.get(top.run.id)!.subtasks[0]!.status).toBe("running");
+      expect(reloaded.get(child.run.id)!.subtasks[0]!.status).toBe("pending");
+      reloaded.resumeAll();
+      const restarted = host.workerTurns().filter((turn) => turn.botId === "fe1").at(-1)!;
+      host.finish(reloaded, restarted.threadId, true, "页面完成");
+      await flush();
+      host.finish(reloaded, leadTurn.threadId, true, "落地页好了");
+      await flush();
+      expect(reloaded.get(top.run.id)!.subtasks[0]).toMatchObject({ status: "done", result: "落地页好了" });
+    });
+
+    it("keeps two unfinished runs per chief, counted per lead", () => {
+      writeOrg({ chiefBotId: "boss" });
+      const plan = (botId: string, thread: string) =>
+        dispatcher.submitPlan(botId, thread, { goal: "g", subtasks: [{ title: "页面", brief: "写", role: "前端" }] });
+      expect("error" in plan("tech", "tech-1")).toBe(false);
+      expect("error" in plan("tech", "tech-2")).toBe(false);
+      expect(plan("tech", "tech-3")).toMatchObject({ error: expect.stringContaining("Two dispatch runs") });
+      // the org chief and the other leads are counted separately
+      expect("error" in orgPlan([{ title: "英文版", brief: "翻译", role: "翻译" }])).toBe(false);
+      expect("error" in submit([{ title: "文案", brief: "写", role: "文案策划" }])).toBe(false);
+    });
+  });
+
+  // ── adding people mid-run ──
+
+  describe("adding people", () => {
+    beforeEach(() => {
+      host.settingsValue = dispatchSettings({ maxConcurrent: 2 });
+      host.add({ id: "w2", name: "小美", title: "文案策划", description: "写小红书", section: "市场部" });
+    });
+
+    /** Eight independent pages for two writers; two finished in 30 minutes,
+     * two more under way for 10 minutes. */
+    const busyRun = async () => {
+      const result = submit(
+        Array.from({ length: 8 }, (_, i) => ({ id: `p${i + 1}`, title: `第 ${i + 1} 页`, brief: `写第 ${i + 1} 页`, role: "文案策划", acceptance: "标题 + 三段卖点" })),
+      );
+      if ("error" in result) throw new Error(result.error);
+      await flush();
+      for (const turn of host.workerTurns().slice(0, 2)) host.finish(dispatcher, turn.threadId, true, `${turn.text.slice(0, 4)} 完成稿`);
+      await flush();
+      const run = dispatcher.get(result.run.id)!;
+      const now = Date.now();
+      for (const subtask of run.subtasks) {
+        if (subtask.status === "done") Object.assign(subtask, { startedAt: now - 40 * MIN, finishedAt: now - 10 * MIN });
+        if (subtask.status === "running") subtask.startedAt = now - 10 * MIN;
+      }
+      return run;
+    };
+
+    it("diagnoses a slow run and suggests a squad", async () => {
+      const run = await busyRun();
+      const diagnosis = dispatcher.diagnose(run.id, { total: 5 });
+      if ("error" in diagnosis) throw new Error(diagnosis.error);
+      expect(diagnosis.verdict).toBe("add-helps");
+      expect(diagnosis.suggestion).toMatchObject({ add: 3, squad: "Squad B", models: ["Claude Sonnet", "Claude Sonnet", "Claude Sonnet"], linesBefore: 1, withinBudget: true });
+      expect(diagnosis.suggestion!.etaAfter!).toBeLessThan(diagnosis.suggestion!.etaBefore!);
+      expect(diagnosis.remaining.map((entry) => entry.status)).toEqual(["done", "done", "running", "running", "pending", "pending", "pending", "pending"]);
+      expect(dispatcher.diagnose("nope")).toMatchObject({ error: expect.any(String) });
+    });
+
+    it("prices the squad from what finished subtasks cost", async () => {
+      const run = await busyRun();
+      // $0.50 a page so far = ¥3.6
+      for (const subtask of run.subtasks.filter((entry) => entry.status === "done")) host.costs.set(subtask.threadId!, 0.5);
+      // newcomers on Sonnet (price level 3) instead of GPT-5.5 (4): cheaper pages offset reading the pack
+      const cheaper = dispatcher.diagnose(run.id, { add: 2 });
+      if ("error" in cheaper) throw new Error(cheaper.error);
+      expect(cheaper.suggestion).toMatchObject({ costCny: 0, withinBudget: true });
+      // on a pricier model each page they take costs ¥3.6 × (5/4 − 1 + 0.1) more
+      host.recommendation = { ...host.recommendation!, profile: { ...host.recommendation!.profile, cost: 5 } };
+      const pricier = dispatcher.diagnose(run.id, { add: 2 });
+      if ("error" in pricier) throw new Error(pricier.error);
+      const moved = pricier.remaining.filter((entry) => entry.moved).length;
+      expect(moved).toBeGreaterThan(0);
+      expect(pricier.suggestion!.costCny).toBeCloseTo(moved * 3.6 * 0.35, 1);
+      expect(pricier.suggestion!.withinBudget).toBe(true);
+    });
+
+    it("hands only not-started subtasks to a new squad in the same run", async () => {
+      const run = await busyRun();
+      const before = run.subtasks.map((subtask) => ({ id: subtask.id, status: subtask.status, assignee: subtask.assigneeBotId }));
+      const runs = dispatcher.list().length;
+      const result = dispatcher.amend(run.id, 3, { by: "owner" });
+      if ("error" in result) throw new Error(result.error);
+      expect(result.added).toHaveLength(3);
+      expect(dispatcher.list()).toHaveLength(runs);
+      expect(result.run.id).toBe(run.id);
+      // made like the dispatcher's own specialists: same section, recommended model, wired to the chief
+      for (const id of result.added) {
+        expect(host.bot(id)).toMatchObject({ section: "市场部", title: "文案策划", modelSelection: { instanceId: "claude", model: "sonnet", effort: "medium" } });
+        expect(dispatcher.routes()).toContainEqual(expect.objectContaining({ fromBotId: "chief", toBotId: id, enabled: true }));
+      }
+      // done and running work stays put; only pending work moved
+      for (const entry of before.filter((item) => item.status !== "pending")) {
+        expect(run.subtasks.find((subtask) => subtask.id === entry.id)!.assigneeBotId).toBe(entry.assignee);
+      }
+      expect(result.moved.length).toBeGreaterThan(0);
+      for (const id of result.moved) {
+        expect(before.find((entry) => entry.id === id)!.status).toBe("pending");
+        expect(result.added).toContain(run.subtasks.find((subtask) => subtask.id === id)!.assigneeBotId);
+        expect(run.subtasks.find((subtask) => subtask.id === id)).toMatchObject({ squad: "Squad B", createdBot: true });
+      }
+      const squad = run.squads![0]!;
+      expect(squad).toMatchObject({ name: "Squad B", leadBotId: result.added[0], botIds: result.added, subtaskIds: result.moved, by: "owner" });
+      expect(squad.reviewAt - squad.addedAt).toBe(30 * MIN);
+      expect(squad.etaAfter!).toBeLessThan(squad.etaBefore!);
+      // more people, more at once: the newcomers start right away
+      expect(run.maxConcurrent).toBe(5);
+      expect(host.workerTurns().filter((turn) => result.added.includes(turn.botId))).toHaveLength(3);
+      expect(host.events).toContainEqual(expect.objectContaining({ kind: "people.added", runId: run.id, section: "市场部" }));
+      expect(host.chips.some((chip) => chip.label.startsWith("Squad B joined"))).toBe(true);
+    });
+
+    it("gives a squad member its onboarding instead of the history", async () => {
+      const run = await busyRun();
+      const result = dispatcher.amend(run.id, 2, { by: "owner" });
+      if ("error" in result) throw new Error(result.error);
+      const [leadTurn, memberTurn] = result.added.map((id) => host.workerTurns().find((turn) => turn.botId === id)!);
+      expect(leadTurn!.text).toContain("You joined Squad B");
+      expect(leadTurn!.text).toContain("Match the standard of this finished subtask");
+      expect(leadTurn!.text).toContain("You lead Squad B");
+      expect(memberTurn!.text).toContain(`Questions go to your squad lead @${host.bot(result.added[0]!)!.name}`);
+    });
+
+    it("lets the chief add people only when it helps and the rules allow", async () => {
+      const run = await busyRun();
+      writeFileSync(join(dir, "org.json"), JSON.stringify({ chiefBotId: null, rules: { chiefMay: { addPeople: false } } }));
+      expect(dispatcher.amend(run.id, 2, { by: "chief", botId: "chief" })).toMatchObject({ error: expect.stringContaining("rules") });
+      writeFileSync(join(dir, "org.json"), JSON.stringify({ chiefBotId: null, rules: { chiefMay: { addPeople: true } } }));
+      expect(dispatcher.amend(run.id, 2, { by: "chief", botId: "writer" })).toMatchObject({ error: expect.stringContaining("Only this run's chief") });
+      const ok = dispatcher.amend(run.id, 2, { by: "chief", botId: "chief" });
+      if ("error" in ok) throw new Error(ok.error);
+      expect(run.squads![0]!.by).toBe("chief");
+    });
+
+    it("refuses the chief when more people would not help, but not the owner", async () => {
+      const result = submit([
+        { id: "a", title: "第一步", brief: "做", role: "文案策划" },
+        { id: "b", title: "第二步", brief: "做", role: "文案策划", depends_on: ["a"] },
+        { id: "c", title: "第三步", brief: "做", role: "文案策划", depends_on: ["b"] },
+      ]);
+      if ("error" in result) throw new Error(result.error);
+      await flush();
+      expect(dispatcher.amend(result.run.id, 1, { by: "chief", botId: "chief" })).toMatchObject({ error: expect.stringContaining("would not help") });
+      const forced = dispatcher.amend(result.run.id, 1, { by: "owner" });
+      expect("error" in forced).toBe(false);
+    });
+
+    it("refuses nonsense: no run, a finished run, nothing to hand out", async () => {
+      expect(dispatcher.amend("nope", 2)).toMatchObject({ error: expect.any(String) });
+      const run = await busyRun();
+      expect(dispatcher.amend(run.id, 0)).toMatchObject({ error: expect.stringContaining("at least 1") });
+      await dispatcher.cancel(run.id);
+      expect(dispatcher.amend(run.id, 2)).toMatchObject({ error: expect.stringContaining("in progress") });
+      // (the fake engines stop when interrupted)
+      for (const bot of host.bots_) bot.busy = false;
+      const single = submit([{ id: "a", title: "文案", brief: "写", role: "文案策划" }]);
+      if ("error" in single) throw new Error(single.error);
+      await flush();
+      expect(dispatcher.amend(single.run.id, 2)).toMatchObject({ error: expect.stringContaining("Nothing is left") });
+    });
+
+    it("reviews the squad's speed 30 minutes later", async () => {
+      const run = await busyRun();
+      const result = dispatcher.amend(run.id, 2, { by: "owner" });
+      if ("error" in result) throw new Error(result.error);
+      const squad = run.squads![0]!;
+      dispatcher.checkReviews(squad.reviewAt - 1);
+      expect(squad.review).toBeUndefined();
+      // two newcomers finish within the half hour
+      for (const id of result.added) {
+        const turn = host.workerTurns().find((entry) => entry.botId === id)!;
+        host.finish(dispatcher, turn.threadId, true, "完成稿");
+      }
+      dispatcher.checkReviews(squad.reviewAt + 1);
+      expect(squad.review).toMatchObject({ faster: true });
+      expect(squad.review!.speedAfter).toBeGreaterThan(squad.review!.speedBefore);
+      expect(host.chips.some((chip) => chip.label.startsWith("Review of Squad B"))).toBe(true);
+      expect(host.events).toContainEqual(expect.objectContaining({ kind: "report", runId: run.id, severity: "info" }));
+    });
+
+    it("dissolves the squad when its run ends, without a review from too short a window", async () => {
+      const run = await busyRun();
+      const result = dispatcher.amend(run.id, 2, { by: "owner" });
+      if ("error" in result) throw new Error(result.error);
+      await dispatcher.cancel(run.id);
+      const squad = run.squads![0]!;
+      expect(squad.endedAt).toEqual(expect.any(Number));
+      expect(squad.review).toBeUndefined();
+      const chips = host.chips.length;
+      dispatcher.checkReviews(squad.reviewAt + 1);
+      expect(squad.review).toBeUndefined();
+      expect(host.chips).toHaveLength(chips);
+    });
+
+    it("serves diagnose and amend over HTTP", async () => {
+      const run = await busyRun();
+      const call = async (path: string, body: unknown) => {
+        let status = 0;
+        let payload: any;
+        const handled = await handleDispatchApi(
+          "POST",
+          path,
+          new URL(`http://localhost${path}`),
+          {} as IncomingMessage,
+          {} as ServerResponse,
+          {
+            dispatcher,
+            readBody: async () => body,
+            json: (_res, code, value) => {
+              status = code;
+              payload = value;
+            },
+            teamMapSnapshot: () => null,
+            ownsThread: () => true,
+            botName: (id) => host.bot(id)?.name,
+            modelLabel: () => "Claude · Sonnet",
+          },
+          () => host.settings(),
+        );
+        return { handled, status, payload };
+      };
+      const diagnosis = await call(`/api/dispatch/runs/${run.id}/diagnose`, {});
+      expect(diagnosis).toMatchObject({ handled: true, status: 200, payload: { runId: run.id, verdict: "add-helps" } });
+      const amended = await call(`/api/dispatch/runs/${run.id}/amend`, { add: 2 });
+      expect(amended).toMatchObject({ status: 200, payload: { ok: true, added: expect.any(Array) } });
+      expect(await call(`/api/dispatch/runs/${run.id}/amend`, { add: "lots" })).toMatchObject({ status: 400 });
+      // the chief's add_people tool, inside its rules
+      const chief = await call("/api/internal/dispatch/amend", { fromBotId: "chief", runId: run.id, add: 1 });
+      expect(chief.status).toBe(200);
+      expect(chief.payload.squad ?? chief.payload.error).toBeTruthy();
+      expect(await call("/api/internal/dispatch/amend", { fromBotId: "writer", runId: run.id })).toMatchObject({ payload: { error: expect.stringContaining("not one of your") } });
+    });
   });
 });

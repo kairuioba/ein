@@ -14,6 +14,8 @@
 //                                          their own section
 //   submit_plan(goal, subtasks)          → Chiefs hand a whole multi-step plan
 //                                          to the dispatch hub (server/dispatch.ts)
+//   add_people(run_id?, count?)          → Chiefs speed up a running plan: the
+//                                          hub diagnoses first, then adds a squad
 //   request_credential(id, reason?)       → show a secure, allowlisted key card
 //   list_routines()                       → inspect this bot's scheduled work
 //   propose_routine(...)                  → show a confirmation card for a new routine
@@ -38,6 +40,9 @@ const DEPTH = Number(process.env.OMB_TURN_DEPTH ?? "0") || 0;
 const SKILL_AUTHORING_ENABLED = process.env.OMB_SKILL_AUTHORING_ENABLED === "1";
 /** Set by the harness only for a Chief of Staff while dispatch is enabled. */
 const DISPATCH_ENABLED = process.env.OMB_DISPATCH_ENABLED === "1";
+/** A department lead doing a subtask for the org's chief: it may plan that
+ * subtask for its own team (submit_plan, list_bots) and nothing else. */
+const DISPATCH_ONLY = process.env.OMB_DISPATCH_ONLY === "1";
 const DISPATCH_MAX_SUBTASKS = Number(process.env.OMB_DISPATCH_MAX_SUBTASKS ?? "8") || 8;
 const MAX_CREATED_PER_TURN = 4;
 let createdThisTurn = 0;
@@ -300,6 +305,18 @@ const TOOLS = [
     },
   },
   {
+    name: "add_people",
+    description:
+      "CHIEF OF STAFF ONLY. Speed up one of your dispatch runs that is going too slowly (for example when the user says it is too slow or asks for more people). OpenMausBot first checks whether more people would help — work waiting on other results or approvals, nothing left that can run in parallel, too much rework, or an engine rate limiting all mean no — and only then adds a squad of new specialists who take subtasks nobody has started; finished and running work stays put. Within your company rules and budget it happens at once; otherwise tell the user why, and they can add people from the workbench. Returns the diagnosis and what changed.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        run_id: { type: "string", description: "The run to speed up (from submit_plan). Defaults to your latest run in progress." },
+        count: { type: "integer", minimum: 1, maximum: 10, description: "How many people to add. Defaults to the number the diagnosis suggests." },
+      },
+    },
+  },
+  {
     name: "request_credential",
     description:
       "Ask the user for a supported API key through OpenMausBot's secure credential card. Use this instead of asking them to paste a secret into chat. The secret is saved by the desktop app and is never returned to you. After calling this tool, end the turn; OpenMausBot resumes the task after the user saves or declines.",
@@ -406,8 +423,12 @@ const TOOLS = [
 ];
 
 const SKILL_TOOL_NAMES = new Set(["skills_list", "skill_manage"]);
-const AVAILABLE_TOOLS = TOOLS.filter(
-  (tool) => (SKILL_AUTHORING_ENABLED || !SKILL_TOOL_NAMES.has(tool.name)) && (DISPATCH_ENABLED || tool.name !== "submit_plan"),
+const DISPATCH_TOOL_NAMES = new Set(["submit_plan", "add_people"]);
+const DISPATCH_ONLY_TOOL_NAMES = new Set(["submit_plan", "list_bots"]);
+const AVAILABLE_TOOLS = TOOLS.filter((tool) =>
+  DISPATCH_ONLY
+    ? DISPATCH_ENABLED && DISPATCH_ONLY_TOOL_NAMES.has(tool.name)
+    : (SKILL_AUTHORING_ENABLED || !SKILL_TOOL_NAMES.has(tool.name)) && (DISPATCH_ENABLED || !DISPATCH_TOOL_NAMES.has(tool.name)),
 );
 
 type Json = Record<string, unknown>;
@@ -431,6 +452,26 @@ async function api(path: string, init?: RequestInit): Promise<Json> {
 
 function jsonRecord(value: unknown): value is Json {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/** The departments the org's chief plans through; empty for anyone else (or
+ * when the harness cannot say). */
+async function orgDepartments(): Promise<Array<{ section: string; leadId: string; leadName: string; leadTitle?: string; people: number }>> {
+  try {
+    const r = await api(`/api/internal/dispatch/team?self=${encodeURIComponent(BOT_ID)}`);
+    if (!r.orgChief || !Array.isArray(r.departments)) return [];
+    return (r.departments as Array<Json>)
+      .filter((d) => typeof d.section === "string" && typeof d.leadId === "string" && typeof d.leadName === "string")
+      .map((d) => ({
+        section: String(d.section),
+        leadId: String(d.leadId),
+        leadName: String(d.leadName),
+        ...(typeof d.leadTitle === "string" ? { leadTitle: d.leadTitle } : {}),
+        people: Number(d.people) || 0,
+      }));
+  } catch {
+    return [];
+  }
 }
 
 function routineAction(value: unknown): RoutineAction | null {
@@ -464,14 +505,24 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
   if (name === "list_bots") {
     const r = await api(`/api/internal/agents?self=${encodeURIComponent(BOT_ID)}`);
     const bots = (r.bots as Array<Json>) ?? [];
-    if (!bots.length) return { text: "No other bots in this section yet." };
+    // the org's chief plans through every department's lead, not just its section
+    const departments = DISPATCH_ENABLED && !DISPATCH_ONLY ? await orgDepartments() : [];
+    const departmentText = departments.length
+      ? `\n\nDepartments you plan through (put a department's part of a plan on its lead with submit_plan's assignee; the lead runs it with its own team):\n${departments
+          .map((d) => `- ${d.section}: ${d.leadName}${d.leadTitle ? ` — ${d.leadTitle}` : ""} [id: ${d.leadId}, ${d.people} people]`)
+          .join("\n")}`
+      : "";
+    if (!bots.length) return { text: `No other bots in this section yet.${departmentText}` };
     const lines = bots.map((b) => {
       const role = b.title ? ` — ${b.title}` : "";
       const about = b.description ? ` (${String(b.description).slice(0, 120)})` : "";
       return `- ${b.name}${role}${about} [id: ${b.id}, model: ${b.model}${b.busy ? ", busy" : ""}]`;
     });
+    const how = DISPATCH_ONLY
+      ? "Hand your subtask to them with submit_plan."
+      : "Assign work with delegate_bot. Use ask_bot only for a short answer you need inline.";
     return {
-      text: `Other bots in your section:\n${lines.join("\n")}\n\nAssign work with delegate_bot. Use ask_bot only for a short answer you need inline.`,
+      text: `Other bots in your section:\n${lines.join("\n")}${departmentText}\n\n${how}`,
     };
   }
   if (name === "ask_bot") {
@@ -600,6 +651,26 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
       : "It is running now; independent subtasks run in parallel.";
     return {
       text: `Plan accepted (run ${r.runId}).\n${lines.join("\n")}\n\n${approval} When every subtask has finished you will be asked for one consolidated report. Tell the user the plan in a few lines and end your turn.`,
+    };
+  }
+  if (name === "add_people") {
+    const count = Number(args.count);
+    const r = await api(`/api/internal/dispatch/amend`, {
+      method: "POST",
+      body: JSON.stringify({
+        fromBotId: BOT_ID,
+        fromThreadId: THREAD_ID,
+        ...(typeof args.run_id === "string" && args.run_id.trim() ? { runId: args.run_id.trim() } : {}),
+        ...(Number.isFinite(count) && count > 0 ? { add: Math.trunc(count) } : {}),
+      }),
+    });
+    const checks = Array.isArray(r.checks) && r.checks.length ? `\n\nDiagnosis:\n${(r.checks as string[]).map((line) => `- ${line}`).join("\n")}` : "";
+    if (r.error) return { text: `No people were added: ${r.error}${checks}`, isError: true };
+    const added = Array.isArray(r.added) ? (r.added as Array<Json>) : [];
+    const when = (value: unknown) => (typeof value === "number" ? new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "?");
+    const eta = r.etaBefore && r.etaAfter ? ` Estimated finish: ${when(r.etaAfter)} instead of ${when(r.etaBefore)}.` : "";
+    return {
+      text: `Added ${added.length} people as ${r.squad} to run ${r.runId}: ${added.map((a) => `@${a.name}${a.model ? ` (${a.model})` : ""}`).join(", ")}. They took ${r.moved} subtasks nobody had started; finished and running work stays put.${eta} A speed review follows in 30 minutes. Tell the user in a line.${checks}`,
     };
   }
   if (name === "request_credential") {

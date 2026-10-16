@@ -267,7 +267,8 @@ const appConfigSchema = z.object({
       autoCreate: z.boolean().optional(),
       policy: z.enum(["quality", "balanced", "economy"]).optional(),
       maxConcurrent: z.number().int().min(1).max(8).optional(),
-      maxSubtasks: z.number().int().min(1).max(20).optional(),
+      // shared/dispatch-types.ts MAX_PLAN_SUBTASKS: the org chief plans across departments
+      maxSubtasks: z.number().int().min(1).max(30).optional(),
       maxNewBots: z.number().int().min(0).max(10).optional(),
       autoSynthesize: z.boolean().optional(),
       requireApproval: z.boolean().optional(),

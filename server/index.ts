@@ -329,7 +329,8 @@ function agentsIntegration(
   threadId: string,
   depth: number,
   skillAuthoring: boolean,
-  dispatch?: { maxSubtasks: number },
+  // only: a department lead's subtask turn for the org chief — submit_plan alone (server/dispatch.ts)
+  dispatch?: { maxSubtasks: number; only?: boolean },
 ) {
   return {
     command: process.execPath,
@@ -343,6 +344,7 @@ function agentsIntegration(
       OMB_TURN_DEPTH: String(depth),
       OMB_SKILL_AUTHORING_ENABLED: skillAuthoring ? "1" : "0",
       OMB_DISPATCH_ENABLED: dispatch ? "1" : "0",
+      OMB_DISPATCH_ONLY: dispatch?.only ? "1" : "0",
       OMB_DISPATCH_MAX_SUBTASKS: String(dispatch?.maxSubtasks ?? 8),
     },
   };
@@ -1859,7 +1861,9 @@ bus.subscribe((event: RuntimeEvent) => {
         ? t("Delegated turn did not finish — {reason}", { reason: reasonLabel(event.stopReason.trim().slice(0, 120)) })
         : undefined;
       finalizeDelegationWatch(event.threadId, event.ok, reply, delegationFailureName);
-      dispatcher.onTurnSettled(event.threadId, event.ok, reply, event.ok ? undefined : event.stopReason ?? undefined);
+      // the stop reason goes along even when ok: ACP and pi engines settle a
+      // user's Stop as ok + "cancelled", and a stopped subtask is never retried
+      dispatcher.onTurnSettled(event.threadId, event.ok, reply, event.stopReason ?? undefined);
       // group busy/unread settle in the group turn engine, which knows
       // whether more member turns are queued behind this one
       break;
@@ -2089,9 +2093,17 @@ const dispatcher = new Dispatcher({
   startTurn: async (botId, text, opts) => {
     await startTurn(botId, text, {
       threadId: opts.threadId,
-      // workers and the synthesis turn never get team tools: no re-dispatch loops
+      // workers and the synthesis turn never get team tools: no re-dispatch loops…
       commsDepth: MAX_COMMS_DEPTH,
+      // …except a department lead doing a subtask for the org chief, who may
+      // plan it for its own team with submit_plan alone (its workers cannot)
+      ...(opts.mayPlan ? { dispatchOnly: true } : {}),
       ...(opts.continuation ? { cardContinuation: true } : {}),
+      // dispatched work inherits the planner's unattended window, like delegations
+      unattended: isUnattended(store.botByThread(opts.sourceThreadId ?? opts.threadId)?.id),
+      // setup runs after startTurn resolves and never emits turn.completed on
+      // failure: report it so the subtask settles instead of running forever
+      onDispatchError: (message, info) => opts.onError?.(info?.cancelled ? "interrupted" : message),
     });
   },
   interrupt: async (botId, threadId) => {
@@ -2099,6 +2111,15 @@ const dispatcher = new Dispatcher({
     const instance = bot ? registry.get(bot.modelSelection.instanceId) : null;
     await instance?.adapter.interruptTurn(threadId);
   },
+  // cost, engine names and the company timeline for adding people mid-run
+  usage: (botId, threadId) => store.taskByThread(botId, threadId)?.usage ?? null,
+  engineName: (instanceId) => registry.get(instanceId)?.displayName ?? instanceId,
+  modelLabel: (selection) => {
+    const instance = registry.get(selection.instanceId);
+    const label = instance?.models.options.find((option) => option.id === selection.model)?.label ?? selection.model;
+    return `${instance?.displayName ?? selection.instanceId} · ${label}`;
+  },
+  event: (event) => orgEvents.append(event),
   activity: (threadId, label, ok) => {
     store.appendMessage(threadId, { role: "bot", kind: "activity", tool: { name: label, ...(ok === false ? { ok: false } : {}) } });
   },
@@ -2110,6 +2131,11 @@ const dispatcher = new Dispatcher({
 });
 dispatcher.load();
 setTimeout(() => dispatcher.resumeAll(), 3_000).unref?.();
+// an engine throttling a worker (429s the driver retries) feeds the
+// "is an engine rate limiting us?" question when people are added mid-run
+bus.subscribe((event: RuntimeEvent) => {
+  if (event.type === "turn.retrying" && !shouldIgnoreProviderEvent(event)) dispatcher.onTurnRetrying(event.threadId, event.reason);
+});
 
 const delegationRetryBots = new Set<string>();
 function retryDelegationsWaitingOn(botId: string): void {
@@ -2320,7 +2346,11 @@ async function startTurn(
     /** Stable identity supplied by the composer so a network retry cannot
      * dispatch the same user action twice. */
     sendId?: string;
-    onDispatchError?: (message: string) => void;
+    /** A department lead's subtask turn for the org chief (server/dispatch.ts):
+     * at the comms cap, yet it gets submit_plan (and list_bots) alone. */
+    dispatchOnly?: boolean;
+    /** `cancelled`: someone stopped the turn during setup (not a failure). */
+    onDispatchError?: (message: string, info?: { cancelled?: boolean }) => void;
   },
 ) {
   const bot = store.bot(botId);
@@ -2678,6 +2708,8 @@ async function startTurn(
           !candidate.hidden &&
           sectionKey(candidate.section) === sectionKey(bot.section),
       );
+      // dispatch: a section's chief of staff, or the org's chief (主 Bot)
+      const plans = (bot.chiefOfStaff || dispatcher.isOrgChief(bot.id)) && dispatchSettings(cfg.dispatch).enabled;
       if (
         commsDepth < MAX_COMMS_DEPTH &&
         instance.adapter.capabilities.agentsMcp === true
@@ -2687,34 +2719,43 @@ async function startTurn(
           threadId,
           commsDepth,
           skillAuthoring,
-          bot.chiefOfStaff && dispatchSettings(cfg.dispatch).enabled ? { maxSubtasks: dispatchSettings(cfg.dispatch).maxSubtasks } : undefined,
+          plans ? { maxSubtasks: dispatchSettings(cfg.dispatch).maxSubtasks } : undefined,
         );
+      } else if (opts?.dispatchOnly && bot.chiefOfStaff && plans && instance.adapter.capabilities.agentsMcp === true) {
+        // a department lead's subtask for the org chief: submit_plan alone
+        integrations.agents = agentsIntegration(bot.id, threadId, commsDepth, false, {
+          maxSubtasks: dispatchSettings(cfg.dispatch).maxSubtasks,
+          only: true,
+        });
       }
+      const planOnly = Boolean(opts?.dispatchOnly && integrations.agents);
       // @mentions in the user's message (the composer's tagging UI) become
       // an explicit coordination nudge. The agent still chooses the matching
       // peer tool, so the harness stays the single owner of turns/permissions.
-      const tagged = integrations.agents
+      const tagged = integrations.agents && !planOnly
         ? mentionedBots(
             text,
             sectionPeers,
           )
         : [];
-      const coordinationPrompt = bot.chiefOfStaff
+      const coordinationPrompt = bot.chiefOfStaff || dispatcher.isOrgChief(bot.id)
         ? chiefOfStaffSystemPrompt(
             bot.id,
             store.bots,
             Boolean(integrations.agents),
             openMausStatusSystemPrompt(),
-            dispatchSettings(cfg.dispatch),
+            // the org chief's departments, and a lead's plan-only turn
+            { ...dispatchSettings(cfg.dispatch), ...dispatcher.chiefContext(bot.id), planOnly },
             replyLanguageInstruction(),
           )
         : integrations.agents && sectionPeers.length > 0
           ? "You can work with the other bots in your section through the agents tools. list_bots shows who's available. Use delegate_bot for assigned or independent work so you remain available; use ask_bot only for a short consultation whose reply is required in your current answer."
           : "";
-      const credentialPrompt = integrations.agents
+      // a plan-only turn mounts no credential or routine tools
+      const credentialPrompt = integrations.agents && !planOnly
         ? " If a supported API key is missing, use request_credential to show the secure in-app card. Never ask the user to paste credentials into chat."
         : "";
-      const routinePrompt = integrations.agents
+      const routinePrompt = integrations.agents && !planOnly
         ? " If the user explicitly asks to list or review, schedule, run, or change routines, use list_routines and propose_routine or propose_routine_action. A proposal is not applied until the user confirms its in-app card, so never claim the action completed before that confirmation."
         : "";
       const learnPrompt = skillAuthoring
@@ -2852,7 +2893,7 @@ async function startTurn(
         turnUsage.delete(threadId);
       }
       if (e instanceof DirectTurnSetupCancelled) {
-        opts?.onDispatchError?.(e.message);
+        opts?.onDispatchError?.(e.message, { cancelled: true });
         if (ownsLatestGeneration && store.bot(bot.id)?.busy) {
           store.setActivity(bot.id, "idle");
           retryDelegationsWaitingOn(bot.id);

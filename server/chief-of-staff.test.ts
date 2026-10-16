@@ -67,6 +67,39 @@ describe("chiefOfStaffSystemPrompt", () => {
     expect(prompt).not.toContain("delegate_bot");
   });
 
+  it("tells the org's chief to plan through department leads", () => {
+    const dispatch = {
+      enabled: true,
+      autoCreate: true,
+      maxSubtasks: 30,
+      departments: [
+        { section: "技术部", leadName: "阿杰", leadTitle: "前端主管", people: 5 },
+        { section: "市场部", leadName: "市场分析师", people: 3 },
+      ],
+    };
+    const prompt = chiefOfStaffSystemPrompt("chief", bots, true, "", dispatch);
+    expect(prompt).toContain("company's chief (主 Bot)");
+    expect(prompt).toContain("- 技术部: lead 阿杰 — 前端主管 (5 people)");
+    expect(prompt).toContain("- 市场部: lead 市场分析师 (3 people)");
+    expect(prompt).toContain("give each department's part of the work to its lead");
+    expect(prompt).toContain("at most 30 subtasks");
+    expect(prompt).toContain("add_people");
+    // a section chief's prompt is unchanged
+    const section = chiefOfStaffSystemPrompt("chief", bots, true, "", { enabled: true, autoCreate: true, maxSubtasks: 8 });
+    expect(section).toContain("Chief of Staff for the Work section");
+    expect(section).not.toContain("department");
+  });
+
+  it("gives a lead doing the org chief's subtask submit_plan alone", () => {
+    const prompt = chiefOfStaffSystemPrompt("chief", bots, true, "", { enabled: true, autoCreate: true, maxSubtasks: 8, planOnly: true });
+    expect(prompt).toContain("call submit_plan once to hand it to your own section's team");
+    expect(prompt).toContain("delegate_bot, ask_bot and create_bot are not available");
+    expect(prompt).not.toContain("AUTOMATIC DISPATCH");
+    expect(prompt).not.toContain("use create_bot");
+    // its own team is still listed
+    expect(prompt).toContain("Quill — Writer");
+  });
+
   it("includes trusted OpenMaus status only when the Chief caller supplies it", () => {
     const status = "TRUSTED OPENMAUSBOT STATUS\nfreshness=fresh; runtime_state=degraded";
 

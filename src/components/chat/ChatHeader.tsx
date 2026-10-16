@@ -4,6 +4,13 @@
 // (find, tasks, model, inspector, usage, working folder) live in "more"; the
 // task switch stays beside the name once there is more than one task, and the
 // call button stays visible because a call cannot start from a menu row.
+//
+// Narrow (a side panel such as the live computer can leave the chat ~400px):
+// the header is a container and gives way in order, by its content width —
+// the task title folds to an icon and its count (<672px), the "主 Bot"/lead
+// chip goes (the star stays, <576px), "N running" shrinks to its number
+// (<512px), export moves into "more" (<448px), and below 320px the task
+// switch leaves too. The name truncates last.
 import { useCallback, useRef, useState } from "react";
 import { Bug, Check, ClipboardCopy, Clock, Cpu, FileJson, FileText, Folder, Plus, Search, Settings2 } from "lucide-react";
 import { useStore, type Bot, type Message } from "@/state/store";
@@ -78,14 +85,16 @@ export function ChatHeader({
         />
         {isMainBot ? (
           <>
-            <IconStar size={13} className="-ml-0.5 shrink-0" />
-            <Pill tone="grey" className="h-5 text-[11.5px]">
+            <span className="-ml-0.5 shrink-0" title={t("Main bot")}>
+              <IconStar size={13} />
+            </span>
+            <Pill tone="grey" className="h-5 shrink-0 text-[11.5px] @max-xl/chathead:hidden">
               {t("Main bot")}
             </Pill>
           </>
         ) : (
           bot.chiefOfStaff && (
-            <Pill tone="grey" className="h-5 text-[11.5px]">
+            <Pill tone="grey" className="h-5 shrink-0 text-[11.5px] @max-xl/chathead:hidden">
               {bot.section?.trim() ? t("{section} lead", { section: bot.section.trim() }) : t("Chief of Staff")}
             </Pill>
           )
@@ -94,11 +103,13 @@ export function ChatHeader({
           <button
             type="button"
             onClick={() => dispatch({ type: "showTeamMap" })}
-            title={t("Open the workbench")}
+            title={`${t("{count} running", { count: runningRuns })} · ${t("Open the workbench")}`}
+            aria-label={t("{count} running", { count: runningRuns })}
             className="shrink-0 rounded-full"
           >
             <Pill tone="blue" dot className="h-5 text-[11.5px] hover:brightness-95">
-              {t("{count} running", { count: runningRuns })}
+              <span className="@max-lg/chathead:hidden">{t("{count} running", { count: runningRuns })}</span>
+              <span className="hidden tabular-nums @max-lg/chathead:inline">{runningRuns}</span>
             </Pill>
           </button>
         )}
@@ -117,20 +128,19 @@ export function ChatHeader({
         >
           <IconMonitor size={18} />
         </button>
-        <ExportMenu bot={bot} />
+        <div className="@max-md/chathead:hidden">
+          <ExportMenu bot={bot} />
+        </div>
         <MoreMenu bot={bot} findOpen={findOpen} onFind={onFind} onOpenRoutines={onOpenRoutines} routineCount={routineCount} />
       </div>
     </header>
   );
 }
 
-function ExportMenu({ bot }: { bot: Bot }) {
-  const [open, setOpen] = useState(false);
+/** Copy or download this conversation (GET /api/threads/:id/export). */
+function useTranscriptExport(bot: Bot, onDone: () => void) {
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const ref = useRef<HTMLDivElement>(null);
-  const close = useCallback(() => setOpen(false), []);
-  useDismiss(open, close, ref);
   const url = (format: "markdown" | "json") => `/api/threads/${encodeURIComponent(bot.threadId)}/export?format=${format}`;
   const download = (format: "markdown" | "json") => {
     const link = document.createElement("a");
@@ -139,7 +149,7 @@ function ExportMenu({ bot }: { bot: Bot }) {
     document.body.appendChild(link);
     link.click();
     link.remove();
-    setOpen(false);
+    onDone();
   };
   const copy = async () => {
     setError(null);
@@ -150,12 +160,43 @@ function ExportMenu({ bot }: { bot: Bot }) {
       setCopied(true);
       setTimeout(() => {
         setCopied(false);
-        setOpen(false);
+        onDone();
       }, 900);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
   };
+  return { copied, error, copy, download };
+}
+
+/** The three ways out, as menu rows (the export menu, and "more" when the
+ * export button has folded away). */
+function ExportItems({ exporter }: { exporter: ReturnType<typeof useTranscriptExport> }) {
+  return (
+    <>
+      <MenuItem
+        icon={exporter.copied ? <Check size={14} className="text-success" /> : <ClipboardCopy size={14} />}
+        onClick={() => void exporter.copy()}
+      >
+        {exporter.copied ? t("Copied") : t("Copy as Markdown")}
+      </MenuItem>
+      <MenuItem icon={<FileText size={14} />} onClick={() => exporter.download("markdown")}>
+        {t("Export as Markdown")}
+      </MenuItem>
+      <MenuItem icon={<FileJson size={14} />} onClick={() => exporter.download("json")}>
+        {t("Export as JSON")}
+      </MenuItem>
+      {exporter.error && <div className="px-2.5 py-1.5 text-[12px] text-danger">{exporter.error}</div>}
+    </>
+  );
+}
+
+function ExportMenu({ bot }: { bot: Bot }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const close = useCallback(() => setOpen(false), []);
+  useDismiss(open, close, ref);
+  const exporter = useTranscriptExport(bot, close);
   return (
     <div ref={ref} className="relative">
       <button
@@ -171,16 +212,7 @@ function ExportMenu({ bot }: { bot: Bot }) {
       </button>
       {open && (
         <PopoverPanel label={t("Share or export")} className="top-full right-0 mt-1.5 w-[240px]">
-          <MenuItem icon={copied ? <Check size={14} className="text-success" /> : <ClipboardCopy size={14} />} onClick={() => void copy()}>
-            {copied ? t("Copied") : t("Copy as Markdown")}
-          </MenuItem>
-          <MenuItem icon={<FileText size={14} />} onClick={() => download("markdown")}>
-            {t("Export as Markdown")}
-          </MenuItem>
-          <MenuItem icon={<FileJson size={14} />} onClick={() => download("json")}>
-            {t("Export as JSON")}
-          </MenuItem>
-          {error && <div className="px-2.5 py-1.5 text-[12px] text-danger">{error}</div>}
+          <ExportItems exporter={exporter} />
         </PopoverPanel>
       )}
     </div>
@@ -205,6 +237,7 @@ function MoreMenu({
   const ref = useRef<HTMLDivElement>(null);
   const close = useCallback(() => setOpen(false), []);
   useDismiss(open, close, ref);
+  const exporter = useTranscriptExport(bot, close);
   const run = (action: () => void) => () => {
     action();
     setOpen(false);
@@ -250,6 +283,11 @@ function MoreMenu({
           <MenuItem icon={<Clock size={14} />} hint={routineCount ? String(routineCount) : undefined} onClick={run(onOpenRoutines)}>
             {t("Scheduled tasks")}
           </MenuItem>
+          {/* the export button folds away in a narrow header; its rows land here */}
+          <div className="hidden @max-md/chathead:block">
+            <MenuDivider />
+            <ExportItems exporter={exporter} />
+          </div>
           <MenuDivider />
           <div className="py-1 pr-1 pl-2.5">
             <ModelPicker

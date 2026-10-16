@@ -30,10 +30,14 @@ export function PendingApprovalStrip({
     : (card && previewTitle(approvalPreview(card.tool, card.subtitle, card.approvalScope))) || approvalLabel(pending);
   const base = "h-7 shrink-0 rounded-lg px-2.5 text-[12px] font-semibold whitespace-nowrap";
   return (
+    // a container, so a narrow chat (a side panel open) drops the extras
+    // first: "Cancel turn" below 448px, "Review" (the label opens the card
+    // too) below 384px — the answers stay
+    <div className="@container/strip mb-2">
     <div
       role="region"
       aria-label={t("Pending approval")}
-      className="mb-2 flex items-center gap-2 rounded-[12px] bg-warning/[0.08] py-1.5 pr-1.5 pl-3 text-[12.5px] text-ink inset-ring inset-ring-warning/25"
+      className="flex items-center gap-2 rounded-[12px] bg-warning/[0.08] py-1.5 pr-1.5 pl-3 text-[12.5px] text-ink inset-ring inset-ring-warning/25"
     >
       <Diamond size={11} />
       <button type="button" onClick={onShow} className="min-w-0 flex-1 truncate text-left hover:underline" title={t("Show the approval card")}>
@@ -42,11 +46,15 @@ export function PendingApprovalStrip({
         {count > 1 && <span className="text-ink-secondary"> · {t("{index} of {count}", { index: 1, count })}</span>}
       </button>
       {!durable && (
-        <button type="button" onClick={onCancelTurn} className={cn(base, "font-medium text-ink-secondary hover:bg-raised-hover hover:text-ink")}>
+        <button
+          type="button"
+          onClick={onCancelTurn}
+          className={cn(base, "font-medium text-ink-secondary hover:bg-raised-hover hover:text-ink @max-md/strip:hidden")}
+        >
           {t("Cancel turn")}
         </button>
       )}
-      <button type="button" onClick={onShow} className={cn(base, "bg-raised text-ink hover:bg-raised-hover")}>
+      <button type="button" onClick={onShow} className={cn(base, "bg-raised text-ink hover:bg-raised-hover", !durable && "@max-sm/strip:hidden")}>
         {t("Review")}
       </button>
       {!durable && (
@@ -67,6 +75,7 @@ export function PendingApprovalStrip({
           {t("Allow once")}
         </button>
       )}
+    </div>
     </div>
   );
 }

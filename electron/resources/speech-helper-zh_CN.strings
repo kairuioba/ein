@@ -1,0 +1,4 @@
+/* 听写助手的权限弹窗文案（中文版）。 */
+"CFBundleDisplayName" = "OpenMausBot";
+"NSMicrophoneUsageDescription" = "OpenMausBot 会在你听写消息或与机器人通话时收听你的声音。";
+"NSSpeechRecognitionUsageDescription" = "OpenMausBot 会在听写和通话时把你的语音转成文字。";

@@ -18,6 +18,10 @@ export function buildSpeechHelper() {
   const contents = path.join(speechHelperBundle, "Contents");
   mkdirSync(path.join(contents, "MacOS"), { recursive: true });
   copyFileSync(path.join(resourcesDir, "speech-helper-Info.plist"), path.join(contents, "Info.plist"));
+  // Chinese permission prompts: macOS reads zh_CN.lproj/InfoPlist.strings
+  // when Chinese comes first in the user's language list
+  mkdirSync(path.join(contents, "Resources", "zh_CN.lproj"), { recursive: true });
+  copyFileSync(path.join(resourcesDir, "speech-helper-zh_CN.strings"), path.join(contents, "Resources", "zh_CN.lproj", "InfoPlist.strings"));
   // The mac app ships for arm64 and x64, and the helper rides inside both
   // bundles, so it must be universal — bare `swiftc` builds host-arch only,
   // which inside an Intel app is a dictation helper that cannot launch.

@@ -16,6 +16,10 @@ export function buildRecorderHelper() {
   const contents = path.join(recorderHelperBundle, "Contents");
   mkdirSync(path.join(contents, "MacOS"), { recursive: true });
   copyFileSync(path.join(resourcesDir, "recorder-helper-Info.plist"), path.join(contents, "Info.plist"));
+  // Chinese permission prompts: macOS reads zh_CN.lproj/InfoPlist.strings
+  // when Chinese comes first in the user's language list
+  mkdirSync(path.join(contents, "Resources", "zh_CN.lproj"), { recursive: true });
+  copyFileSync(path.join(resourcesDir, "recorder-helper-zh_CN.strings"), path.join(contents, "Resources", "zh_CN.lproj", "InfoPlist.strings"));
   const slices = ["arm64", "x86_64"].map((arch) => {
     const slice = `${recorderHelperBinary}-${arch}`;
     execFileSync(

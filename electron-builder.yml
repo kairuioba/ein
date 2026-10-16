@@ -13,10 +13,15 @@ protocols:
 # --publish never, and must be uploaded to the GitHub release alongside the
 # artifacts — a release missing latest.yml leaves every Windows install
 # stranded on its installed version.
-publish:
-  - provider: github
-    owner: milind-soni
-    repo: openmausbot-releases
+# Chinese edition: no update feed. With upstream's feed the app would
+# "update" itself to the English release. To ship updates to your team, point
+# this at your own releases repository and upload latest-mac.yml and the .zip
+# files with each release (see README.zh-CN.md):
+#   publish:
+#     - provider: github
+#       owner: <your-org>
+#       repo: <your-releases-repo>
+publish: null
 
 directories:
   buildResources: build
@@ -42,6 +47,7 @@ files:
   - "!electron/resources/recorder-helper.swift"
   - "!electron/resources/recorder-helper-Info.plist"
   - "!electron/resources/OpenMausBot Recorder.app/**"
+  - "!electron/resources/*.strings"
   - "!**/node_modules/**"
   # The desktop shell reads the same dictionary as the UI and the harness.
   - shared/i18n/zh-CN.json
@@ -106,7 +112,15 @@ mac:
       to: cua-sdk
     - from: dist-native/cloudflared/darwin-${arch}/cloudflared
       to: cloudflared/cloudflared
+    # Chinese permission prompts (microphone, speech, accessibility, screen)
+    - from: build/zh_CN.lproj/InfoPlist.strings
+      to: zh_CN.lproj/InfoPlist.strings
   extendInfo:
+    # The Info.plist strings below are the English base; zh_CN.lproj carries
+    # the Chinese ones, and macOS picks by the user's language order.
+    CFBundleDevelopmentRegion: en
+    CFBundleLocalizations: [zh_CN, en]
+    CFBundleAllowMixedLocalizations: true
     NSMicrophoneUsageDescription: OpenMausBot uses the microphone for voice dictation into the composer.
     NSSpeechRecognitionUsageDescription: OpenMausBot transcribes your voice on-device to type messages for you.
     NSAccessibilityUsageDescription: OpenMausBot uses Accessibility when you let a bot control this Mac.

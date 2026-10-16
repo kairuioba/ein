@@ -7,10 +7,11 @@
 // electron-updater is vendored (electron/vendor/electron-updater.cjs) because
 // the packaged app ships no node_modules.
 import { app, ipcMain } from "electron";
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { createUpdaterCoordinator } from "./updater-coordinator.mjs";
+import { t } from "./i18n.cjs";
 
 const require = createRequire(import.meta.url);
 
@@ -61,11 +62,19 @@ export function startUpdater(mainWindow) {
     setState({ status: "idle" });
     return;
   }
+  // No feed baked in (electron-builder `publish: null`): the Chinese edition
+  // must never replace itself with the upstream English release, so it stays
+  // put until a team configures its own feed (README.zh-CN.md).
+  if (!existsSync(join(process.resourcesPath, "app-update.yml"))) {
+    updaterCoordinator = null;
+    setState({ status: "idle", unavailable: true });
+    return;
+  }
   try {
     ({ autoUpdater } = require("./vendor/electron-updater.cjs"));
   } catch {
     updaterCoordinator = null;
-    setState({ status: "error", message: "updater unavailable" });
+    setState({ status: "error", message: t("updater unavailable") });
     return;
   }
   autoUpdater.autoDownload = false; // button-driven download

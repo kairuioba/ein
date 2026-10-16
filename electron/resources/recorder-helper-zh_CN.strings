@@ -1,0 +1,3 @@
+/* 技能录制助手的权限弹窗文案（中文版）。 */
+"NSAccessibilityUsageDescription" = "在你教机器人一项可复用的技能时，OpenMausBot 会记录你用到的控件。";
+"NSInputMonitoringUsageDescription" = "在你教机器人一项可复用的技能时，OpenMausBot 会记录点击、滚动和快捷键。";

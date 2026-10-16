@@ -28,7 +28,6 @@ import {
   modelChips,
   strategyExamples,
   type EngineRow,
-  type EngineState,
   type EngineTone,
 } from "./engine-model";
 import { reviewCounts, reviewRules } from "./review-model";
@@ -164,8 +163,14 @@ function FoldedRow({ rows, expanded, onToggle }: { rows: EngineRow<Bot>[]; expan
             {summary.tone === "ok"
               ? t("All signed in")
               : summary.parts
-                  .filter((part) => part.state !== "ready")
-                  .map((part) => `${part.count} ${t(part.state === "found" ? "Found models" : ENGINE_STATE_LABEL[part.state as Exclude<EngineState, "found">])}`)
+                  .map((part) =>
+                    part.state === "missing"
+                      ? t("{count} not installed", { count: part.count })
+                      : part.state === "signin"
+                        ? t("{count} not signed in", { count: part.count })
+                        : null,
+                  )
+                  .filter(Boolean)
                   .join(t(", "))}
           </span>
         </>
@@ -427,10 +432,15 @@ export function EnginesSection() {
           {t("Command-line paths (advanced)")}
         </button>
         {showCli && (
-          <Panel className="mt-2 p-4">
-            <div className="mb-3 text-[12.5px] text-ink-secondary">{t("Which binary each engine runs. Saved as you go.")}</div>
-            <EnginesSettings />
-          </Panel>
+          <div className="mt-2 flex flex-col gap-3">
+            <Panel className="p-4">
+              <div className="mb-3 text-[12.5px] text-ink-secondary">{t("Which binary each engine runs. Saved as you go.")}</div>
+              <EnginesSettings />
+            </Panel>
+            {/* WorkBuddy's key and edition live in its row's detail; without a
+                WorkBuddy row they stay reachable here */}
+            {!state.instances.some((instance) => instance.driverKind === "workbuddyAgent") && <WorkBuddySettings />}
+          </div>
         )}
       </div>
 

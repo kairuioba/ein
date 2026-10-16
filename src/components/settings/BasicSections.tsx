@@ -492,7 +492,8 @@ export function AppearanceSection() {
 /** The skin's display name, for the nav meta. */
 export function currentSkinName(): string {
   const id = (typeof document !== "undefined" && document.documentElement.dataset.skin) || readSkin();
-  return SKINS.find((skin) => skin.id === id)?.name ?? "";
+  const name = SKINS.find((skin) => skin.id === id)?.name;
+  return name ? t(name) : "";
 }
 
 export function ConnectionsSection() {

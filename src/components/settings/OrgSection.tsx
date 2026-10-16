@@ -35,7 +35,7 @@ type OrgPatch = Partial<Omit<OrgConfig, "version" | "updatedAt">>;
 /** A failed org save, said plainly: a missing route means A1's service is not there yet. */
 export function orgSaveError(cause: unknown): Error {
   const message = cause instanceof Error ? cause.message : String(cause);
-  if (/^(404|405|501|502|503)$/.test(message.trim())) return new Error(t("the organization service isn't available yet"));
+  if (/^(404|405|501|502|503)$/.test(message.trim()) || /^no route\b/i.test(message.trim())) return new Error(t("the organization service isn't available yet"));
   return cause instanceof Error ? cause : new Error(message);
 }
 
@@ -44,7 +44,17 @@ export function useOrgEditor() {
   const { data: org, loaded, error } = useOrg();
   const save = useSaveState();
   const [overlay, setOverlay] = useState<OrgPatch>({});
-  const view: OrgConfig = { ...org, ...overlay } as OrgConfig;
+  // tolerate a partial body from the server: every list is present, rules complete
+  const merged = { ...org, ...overlay } as Partial<OrgConfig>;
+  const view: OrgConfig = {
+    version: 1,
+    chiefBotId: merged.chiefBotId ?? null,
+    departments: merged.departments ?? [],
+    projects: merged.projects ?? [],
+    rules: rulesOf(merged as Pick<OrgConfig, "rules">),
+    decisionRights: merged.decisionRights ?? [],
+    updatedAt: merged.updatedAt ?? 0,
+  };
   const apply = (patch: OrgPatch) => {
     setOverlay((current) => ({ ...current, ...patch }));
     const drop = () =>

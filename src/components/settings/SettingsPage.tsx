@@ -100,9 +100,10 @@ function SettingsNav({ section, query, onQuery }: { section: AppSettingsSection;
           value={query}
           onChange={(event) => onQuery(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key !== "Escape" || !query) return;
+            if (event.key !== "Escape") return;
             event.stopPropagation();
-            onQuery("");
+            if (query) onQuery("");
+            else dispatch({ type: "toggleAppSettings", open: false });
           }}
           placeholder={t("Search settings")}
           aria-label={t("Search settings")}

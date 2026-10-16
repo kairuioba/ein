@@ -4,10 +4,13 @@
 // src/state/org-api.ts. Returns true when it answered the request.
 import type { IncomingMessage, ServerResponse } from "node:http";
 
+import type { OrgEventLog } from "./events.ts";
+
 /** What the routes need from the server; wired in server/index.ts. */
 export interface OrgApiDeps {
   json: (res: ServerResponse, status: number, body: unknown) => void;
   readBody: (req: IncomingMessage) => Promise<unknown>;
+  events: OrgEventLog;
 }
 
 export async function handleOrgApi(

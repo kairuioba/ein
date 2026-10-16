@@ -61,6 +61,7 @@ import { reasonLabel } from "./reason-labels.ts";
 import { Dispatcher, dispatchSettings } from "./dispatch.ts";
 import { handleDispatchApi } from "./dispatch-api.ts";
 import { handleOrgApi, isOrgApiPath, type OrgApiDeps } from "./org/api.ts";
+import { OrgEventLog } from "./org/events.ts";
 import { candidatesFromInstances, recommendModels, type InstanceLike } from "../shared/model-recommender.ts";
 import { getLocale, isLocale, replyLanguageInstruction, setLocale } from "../shared/i18n.ts";
 import { openMausStatusSystemPrompt } from "./openmaus-status-capsule.ts";
@@ -4369,7 +4370,9 @@ function teamMapSnapshot() {
   return { collaborations, queued, running };
 }
 
-const orgApiDeps: OrgApiDeps = { json, readBody };
+/** What changed in the company, for "since you last looked" and the timeline. */
+const orgEvents = new OrgEventLog(DATA_DIR);
+const orgApiDeps: OrgApiDeps = { json, readBody, events: orgEvents };
 
 const dispatchApiDeps = {
   dispatcher,

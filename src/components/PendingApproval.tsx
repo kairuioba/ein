@@ -1,14 +1,14 @@
-// Pending approval, ported from the upstream pattern: an approval does
-// not sit in the transcript waiting to be noticed — it takes over the
-// composer. The prompt is disabled, a strip above it says exactly what
-// is being asked, and the send row is replaced by the decisions.
+// Pending approval. The card in the transcript (ApprovalCard) is where an
+// approval is answered; while one is open the composer stays locked, and
+// when that card is scrolled out of sight the composer shows a compact
+// strip (chat/ApprovalStrip) so a waiting bot is still impossible to miss.
 //
 // Faithful details worth keeping: one at a time with an "n of N" counter,
 // the detail printed raw in a monospace block that is NEVER truncated
 // (it scrolls instead), and the buttons ordered least-destructive-last so
 // the primary action sits under your thumb.
 import { memo } from "react";
-import { useStore, type Bot, type Message } from "@/state/store";
+import { useStore, type Action, type Bot, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { SkillRequestPreview } from "@/components/SkillRequestPreview";
 import { t } from "@/lib/i18n";
@@ -81,7 +81,8 @@ export function spokenApprovalPrompt(pending: Pending, requester: string): strin
   });
 }
 
-function label(pending: Pending): string {
+/** What kind of approval this is, in a few words. */
+export function approvalLabel(pending: Pending): string {
   if (isSkillApproval(pending)) {
     return t("Enable this learned skill");
   }
@@ -123,7 +124,7 @@ export const PendingApprovalPanel = memo(function PendingApprovalPanel({
             {t("{index} of {count}", { index: index + 1, count })}
           </span>
         )}
-        <span className="text-[13px] text-ink">{label(pending)}</span>
+        <span className="text-[13px] text-ink">{approvalLabel(pending)}</span>
         <span className="font-mono text-[11px] text-ink-secondary">
           {isSkillApproval(pending)
             ? "stage_skill"
@@ -150,6 +151,31 @@ export const PendingApprovalPanel = memo(function PendingApprovalPanel({
   );
 });
 
+/** The one way an approval is answered, shared by the transcript card, the
+ * composer strip and the old panel: the same request, the reviewed skill
+ * hash on allow, and "always allow" remembered against whoever asked. */
+export function approvalDecision(
+  pending: Pick<Pending, "requestId" | "allowKey" | "message">,
+  threadId: string,
+  behavior: "allow" | "deny",
+  options: { always?: boolean; bot?: Pick<Bot, "id">; onError?: (message: string) => void } = {},
+): Extract<Action, { type: "decideRequest" }> {
+  const reviewedSha256 = pending.message.card?.skillRequest
+    ? reviewedSkillSha256(pending.message.card.skillRequest)
+    : undefined;
+  return {
+    type: "decideRequest",
+    threadId,
+    requestId: pending.requestId,
+    behavior,
+    message: behavior === "deny" ? "Denied by the user." : undefined,
+    reviewedSha256: behavior === "allow" ? reviewedSha256 : undefined,
+    alwaysAllow:
+      options.always && options.bot && pending.allowKey ? { botId: options.bot.id, key: pending.allowKey } : undefined,
+    onError: options.onError,
+  };
+}
+
 export function PendingApprovalActions({
   pending,
   threadId,
@@ -170,15 +196,7 @@ export function PendingApprovalActions({
     ? reviewedSkillSha256(pending.message.card.skillRequest)
     : undefined;
   const decide = (behavior: "allow" | "deny", always = false) =>
-    dispatch({
-      type: "decideRequest",
-      threadId,
-      requestId: pending.requestId,
-      behavior,
-      message: behavior === "deny" ? "Denied by the user." : undefined,
-      reviewedSha256: behavior === "allow" ? reviewedSha256 : undefined,
-      alwaysAllow: always && bot && pending.allowKey ? { botId: bot.id, key: pending.allowKey } : undefined,
-    });
+    dispatch(approvalDecision(pending, threadId, behavior, { always, bot }));
 
   const base = "rounded-full px-3.5 py-1.5 text-[13.5px] transition-colors";
   return (

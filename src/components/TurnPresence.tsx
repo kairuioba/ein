@@ -1,9 +1,10 @@
-// Left-edge tail: mascot looks around while it works, with a live activity
-// sheen beside it. The moment there is an answer, the label is gone and
-// the full bubble pops in above the mascot (same left edge).
+// The typing line at the tail of a conversation (design U8): the bot's tile,
+// "<bot> is …" and three dots while it works, with a quiet elapsed time.
+// The moment there is an answer the line steps aside and the full bubble
+// pops in on the same left edge.
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
-import { WorkingTimer } from "@/components/WorkingIndicator";
+import { WorkingDots, WorkingTimer } from "@/components/WorkingIndicator";
 import { t } from "@/lib/i18n";
 
 export function TurnPresence({
@@ -47,30 +48,25 @@ export function TurnPresence({
 
   if (!mounted) return null;
   const showAnswer = phase === "answer" && children;
-  const showWorking = phase === "think";
   return (
     <div className="turn-presence flex flex-col items-start">
-      {showAnswer ? <div className="turn-answer">{children}</div> : null}
-      <div
-        className={cn(
-          "flex items-center gap-2",
-          showAnswer && "turn-mascot-tight",
-          phase === "think" && "turn-mascot-in",
-          phase === "out" && "turn-mascot-out",
-        )}
-      >
-        {avatar}
-        {showWorking ? (
-          <span className="flex items-baseline gap-2 leading-none">
-            <span className="thinking-shimmer animate-shimmer text-[13px]" aria-live="polite">
-              {label}
-            </span>
-            {since !== null && (
-              <WorkingTimer since={since} className="text-[11.5px] text-ink-secondary/70" />
-            )}
+      {showAnswer ? <div className="turn-answer w-full">{children}</div> : null}
+      {!showAnswer && (
+        <div
+          className={cn(
+            "flex min-h-6 items-center gap-2 text-[12.5px] text-ink-secondary",
+            phase === "think" && "turn-mascot-in",
+            phase === "out" && "turn-mascot-out",
+          )}
+        >
+          {avatar}
+          <span aria-live="polite" className="min-w-0 truncate">
+            {label}
           </span>
-        ) : null}
-      </div>
+          <WorkingDots size={4} className="text-ink-secondary/70" />
+          {since !== null && <WorkingTimer since={since} className="text-[11.5px] text-ink-secondary/60" />}
+        </div>
+      )}
     </div>
   );
 }

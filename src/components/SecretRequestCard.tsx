@@ -1,10 +1,12 @@
 import { useState, type FormEvent } from "react";
-import { Check, ExternalLink, KeyRound, Loader2, LockKeyhole, RefreshCw, X } from "lucide-react";
+import { Check, ExternalLink, KeyRound, Loader2, LockKeyhole, RefreshCw } from "lucide-react";
 
 import { credentialConfigPatch, credentialResumeOutcome } from "../../shared/credential-request";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import { api, useStore, type ConfigStatus, type Message } from "@/state/store";
+import { CardButton, ChatCard, RING, StatusPill } from "./chat/primitives";
+import { IconLock } from "./chat/icons";
 
 export function SecretRequestCard({
   botId,
@@ -101,97 +103,86 @@ export function SecretRequestCard({
     }).catch(() => {});
   };
 
+  const open = !provided && !declined;
   return (
-    <div className="flex w-full justify-start">
-      <div className="w-full max-w-[520px] overflow-hidden rounded-2xl border border-hairline/50 bg-card shadow-sm">
-        <div className="flex items-start gap-3 p-4">
-          <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-control text-ink">
-            <KeyRound size={19} />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <span className="truncate text-[14px] font-semibold text-ink">{secret.label}</span>
-              {provided && (
-                <span className="flex items-center gap-1 rounded-full bg-success/15 px-2 py-0.5 text-[11px] font-medium text-success">
-                  <Check size={11} /> {t("Saved")}
-                </span>
-              )}
-            </div>
-            <p className="mt-0.5 text-[12.5px] leading-relaxed text-ink-secondary">
-              {description}
-            </p>
-            {!provided && !declined && (
-              <p className="mt-1 flex items-center gap-1 text-[11.5px] text-ink-secondary/80">
-                <LockKeyhole size={11} /> {t("Stored securely by OpenMausBot and never added to chat.")}
-              </p>
-            )}
-            {error && <p role="alert" className="mt-2 text-[12px] text-danger">{error}</p>}
-          </div>
-          {!provided && !declined && (
-            <button
-              onClick={dismiss}
-              aria-label={t("Not now")}
-              title={t("Not now")}
-              className="rounded-md p-1 text-ink-secondary hover:bg-control hover:text-ink"
-            >
-              <X size={15} />
-            </button>
+    <ChatCard
+      label={secret.label}
+      title={
+        <span className="inline-flex items-center gap-1.5">
+          <KeyRound size={14} className="shrink-0 text-ink-secondary" />
+          {secret.label}
+        </span>
+      }
+      pill={
+        provided ? (
+          <StatusPill tone="green">{t("Saved")}</StatusPill>
+        ) : declined ? (
+          <StatusPill tone="red">{t("Not provided")}</StatusPill>
+        ) : (
+          <StatusPill tone="amber">{t("Waiting for you")}</StatusPill>
+        )
+      }
+      live
+      meta={
+        <>
+          <span>{description}</span>
+          {open && (
+            <span className="inline-flex items-center gap-1 text-ink-secondary/90">
+              <IconLock size={11} /> {t("Stored securely by OpenMausBot and never added to chat.")}
+            </span>
           )}
-        </div>
-        {!provided && !declined && (
-          <form onSubmit={(event) => void save(event)} className="border-t border-hairline/40 bg-panel/40 px-4 py-3">
-            <div className="flex gap-2">
-              <input
-                type="password"
-                autoComplete="new-password"
-                spellCheck={false}
-                value={value}
-                onChange={(event) => setValue(event.target.value)}
-                placeholder={secret.placeholder}
-                disabled={saving || savedLocally}
-                aria-label={secret.label}
-                className="min-w-0 flex-1 rounded-lg border border-hairline bg-inset px-3 py-2 text-[13px] text-ink outline-none placeholder:text-ink-secondary/60 focus:border-accent disabled:opacity-60"
-              />
-              <button
-                type="submit"
-                disabled={saving || (!value.trim() && !savedLocally)}
-                className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-[12.5px] font-medium text-primary-ink hover:opacity-90 disabled:opacity-50"
-              >
-                {saving ? <Loader2 size={13} className="animate-spin" /> : <LockKeyhole size={13} />}
-                {savedLocally ? t("Continue task") : t("Save securely")}
-              </button>
-            </div>
+        </>
+      }
+    >
+      {error && <p role="alert" className="text-[12px] text-danger">{error}</p>}
+      {open && (
+        <form onSubmit={(event) => void save(event)} className="mt-1 flex flex-col gap-2">
+          <input
+            type="password"
+            autoComplete="new-password"
+            spellCheck={false}
+            value={value}
+            onChange={(event) => setValue(event.target.value)}
+            placeholder={secret.placeholder}
+            disabled={saving || savedLocally}
+            aria-label={secret.label}
+            className={cn(
+              "min-w-0 rounded-[10px] bg-raised px-3 py-2 text-[13px] text-ink outline-none placeholder:text-ink-secondary/60 focus:inset-ring-[1.5px] focus:inset-ring-select disabled:opacity-60",
+              RING,
+            )}
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <CardButton type="submit" disabled={saving || (!value.trim() && !savedLocally)}>
+              {saving ? <Loader2 size={13} className="animate-spin" /> : <LockKeyhole size={13} />}
+              {savedLocally ? t("Continue task") : t("Save securely")}
+            </CardButton>
+            <CardButton variant="grey" onClick={dismiss}>
+              {t("Not now")}
+            </CardButton>
             <a
               href={secret.helpUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="mt-2 inline-flex items-center gap-1 text-[11.5px] text-accent hover:underline"
+              className="ml-auto inline-flex items-center gap-1 text-[12px] font-semibold text-accent-text hover:underline"
             >
               {t("Where to get this key")} <ExternalLink size={11} />
             </a>
-          </form>
-        )}
-        {(provided || declined) && (
-          <div className={cn(
-            "flex items-center justify-between border-t border-hairline/40 bg-panel/40 px-4 py-2.5 text-[11.5px]",
-            declined ? "text-danger" : "text-success",
-          )}>
-            <span className="flex items-center gap-1.5">
-              {secret.resumed ? <Check size={12} /> : error ? <KeyRound size={12} /> : <Loader2 size={12} className="animate-spin" />}
-              {footerLabel}
-            </span>
-            {!secret.resumed && error && (
-              <button
-                onClick={() => void retryResume()}
-                disabled={saving}
-                className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-[12px] font-medium text-primary-ink hover:opacity-90 disabled:opacity-50"
-              >
-                {saving ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} {t("Try again")}
-              </button>
-            )}
           </div>
-        )}
-      </div>
-    </div>
+        </form>
+      )}
+      {!open && (
+        <div className={cn("mt-0.5 flex items-center justify-between gap-2 text-[12px]", declined ? "text-danger" : "text-success")}>
+          <span className="flex items-center gap-1.5">
+            {secret.resumed ? <Check size={12} /> : error ? <KeyRound size={12} /> : <Loader2 size={12} className="animate-spin" />}
+            {footerLabel}
+          </span>
+          {!secret.resumed && error && (
+            <CardButton onClick={() => void retryResume()} disabled={saving}>
+              {saving ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} {t("Try again")}
+            </CardButton>
+          )}
+        </div>
+      )}
+    </ChatCard>
   );
 }

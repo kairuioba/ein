@@ -1,32 +1,23 @@
-import {
-  CalendarClock,
-  CheckCircle2,
-  CircleAlert,
-  ExternalLink,
-  Loader2,
-  ShieldAlert,
-  XCircle,
-} from "lucide-react";
-
+// A routine run as a result card (design U8): the routine's name, a status
+// pill, one line about what happened, and the ways in — the isolated run
+// itself and the routine's settings panel.
 import { cn } from "@/lib/cn";
 import { msg, t } from "@/lib/i18n";
 import type { RoutineRunCardData } from "../../shared/routine-run";
 import type { Message } from "@/state/store";
+import { CardButton, ChatCard, SOFT, StatusPill, type StatusTone } from "./chat/primitives";
 
 const DETAIL_LIMIT = 280;
 
 const COPY = {
-  queued: { label: msg("Queued"), tone: "text-ink-secondary", border: "border-hairline/45" },
-  running: { label: msg("Running"), tone: "text-accent", border: "border-accent/30" },
-  waiting: { label: msg("Needs your input"), tone: "text-warning", border: "border-warning/35" },
-  completed: { label: msg("Completed"), tone: "text-success", border: "border-success/30" },
-  failed: { label: msg("Failed"), tone: "text-danger", border: "border-danger/35" },
-  cancelled: { label: msg("Cancelled"), tone: "text-ink-secondary", border: "border-hairline/45" },
-  missed: { label: msg("Missed"), tone: "text-danger", border: "border-danger/35" },
-} satisfies Record<
-  RoutineRunCardData["status"],
-  { label: string; tone: string; border: string }
->;
+  queued: { label: msg("Queued"), tone: "grey" },
+  running: { label: msg("In progress"), tone: "blue" },
+  waiting: { label: msg("Needs your input"), tone: "amber" },
+  completed: { label: msg("Completed"), tone: "green" },
+  failed: { label: msg("Failed"), tone: "red" },
+  cancelled: { label: msg("Cancelled"), tone: "grey" },
+  missed: { label: msg("Missed"), tone: "red" },
+} satisfies Record<RoutineRunCardData["status"], { label: string; tone: StatusTone }>;
 
 function compactDetail(value: string | undefined): string {
   const clean = value?.replace(/\s+/g, " ").trim() ?? "";
@@ -44,32 +35,16 @@ export function hasRoutineExecutionTask(
   );
 }
 
-function StatusIcon({ status }: { status: RoutineRunCardData["status"] }) {
-  const className = "size-4 shrink-0";
-  switch (status) {
-    case "running":
-      return <Loader2 aria-hidden="true" className={cn(className, "animate-spin text-accent")} />;
-    case "waiting":
-      return <ShieldAlert aria-hidden="true" className={cn(className, "text-warning")} />;
-    case "completed":
-      return <CheckCircle2 aria-hidden="true" className={cn(className, "text-success")} />;
-    case "failed":
-    case "missed":
-      return <CircleAlert aria-hidden="true" className={cn(className, "text-danger")} />;
-    case "cancelled":
-      return <XCircle aria-hidden="true" className={cn(className, "text-ink-secondary")} />;
-    default:
-      return <CalendarClock aria-hidden="true" className={cn(className, "text-ink-secondary")} />;
-  }
-}
-
 export function RoutineRunCard({
   message,
   onOpen,
+  onOpenRoutine,
 }: {
   message: Message;
   /** Opens the isolated execution task; absent when it no longer exists. */
   onOpen?: () => void;
+  /** Opens the routine's panel (name, instructions, times, history). */
+  onOpenRoutine?: (routineId: string) => void;
 }) {
   const run = message.routineRun;
   // Newer computers can send this message kind to an older or partially
@@ -78,7 +53,7 @@ export function RoutineRunCard({
   if (!run) {
     const fallback = compactDetail(message.text);
     return fallback ? (
-      <div className="w-fit max-w-[min(42rem,88%)] rounded-2xl bg-card px-4 py-2.5 text-[14px] leading-relaxed text-ink">
+      <div className={cn("w-fit min-w-0 max-w-[560px] rounded-2xl rounded-tl-md px-[13px] py-[9px] text-[13.5px] leading-[1.6] text-ink", SOFT)}>
         {fallback}
       </div>
     ) : null;
@@ -91,45 +66,39 @@ export function RoutineRunCard({
       : (run.summary ?? run.error),
   );
   const actionLabel = run.status === "waiting" ? t("Review") : t("Open run");
+  const canOpen = Boolean(onOpen && run.executionThreadId);
 
   return (
-    <section
-      aria-label={t("{name} routine run: {status}", { name: run.routineName, status: t(copy.label) })}
-      className={cn(
-        "w-full max-w-[680px] rounded-2xl border bg-card px-3.5 py-3 shadow-sm",
-        copy.border,
-      )}
-    >
-      <div className="flex items-start gap-3">
-        <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-xl bg-inset">
-          <StatusIcon status={run.status} />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-            <h3 className="truncate text-[13.5px] font-semibold text-ink">{run.routineName}</h3>
-            <span aria-live="polite" className={cn("text-[11.5px] font-medium", copy.tone)}>
-              {t(copy.label)}
-            </span>
-          </div>
-          {detail && <p className="mt-1 line-clamp-2 text-[12.5px] leading-relaxed text-ink-secondary">{detail}</p>}
-        </div>
-        {onOpen && run.executionThreadId && (
-          <button
-            type="button"
-            onClick={onOpen}
-            aria-label={t("{action} for {name}", { action: actionLabel, name: run.routineName })}
-            className={cn(
-              "flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11.5px] font-medium transition-colors",
-              run.status === "waiting"
-                ? "bg-warning/15 text-warning hover:bg-warning/25"
-                : "bg-raised text-ink-secondary hover:bg-raised-hover hover:text-ink",
+    <ChatCard
+      label={t("{name} routine run: {status}", { name: run.routineName, status: t(copy.label) })}
+      title={run.routineName}
+      pill={
+        <StatusPill tone={copy.tone}>{t(copy.label)}</StatusPill>
+      }
+      live
+      meta={
+        detail ? (
+          <span className={cn("line-clamp-2", (run.status === "failed" || run.status === "missed") && "text-danger")}>{detail}</span>
+        ) : (
+          <span>{t("Routine run")}</span>
+        )
+      }
+      actions={
+        canOpen || onOpenRoutine ? (
+          <>
+            {canOpen && (
+              <CardButton onClick={onOpen} aria-label={t("{action} for {name}", { action: actionLabel, name: run.routineName })}>
+                {run.status === "waiting" ? t("Review") : t("Open")}
+              </CardButton>
             )}
-          >
-            {actionLabel}
-            <ExternalLink aria-hidden="true" size={12} />
-          </button>
-        )}
-      </div>
-    </section>
+            {onOpenRoutine && (
+              <CardButton variant="grey" onClick={() => onOpenRoutine(run.routineId)}>
+                {t("Scheduled task")}
+              </CardButton>
+            )}
+          </>
+        ) : undefined
+      }
+    />
   );
 }

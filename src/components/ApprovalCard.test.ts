@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { ApprovalCard } from "./ApprovalCard";
 import { spokenApprovalPrompt, type Pending } from "./PendingApproval";
-import type { Message } from "@/state/store";
+import type { Bot, Message } from "@/state/store";
 
 const routineRequest = {
   version: 1 as const,
@@ -205,5 +205,67 @@ describe("ApprovalCard learned skills", () => {
     const markup = renderToStaticMarkup(createElement(ApprovalCard, { message }));
     expect(markup).toContain("created by an older build");
     expect(markup).toContain("cannot be safely enabled");
+  });
+});
+
+describe("ApprovalCard company layer", () => {
+  const writer = { id: "writer", name: "Writer", autoApprove: false } as unknown as Bot;
+  const post = (patch: Partial<NonNullable<Message["card"]>> = {}): Message => ({
+    id: "post-card",
+    role: "bot",
+    kind: "options",
+    at: 1,
+    card: {
+      title: "Approval needed",
+      subtitle: JSON.stringify({ account: "Launch HQ", content: "Launch on Friday at 19:30" }),
+      options: ["Allow", "Deny"],
+      requestId: "req-post",
+      tool: "XIAOHONGSHU_CREATE_NOTE",
+      ...patch,
+    },
+  });
+
+  it("shows the server's rule as the lock line and never offers always-allow with it", () => {
+    const markup = renderToStaticMarkup(
+      createElement(ApprovalCard, { bot: writer, message: post({ rule: "External publishing always needs your approval" }) }),
+    );
+    expect(markup).toContain("Rule: External publishing always needs your approval");
+    expect(markup).toContain("Launch on Friday at 19:30");
+    expect(markup).toContain("Allow once");
+    expect(markup).toContain("Deny");
+    expect(markup).not.toContain("Always allow");
+  });
+
+  it("offers always-allow only when the server named the grant", () => {
+    const command = (allowKey?: string): Message => ({
+      ...post(),
+      card: { title: "Approval needed", subtitle: "git push", options: ["Allow", "Deny"], requestId: "req-git", tool: "Bash", allowKey },
+    });
+    const withKey = renderToStaticMarkup(createElement(ApprovalCard, { bot: writer, message: command("Bash:git") }));
+    expect(withKey).toContain("Always allow");
+    expect(withKey).toContain("Rule: Writer asks before actions that need permission");
+    expect(renderToStaticMarkup(createElement(ApprovalCard, { bot: writer, message: command() }))).not.toContain("Always allow");
+  });
+
+  it("voids an approval nobody answered while unattended", () => {
+    const markup = renderToStaticMarkup(
+      createElement(ApprovalCard, {
+        bot: writer,
+        message: post({ answered: "expired", dismissed: true, rule: "External publishing always needs your approval" }),
+      }),
+    );
+    expect(markup).toContain("Voided");
+    expect(markup).toContain("it did not run");
+    expect(markup).not.toContain("Allow once");
+    expect(markup).not.toContain("Denied");
+  });
+
+  it("calls an ask that closed before any answer reached it closed, not denied", () => {
+    const markup = renderToStaticMarkup(
+      createElement(ApprovalCard, { bot: writer, message: post({ answered: "unavailable", dismissed: true }) }),
+    );
+    expect(markup).toContain("Closed");
+    expect(markup).not.toContain("Denied");
+    expect(markup).not.toContain("Allow once");
   });
 });

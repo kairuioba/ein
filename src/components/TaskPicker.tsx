@@ -5,7 +5,7 @@
 // own transcript and its own provider session — so sensitive work, a
 // long job and a quick question can sit side by side under one agent.
 import { useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { Check, ChevronDown, Layers, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { useStore, formatTime, type Bot, type Group, type Task } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { COMPACT_BUBBLE } from "@/lib/compact-chip";
@@ -79,6 +79,7 @@ function ConversationTaskPicker({
   onSwitch,
   onRename,
   onDelete,
+  variant = "chip",
 }: {
   threadId: string;
   tasks: PickerTask[];
@@ -87,6 +88,9 @@ function ConversationTaskPicker({
   onSwitch: (threadId: string) => void;
   onRename: (threadId: string, title: string) => void;
   onDelete: (threadId: string) => void;
+  /** "quiet": the 1:1 header's borderless title switch, shown only once
+   * there is more than one task (New task lives in the header's menu). */
+  variant?: "chip" | "quiet";
 }) {
   const [open, setOpen] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -174,6 +178,7 @@ function ConversationTaskPicker({
   // a bot that has only ever done one thing doesn't need a switcher yet —
   // just the button that gives it a second context
   if (tasks.length <= 1) {
+    if (variant === "quiet") return null;
     return (
       <button
         type="button"
@@ -218,7 +223,32 @@ function ConversationTaskPicker({
   const looking = query.trim();
 
   return (
-    <div className="relative" ref={ref}>
+    // quiet: in a narrow header it gives way before the bot's name does
+    <div
+      className={cn("relative", variant === "quiet" && "min-w-0 @max-xs/chathead:hidden")}
+      style={variant === "quiet" ? { flexShrink: 4 } : undefined}
+      ref={ref}
+    >
+      {variant === "quiet" ? (
+        <button
+          type="button"
+          onClick={() => {
+            if (open) closeMenu();
+            else setOpen(true);
+          }}
+          title={current ? `${shownTaskTitle(current.title)} · ${switchTitle}` : switchTitle}
+          aria-label={t("Switch task")}
+          aria-expanded={open}
+          className="flex h-7 max-w-[200px] min-w-0 items-center gap-1 rounded-lg px-2 text-[12.5px] text-ink-secondary hover:bg-raised-hover hover:text-ink"
+        >
+          {/* folded below ~670px of header: an icon, the count and the
+              chevron; the title rides the tooltip */}
+          <Layers size={13} className="hidden shrink-0 @max-2xl/chathead:block" aria-hidden />
+          <span className="truncate @max-2xl/chathead:hidden">{current ? shownTaskTitle(current.title) : t("Task")}</span>
+          <span className="shrink-0 tabular-nums opacity-60 @max-2xl/chathead:opacity-100">{tasks.length}</span>
+          <ChevronDown size={12} className="shrink-0" />
+        </button>
+      ) : (
       <button
         type="button"
         onClick={() => {
@@ -236,9 +266,15 @@ function ConversationTaskPicker({
         <span className="shrink-0 tabular-nums opacity-60 @max-4xl/chathead:opacity-100">{tasks.length}</span>
         <ChevronDown size={12} className="shrink-0 @max-4xl/chathead:hidden" />
       </button>
+      )}
 
       {open && (
-        <div className="absolute right-0 top-full z-40 mt-1 w-[300px] overflow-hidden rounded-xl border border-hairline/50 bg-card py-1 shadow-2xl shadow-black/50">
+        <div
+          className={cn(
+            "absolute top-full z-40 mt-1 w-[300px] overflow-hidden rounded-xl border border-hairline/50 bg-card py-1 shadow-2xl shadow-black/50",
+            variant === "quiet" ? "left-0" : "right-0",
+          )}
+        >
           <div className="px-2 pb-1 pt-1.5">
             <div className="flex items-center gap-2 rounded-lg border border-hairline/40 bg-inset px-2.5 py-1.5 focus-within:border-accent/60">
               <Search size={13} className="shrink-0 text-ink-secondary" />
@@ -378,10 +414,11 @@ function ConversationTaskPicker({
   );
 }
 
-export function TaskPicker({ bot }: { bot: Bot }) {
+export function TaskPicker({ bot, variant }: { bot: Bot; variant?: "chip" | "quiet" }) {
   const { dispatch } = useStore();
   return (
     <ConversationTaskPicker
+      variant={variant}
       threadId={bot.threadId}
       tasks={bot.tasks ?? []}
       busy={Boolean(bot.busy)}

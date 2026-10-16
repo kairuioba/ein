@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, Loader2, PlugZap, RefreshCw, X } from "lucide-react";
+import { Check, Loader2, PlugZap, RefreshCw } from "lucide-react";
 
 import { api, type Message } from "@/state/store";
 import { t } from "@/lib/i18n";
+import { CardButton, ChatCard, StatusPill } from "./chat/primitives";
 
 async function openConnectionPage(url: string) {
   if (window.ogb?.openExternal) {
@@ -91,68 +92,67 @@ export function ConnectorCard({ botId, threadId, message }: { botId: string; thr
   const error = localError ?? connector.error;
 
   return (
-    <div className="flex w-full justify-start">
-      <div className="w-full max-w-[520px] overflow-hidden rounded-2xl border border-hairline/50 bg-card shadow-sm">
-        <div className="flex items-start gap-3 p-4">
-          <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-control text-[16px] font-semibold text-ink">
-            {connector.label.slice(0, 1).toUpperCase() || <PlugZap size={19} />}
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <span className="truncate text-[14px] font-semibold text-ink">{connector.label}</span>
-              {connected && (
-                <span className="flex items-center gap-1 rounded-full bg-success/15 px-2 py-0.5 text-[11px] font-medium text-success">
-                  <Check size={11} /> {t("Connected")}
-                </span>
-              )}
-            </div>
-            <p className="mt-0.5 text-[12.5px] leading-relaxed text-ink-secondary">
-              {connected
-                ? connector.resumed
-                  ? t("Connected securely. Your bot is continuing the task.")
-                  : t("Connected securely. Continue the paused task when you're ready.")
-                : connector.description}
-            </p>
-            {!connected && (
-              <p className="mt-1 text-[11.5px] text-ink-secondary/80">
-                {t("Sign in or enter the app key on the secure connection page — never in chat.")}
-              </p>
-            )}
-            {error && <p className="mt-2 text-[12px] text-danger">{error}</p>}
-          </div>
+    <ChatCard
+      label={connector.label}
+      title={
+        <span className="inline-flex items-center gap-1.5">
+          <span className="grid size-[18px] shrink-0 place-items-center rounded-[5px] bg-raised text-[11px] font-bold text-ink">
+            {connector.label.slice(0, 1).toUpperCase() || <PlugZap size={12} />}
+          </span>
+          {connector.label}
+        </span>
+      }
+      pill={
+        connected ? (
+          <StatusPill tone="green">{t("Connected")}</StatusPill>
+        ) : authorizing ? (
+          <StatusPill tone="blue">{t("Waiting for sign-in…")}</StatusPill>
+        ) : connector.status === "failed" ? (
+          <StatusPill tone="red">{t("Failed")}</StatusPill>
+        ) : (
+          <StatusPill tone="amber">{t("Needs connecting")}</StatusPill>
+        )
+      }
+      live
+      meta={
+        <>
+          <span>
+            {connected
+              ? connector.resumed
+                ? t("Connected securely. Your bot is continuing the task.")
+                : t("Connected securely. Continue the paused task when you're ready.")
+              : connector.description}
+          </span>
           {!connected && (
-            <button onClick={dismiss} aria-label={t("Not now")} title={t("Not now")} className="rounded-md p-1 text-ink-secondary hover:bg-control hover:text-ink">
-              <X size={15} />
-            </button>
+            <span className="text-ink-secondary/90">
+              {t("Sign in or enter the app key on the secure connection page — never in chat.")}
+            </span>
           )}
-        </div>
-        <div className="flex items-center justify-between border-t border-hairline/40 bg-panel/40 px-4 py-2.5">
-          <div className="flex items-center gap-1.5 text-[11.5px] text-ink-secondary">
-            {authorizing ? <Loader2 size={12} className="animate-spin" /> : <PlugZap size={12} />}
-            {authorizing ? t("Waiting for sign-in…") : connected ? t("Ready to use") : t("Requested by your bot")}
-          </div>
-          {!connected ? (
-            <button
-              onClick={() => void connect()}
-              disabled={busy}
-              className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-[12.5px] font-medium text-primary-ink hover:opacity-90 disabled:opacity-50"
-            >
+        </>
+      }
+      actions={
+        !connected ? (
+          <>
+            <CardButton onClick={() => void connect()} disabled={busy}>
               {busy || authorizing ? <Loader2 size={13} className="animate-spin" /> : <PlugZap size={13} />}
               {authorizing ? t("Open again") : connector.status === "failed" ? t("Try again") : t("Connect securely")}
-            </button>
-          ) : !connector.resumed ? (
-            <button
-              onClick={() => void resume()}
-              disabled={busy}
-              className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-[12.5px] font-medium text-primary-ink hover:opacity-90 disabled:opacity-50"
-            >
-              {busy ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />} {t("Continue task")}
-            </button>
-          ) : (
-            <span className="flex items-center gap-1 text-[12px] font-medium text-success"><Check size={13} /> {t("Continuing")}</span>
-          )}
-        </div>
-      </div>
-    </div>
+            </CardButton>
+            <CardButton variant="grey" onClick={dismiss}>
+              {t("Not now")}
+            </CardButton>
+          </>
+        ) : !connector.resumed ? (
+          <CardButton onClick={() => void resume()} disabled={busy}>
+            {busy ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />} {t("Continue task")}
+          </CardButton>
+        ) : (
+          <span className="flex items-center gap-1 text-[12px] font-semibold text-success">
+            <Check size={13} /> {t("Continuing")}
+          </span>
+        )
+      }
+    >
+      {error && <p className="text-[12px] text-danger">{error}</p>}
+    </ChatCard>
   );
 }

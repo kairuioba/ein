@@ -3,7 +3,7 @@
 // replies, what the bottom error strip shows, the dispatch runs a chat
 // owns, the typing line and the routine panel's labels. No React here, so
 // every rule is unit-tested in chat-model.test.ts.
-import { intlLocale, t } from "@/lib/i18n";
+import { allTranslations, intlLocale, t } from "@/lib/i18n";
 import type { Message } from "@/state/store";
 import type { DispatchRun, RunStatus } from "../../../shared/dispatch-types";
 import type { Routine, RoutineRun, RoutineSchedule } from "@/lib/routines";
@@ -18,6 +18,24 @@ export function isSystemLine(message: Message): boolean {
   return (message.tool as { system?: unknown }).system === true;
 }
 
+/** The note the company layer posts when an approval waited too long while
+ * nobody was at the keyboard (server/org/layer.ts). It arrives as a failed
+ * chip ({ name, ok: false }) without a marker, so it is recognised by its
+ * text in any language the app ships. */
+const EXPIRY_NOTE = "Nobody approved this within {minutes} minutes while unattended, so it did not run";
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const EXPIRY_PATTERNS = allTranslations(EXPIRY_NOTE).map(
+  (rendering) => new RegExp(`^${escapeRegExp(rendering).replace(escapeRegExp("{minutes}"), "\\d+")}$`),
+);
+
+/** An unattended approval that expired: a quiet system line, not a failure
+ * for the strip above the composer — nothing is left to retry. */
+export function isExpiryLine(message: Message): boolean {
+  if (message.kind !== "activity" || message.tool?.ok !== false || message.comm) return false;
+  const text = message.tool.name.trim();
+  return EXPIRY_PATTERNS.some((pattern) => pattern.test(text));
+}
+
 /** A failed turn ("error: …"): an error block with Retry, not a chip. */
 export function isTurnError(message: Message): boolean {
   return message.kind === "activity" && Boolean(message.tool?.name.startsWith("error:"));
@@ -30,7 +48,8 @@ export function isFailureLine(message: Message): boolean {
     message.kind === "activity" &&
     message.tool?.ok === false &&
     !message.comm &&
-    !message.tool.name.startsWith("error:")
+    !message.tool.name.startsWith("error:") &&
+    !isExpiryLine(message)
   );
 }
 
@@ -47,7 +66,7 @@ export function currentFailure(messages: readonly Message[]): Message | undefine
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index]!;
     if (message.kind === "text") return undefined;
-    if (message.kind === "activity" && message.tool?.ok === false && !message.comm) return message;
+    if (message.kind === "activity" && message.tool?.ok === false && !message.comm && !isExpiryLine(message)) return message;
   }
   return undefined;
 }
@@ -159,9 +178,12 @@ export function isActiveRun(status: RunStatus): boolean {
   return status === "running" || status === "synthesizing";
 }
 
-/** "N running" in the header: this bot's dispatch runs still working. */
+/** "N running" in the header: this bot's own dispatch runs still working. A
+ * run stays "synthesizing" until the chief's report turn ends, so that
+ * counts; a department lead's run for one subtask (parentRunId) is part of
+ * its parent's run and does not count again. */
 export function runningRunCount(runs: readonly DispatchRun[], botId: string): number {
-  return runs.filter((run) => run.chiefBotId === botId && isActiveRun(run.status)).length;
+  return runs.filter((run) => run.chiefBotId === botId && !run.parentRunId && isActiveRun(run.status)).length;
 }
 
 /** The runs started from this conversation, oldest first. */

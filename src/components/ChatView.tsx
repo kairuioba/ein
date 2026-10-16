@@ -79,11 +79,12 @@ import { ChatHeader } from "./chat/ChatHeader";
 import { RoutinePanel } from "./chat/RoutinePanel";
 import { DecisionCard, DispatchRunCard } from "./chat/ResultCards";
 import { CardButton, ErrorStrip, SOFT, SystemLine, ThreadLink, TimeSeparator } from "./chat/primitives";
-import { IconBolt, IconUsers } from "./chat/icons";
+import { IconBolt, IconClock, IconUsers } from "./chat/icons";
 import {
   clockLabel,
   currentFailure,
   failureText,
+  isExpiryLine,
   isFailureLine,
   isSystemLine,
   isTurnError,
@@ -733,6 +734,11 @@ const MessagesList = memo(function MessagesList({
               // are centred system lines; bot⇄bot chips link to the channel
               if (isSystemLine(m)) {
                 return <SystemLine icon={<IconUsers size={13} />}>{m.tool?.name}</SystemLine>;
+              }
+              // an approval that expired while nobody was there: said once,
+              // quietly — the card above already reads 已作废
+              if (isExpiryLine(m)) {
+                return <SystemLine icon={<IconClock size={13} />}>{m.tool?.name}</SystemLine>;
               }
               if (isFailureLine(m)) {
                 return (

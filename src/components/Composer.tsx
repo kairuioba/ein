@@ -716,8 +716,12 @@ export function Composer({
         <div className="relative">
           {/* Stage colour from the pill's midline down, across the whole
               chat column: bubbles may tuck into the top half of the pill's
-              radius, never below its centre. */}
-          <div aria-hidden className="absolute top-1/2 -bottom-3 left-1/2 w-[200vw] -translate-x-1/2 bg-stage" />
+              radius, never below its centre. Under a strip the whole pill
+              sits on the stage, so nothing peeks out at its corners. */}
+          <div
+            aria-hidden
+            className={cn("absolute -bottom-3 left-1/2 w-[200vw] -translate-x-1/2 bg-stage", stripsShown ? "top-0" : "top-1/2")}
+          />
           <div
             className={cn(
               "relative z-[1] flex min-h-[50px] items-end gap-2 rounded-[25px] bg-raised py-[8px] pr-2 pl-2.5",

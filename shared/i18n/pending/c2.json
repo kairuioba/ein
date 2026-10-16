@@ -6,9 +6,6 @@
   "No skills yet — import one in the bot's settings.": "还没有技能——可以在 Bot 设置里导入。",
   "Attach and options": "附件和选项",
   "Mention a bot": "提及 Bot",
-  "Rule: anything published outside always needs you": "规则：对外发布一律要你批",
-  "Rule: using this computer needs your OK": "规则：操作这台电脑要你批",
-  "Rule: {name} asks before actions that need permission": "规则：需要权限的操作，{name} 会先问你",
   "Approved to send": "已批准发送",
   "Discarded": "已丢弃",
   "Closed": "已关闭",
@@ -104,5 +101,16 @@
   "{name} is thinking": "{name}正在思考",
   "Use the “{name}” skill: ": "使用「{name}」技能：",
   "Always allow": "总是允许",
-  "The day before yesterday": "前天"
+  "The day before yesterday": "前天",
+  "Rule: {rule}": "规则：{rule}",
+  "Using this computer needs your OK": "操作这台电脑要你批",
+  "{name} asks before actions that need permission": "需要权限的操作，{name} 会先问你",
+  "Voided": "已作废",
+  "Nobody approved it in time while unattended — it did not run": "无人值守，没人及时批，没有执行",
+  "Nobody answered in time while unattended": "无人值守，没人及时回答",
+  "Asked by {name}": "{name} 提问",
+  "Recorded as decision #{id}": "已记为决议 #{id}",
+  "{count} done": "{count} 个已完成",
+  "{squad} · {count} person": "{squad} · {count} 人",
+  "{squad} · {count} people": "{squad} · {count} 人"
 }

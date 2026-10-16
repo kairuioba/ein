@@ -1,7 +1,7 @@
 // Result cards in the chief's chat (design U8): a dispatch run started from
 // this conversation — goal, status pill, progress, who is on it — and a
 // decision taken in a meeting, with the ways back to the details.
-import { useRef, useState } from "react";
+import { Fragment, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { api, openNotificationTarget, useStore, type Bot } from "@/state/store";
 import { cn } from "@/lib/cn";
@@ -47,6 +47,8 @@ export function DispatchRunCard({ run, bots }: { run: DispatchRun; bots: readonl
   const shown = names.slice(0, 3).map((name) => `@${name}`).join(t(", "));
   const more = names.length > 3 ? t(" +{count} more", { count: names.length - 3 }) : "";
   const openable = run.subtasks.filter((subtask) => subtask.threadId && bots.some((bot) => bot.id === subtask.assigneeBotId));
+  // people added mid-run (中途加人): one squad per addition, until the run ends
+  const squads = (run.squads ?? []).filter((squad) => !squad.endedAt);
 
   const act = async (verb: "approve" | "cancel") => {
     setWorking(verb);
@@ -77,6 +79,12 @@ export function DispatchRunCard({ run, bots }: { run: DispatchRun; bots: readonl
               <span>{t("Assigned to {names}", { names: `${shown}${more}` })}</span>
             </>
           )}
+          {squads.map((squad) => (
+            <Fragment key={`${squad.name}:${squad.addedAt}`}>
+              <MetaDot />
+              <span>{tn(squad.botIds.length, "{squad} · {count} person", "{squad} · {count} people", { squad: squad.name })}</span>
+            </Fragment>
+          ))}
           {progress.failed > 0 && (
             <>
               <MetaDot />

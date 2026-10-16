@@ -10,6 +10,7 @@ import {
   dayChoice,
   dayLabel,
   failureText,
+  isExpiryLine,
   isFailureLine,
   isSystemLine,
   isTurnError,
@@ -62,6 +63,16 @@ describe("row kinds", () => {
     expect(failureText(turn)).toBe("the CLI exited");
     expect(failureText(retry)).toContain("will retry");
   });
+
+  it("recognises the company layer's expiry note in English and Chinese", () => {
+    const english = activity("x", { name: "Nobody approved this within 10 minutes while unattended, so it did not run", ok: false });
+    const chinese = activity("z", { name: "无人值守 30 分钟没人批，已作废，没有执行", ok: false });
+    expect(isExpiryLine(english)).toBe(true);
+    expect(isExpiryLine(chinese)).toBe(true);
+    expect(isFailureLine(english)).toBe(false);
+    expect(isExpiryLine(activity("y", { name: "Nobody approved this within ten minutes while unattended, so it did not run", ok: false }))).toBe(false);
+    expect(isExpiryLine(activity("w", { name: "timeout, retrying", ok: false }))).toBe(false);
+  });
 });
 
 describe("currentFailure", () => {
@@ -80,6 +91,13 @@ describe("currentFailure", () => {
   it("ignores bot-to-bot chips", () => {
     const comm = activity("c", { name: "Messaged @Kimi", ok: false }, { comm: { groupId: "g", withBotId: "b", withName: "Kimi", withColor: "blue" } });
     expect(currentFailure([comm])).toBeUndefined();
+  });
+
+  it("leaves an expired approval in the history instead of the strip", () => {
+    const failure = activity("f", { name: "timeout, retrying", ok: false });
+    const expiry = activity("x", { name: "Nobody approved this within 10 minutes while unattended, so it did not run", ok: false });
+    expect(currentFailure([expiry])).toBeUndefined();
+    expect(currentFailure([failure, expiry])?.id).toBe("f");
   });
 });
 
@@ -194,9 +212,18 @@ describe("dispatch runs", () => {
     attempts: 1,
   });
 
-  it("counts a bot's runs that are still working", () => {
-    const runs = [run("1", {}), run("2", { status: "synthesizing" }), run("3", { status: "done" }), run("4", { chiefBotId: "other" })];
+  it("counts a bot's top-level runs that are still working", () => {
+    const runs = [
+      run("1", {}),
+      run("2", { status: "synthesizing" }),
+      run("3", { status: "done" }),
+      run("4", { chiefBotId: "other" }),
+      run("5", { status: "awaiting-approval" }),
+      // a department lead's plan for one subtask is part of run 1
+      run("6", { parentRunId: "1", parentSubtaskId: "s1" }),
+    ];
     expect(runningRunCount(runs, "chief")).toBe(2);
+    expect(runningRunCount([run("7", { chiefBotId: "lead", parentRunId: "1" })], "lead")).toBe(0);
   });
 
   it("lists this conversation's runs oldest first", () => {

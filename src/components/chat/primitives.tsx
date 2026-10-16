@@ -64,9 +64,25 @@ const STATUS_TONE: Record<StatusTone, string> = {
 
 /** The status word on a card (the design's 20px pill with a dot): green done,
  * amber waiting on you, blue working, red failed, grey quiet. */
-export function StatusPill({ tone = "grey", dot = true, className, children }: { tone?: StatusTone; dot?: boolean; className?: string; children: ReactNode }) {
+export function StatusPill({
+  tone = "grey",
+  dot = true,
+  className,
+  title,
+  children,
+}: {
+  tone?: StatusTone;
+  dot?: boolean;
+  className?: string;
+  /** the full text when the pill clips it */
+  title?: string;
+  children: ReactNode;
+}) {
   return (
-    <span className={cn("inline-flex h-5 shrink-0 items-center gap-[5px] rounded-full px-2 text-[11.5px] font-semibold whitespace-nowrap", STATUS_TONE[tone], className)}>
+    <span
+      title={title}
+      className={cn("inline-flex h-5 shrink-0 items-center gap-[5px] rounded-full px-2 text-[11.5px] font-semibold whitespace-nowrap", STATUS_TONE[tone], className)}
+    >
       {dot && <span aria-hidden className="size-1.5 rounded-full bg-current" />}
       {children}
     </span>

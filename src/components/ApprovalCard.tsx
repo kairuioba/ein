@@ -15,9 +15,9 @@ import { SkillRequestPreview } from "@/components/SkillRequestPreview";
 import { msg, t } from "@/lib/i18n";
 import { reviewedSkillSha256 } from "../../shared/skill-request";
 import { approvalDecision, type Pending } from "./PendingApproval";
-import { approvalPreview, isExternalPublish, previewTitle, type ApprovalPreview } from "./chat/approval-preview";
+import { approvalPreview, previewTitle, type ApprovalPreview } from "./chat/approval-preview";
 import { CardButton, CardInset, ChatCard, MetaDot, StatusPill } from "./chat/primitives";
-import { IconLock } from "./chat/icons";
+import { IconClock, IconLock } from "./chat/icons";
 import { useOptionalStore } from "./chat/use-optional-store";
 
 interface ToolLabels {
@@ -56,13 +56,16 @@ function toolLabel(tool?: string): string {
   return nice[tool] ?? bare;
 }
 
-/** Why this reached a person: the server's own reason when it gave one,
- * else the org rule that applies to this kind of action. */
-function ruleFor(card: NonNullable<Message["card"]>, preview: ApprovalPreview | null, asker?: Pick<Bot, "name" | "autoApprove">): string | undefined {
+/** The lock line — why this reached a person: the company layer's rule when
+ * the server stamped one (already localized, e.g. 对外发布一律要你批), else
+ * why auto mode stopped to ask, else the standing rule for this kind of ask. */
+function ruleFor(card: NonNullable<Message["card"]>, asker?: Pick<Bot, "name" | "autoApprove">): string | undefined {
+  if (card.rule?.trim()) return t("Rule: {rule}", { rule: card.rule.trim() });
   if (card.held) return card.held;
-  if (preview && isExternalPublish(preview.kind)) return t("Rule: anything published outside always needs you");
-  if (card.approvalScope === "local-computer") return t("Rule: using this computer needs your OK");
-  if (asker && !asker.autoApprove) return t("Rule: {name} asks before actions that need permission", { name: asker.name });
+  if (card.approvalScope === "local-computer") return t("Rule: {rule}", { rule: t("Using this computer needs your OK") });
+  if (asker && !asker.autoApprove) {
+    return t("Rule: {rule}", { rule: t("{name} asks before actions that need permission", { name: asker.name }) });
+  }
   return undefined;
 }
 
@@ -89,6 +92,9 @@ export function ApprovalCard({
   const card = message.card;
   if (!card) return null;
   const settled = card.answered;
+  // the company layer voids an approval nobody answered in time while the
+  // owner was away: it was denied for them and did not run
+  const expired = settled === "expired";
   const open = !settled && !card.dismissed;
   const isRoutineRequest = Boolean(card.routineRequest);
   const isSkillRequest = Boolean(card.skillRequest);
@@ -109,8 +115,9 @@ export function ApprovalCard({
       ? t("{name} wants to {action}", { name: askerName, action: toolLabel(displayTool) })
       : t("Wants to {action}", { action: toolLabel(displayTool) }));
 
-  const settledLabel =
-    settled === "allow"
+  const settledLabel = expired
+    ? t("Voided")
+    : settled === "allow"
       ? (skillAction ? t(SKILL_SETTLED_LABEL[skillAction]) : undefined) ??
         (routineAction ? t(ROUTINE_SETTLED_LABEL[routineAction]) : undefined) ??
         (isRoutineRequest ? t("Routine confirmed") : isSkillRequest ? t("Skill confirmed") : draft ? t("Approved to send") : t("Allowed"))
@@ -129,7 +136,9 @@ export function ApprovalCard({
     <StatusPill tone="amber">{isRoutineRequest || isSkillRequest ? t("Needs your OK") : t("Needs your approval")}</StatusPill>
   );
 
-  const rule = isRoutineRequest || isSkillRequest ? undefined : ruleFor(card, preview, bot);
+  // a draft says who drafted it; the generic "asks first" rule would only
+  // repeat what the Draft pill already means (the design shows none there)
+  const rule = isRoutineRequest || isSkillRequest ? undefined : ruleFor(card, draft ? undefined : bot);
   const meta: ReactNode[] = [];
   if (draft && askerName) meta.push(<span key="by">{t("Drafted by {name}", { name: askerName })}</span>);
   else if (preview && previewTitle(preview) && askerName) meta.push(<span key="by">{t("{name} asks", { name: askerName })}</span>);
@@ -140,7 +149,15 @@ export function ApprovalCard({
       </span>,
     );
   }
-  if (rule) {
+  if (expired) {
+    // what happened outranks why it was asked
+    meta.push(
+      <span key="expired" className="inline-flex items-center gap-1">
+        <IconClock size={12} />
+        {t("Nobody approved it in time while unattended — it did not run")}
+      </span>,
+    );
+  } else if (rule) {
     meta.push(
       <span key="rule" className="inline-flex items-center gap-1">
         <IconLock size={12} />

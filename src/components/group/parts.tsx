@@ -11,7 +11,7 @@ import { useOrg } from "@/state/org-api";
 import { chiefBot } from "@/lib/org";
 import { cn } from "@/lib/cn";
 import { formatTime, useStore, type Bot } from "@/state/store";
-import { msg, t } from "@/lib/i18n";
+import { formatDateTime, msg, t } from "@/lib/i18n";
 import { decisionHeadline } from "@/lib/group-meeting";
 import type { NumberedSource } from "@/lib/group-sources";
 
@@ -54,9 +54,25 @@ export function CiteNumber({ n, onJump, className }: { n: number; onJump?: () =>
   );
 }
 
+/** "今天" / "昨天" / "9月25日" — when a cited version was published. */
+export function shortDay(at: number): string {
+  const start = (value: Date) => new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();
+  const days = Math.round((start(new Date()) - start(new Date(at))) / 86_400_000);
+  if (days === 0) return t("Today");
+  if (days === 1) return t("Yesterday");
+  return formatDateTime(at, { month: "short", day: "numeric" });
+}
+
+/** The words after a source's title: what the citation said, else when the
+ * cited version was published. */
+export function sourceDetail(source: Pick<NumberedSource, "detail" | "versionAt">): string | undefined {
+  return source.detail ?? (source.versionAt ? shortDay(source.versionAt) : undefined);
+}
+
 /** One cited source as a chip: icon, label, number. */
 export function SourceChip({ source, onOpen }: { source: NumberedSource; onOpen: (source: NumberedSource) => void }) {
   const Icon = source.kind === "web" ? Globe : FileText;
+  const detail = source.detail ? undefined : sourceDetail(source);
   return (
     <button
       type="button"
@@ -66,7 +82,7 @@ export function SourceChip({ source, onOpen }: { source: NumberedSource; onOpen:
       style={{ boxShadow: "inset 0 0 0 1px color-mix(in oklab, var(--color-hairline) 45%, transparent)" }}
     >
       <Icon size={12} className="shrink-0 opacity-70" aria-hidden />
-      <span className="truncate">{source.label}</span>
+      <span className="truncate">{detail ? `${source.label} · ${detail}` : source.label}</span>
       <span className="ml-0.5 inline-grid h-4 min-w-4 place-items-center rounded-[4px] bg-select/10 px-[3px] text-[10px] font-bold text-accent-text tabular-nums">
         {source.n}
       </span>

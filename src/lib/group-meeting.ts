@@ -80,10 +80,14 @@ export function isQuestionCard(message: MessageLike): boolean {
   return message.kind === "options" && Boolean(message.card?.requestId) && !message.card?.tool;
 }
 
-/** A question the owner actually answered (not voided, not dismissed by the system). */
+/** `answered` values that mean nobody chose: the ask could not be delivered,
+ * it expired while you were away, or you dismissed it. */
+const VOID_ANSWERS = new Set(["unavailable", "expired", "deny"]);
+
+/** A question the owner actually answered (not voided, not dismissed). */
 export function isAnsweredQuestion(message: MessageLike): boolean {
   const card = message.card;
-  return isQuestionCard(message) && Boolean(card?.answered) && card?.answered !== "unavailable" && !card?.dismissed;
+  return isQuestionCard(message) && Boolean(card?.answered) && !VOID_ANSWERS.has(card?.answered ?? "") && !card?.dismissed;
 }
 
 export function openQuestion<M extends MessageLike>(messages: readonly M[]): M | undefined {
@@ -212,13 +216,22 @@ export function decisionHeadline(decision: Pick<OrgDecision, "title" | "choice">
 // ── the minutes in the library ──────────────────────────────────────────────
 const MINUTES_WORD = /纪要|minutes/i;
 
-/** The newest library doc that is this room's minutes (title names the room
- * and says 纪要 / minutes). */
-export function minutesDocFor<T extends Pick<LibraryDoc, "title" | "updatedAt">>(docs: readonly T[], groupName: string): T | undefined {
+/** The newest library doc that is this room's minutes: its title says
+ * 纪要 / minutes and either names the room or one of its versions was filed
+ * for one of the room's decisions. */
+export function minutesDocFor<T extends Pick<LibraryDoc, "title" | "updatedAt"> & { versions?: ReadonlyArray<{ decisionId?: number }> }>(
+  docs: readonly T[],
+  groupName: string,
+  decisionIds: readonly number[] = [],
+): T | undefined {
   const name = groupName.trim();
-  if (!name) return undefined;
+  const decided = new Set(decisionIds);
   return docs
-    .filter((doc) => doc.title.includes(name) && MINUTES_WORD.test(doc.title))
+    .filter(
+      (doc) =>
+        MINUTES_WORD.test(doc.title) &&
+        ((name && doc.title.includes(name)) || (doc.versions ?? []).some((entry) => entry.decisionId !== undefined && decided.has(entry.decisionId))),
+    )
     .sort((a, b) => b.updatedAt - a.updatedAt)[0];
 }
 

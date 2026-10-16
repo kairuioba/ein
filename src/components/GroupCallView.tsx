@@ -40,6 +40,12 @@ import { t } from "@/lib/i18n";
 import { spokenNo, spokenYes } from "@/lib/spoken-answer";
 
 const CALL_ENDPOINT_MS = 850;
+
+/** "09:15" — the calendar's own clock form. */
+function clockText(at: number): string {
+  const date = new Date(at);
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
 /** With the speaker off a reply is read as a caption; pause briefly so turns stay legible. */
 const CAPTION_ONLY_PAUSE_MS = 600;
 
@@ -596,7 +602,8 @@ function GroupCall({ group, members }: { group: Group; members: Bot[] }) {
     notSpoken > 0 || expectedEnd
       ? {
           title: notSpoken > 0 ? t("{count} still to speak", { count: notSpoken }) : t("Everyone has spoken"),
-          detail: expectedEnd ? t("Expected to end {time}", { time: formatTime(expectedEnd) }) : undefined,
+          // same "09:15" form as the calendar's "09:00" in the title
+          detail: expectedEnd ? t("Expected to end {time}", { time: clockText(expectedEnd) }) : undefined,
         }
       : undefined;
 

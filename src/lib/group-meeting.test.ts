@@ -77,10 +77,12 @@ describe("meeting state", () => {
     expect(meetingState({ messages: [text("a", at(16, 13))], busy: false, decided: true })).toBe("ended");
   });
 
-  it("does not count a voided question as a decision", () => {
+  it("does not count a voided, expired or dismissed question as a decision", () => {
     const voided = [question("q", at(16, 16), { answered: "unavailable", dismissed: true })];
     expect(isAnsweredQuestion(voided[0])).toBe(false);
     expect(meetingState({ messages: voided, busy: false, decided: false })).toBe("live");
+    expect(isAnsweredQuestion(question("e", 0, { answered: "expired" }))).toBe(false);
+    expect(isAnsweredQuestion(question("d", 0, { answered: "deny" }))).toBe(false);
   });
 });
 
@@ -165,6 +167,15 @@ describe("minutes doc", () => {
     expect(minutesDocFor(docs, "价格对齐会")?.title).toBe("会议纪要 · 价格对齐会 10-15");
     expect(minutesDocFor(docs, "站会")).toBeUndefined();
     expect(minutesDocFor(docs, "")).toBeUndefined();
+  });
+
+  it("also finds minutes filed for one of the room's decisions", () => {
+    const filed = [
+      { title: "价格表", updatedAt: 9, versions: [{ decisionId: 3 }] },
+      { title: "会议纪要 · 旗舰款定价", updatedAt: 4, versions: [{}, { decisionId: 3 }] },
+    ];
+    expect(minutesDocFor(filed, "价格对齐会", [3])?.title).toBe("会议纪要 · 旗舰款定价");
+    expect(minutesDocFor(filed, "价格对齐会", [5])).toBeUndefined();
   });
 
   it("drops the filing prefix from the shown name", () => {

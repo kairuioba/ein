@@ -2,33 +2,34 @@
 // agenda (bulletin), when it ran, who was there, the sources it leaned on
 // (numbered like the chips in the transcript), its decisions and the action
 // items they dispatched. Numbers jump back to the message that cited them.
-import type { ReactNode } from "react";
-import { Download, Folder, PanelRightClose } from "lucide-react";
+import { useState, type ReactNode } from "react";
+import { Download, Folder, Loader2, PanelRightClose } from "lucide-react";
 
 import type { OrgDecision } from "../../../shared/org-types";
 
 import { SidePanel } from "@/components/ui";
+import { publishLibraryDoc } from "@/state/org-api";
 import { formatTime, useStore, type Bot, type Group } from "@/state/store";
-import { formatDateTime, t } from "@/lib/i18n";
+import { t } from "@/lib/i18n";
 import { decisionHeadline, minutesDocName } from "@/lib/group-meeting";
 import { backedOption, basisNumbers, supersededBy, type CitedSource } from "@/lib/group-sources";
-import { CiteNumber, DecisionMark, ITEM_STATUS_LONG, ItemStatusText, MemberAvatar, decidedByLabel } from "./parts";
+import { CiteNumber, DecisionMark, ITEM_STATUS_LONG, ItemStatusText, MemberAvatar, decidedByLabel, shortDay, sourceDetail } from "./parts";
 import type { Meeting } from "./useMeeting";
-
-function dayWord(at: number): string {
-  const start = (value: Date) => new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();
-  const days = Math.round((start(new Date()) - start(new Date(at))) / 86_400_000);
-  if (days === 0) return t("Today");
-  if (days === 1) return t("Yesterday");
-  return formatDateTime(at, { month: "short", day: "numeric" });
-}
 
 /** "价格对齐会 · 今天 16:12 – 16:24 · 用时 12 分钟" */
 export function minutesMeta(group: Group, meeting: Meeting): string {
   const timing = meeting.timing;
   if (!timing) return group.name;
-  const range = `${dayWord(timing.start)} ${formatTime(timing.start)} – ${formatTime(timing.end)}`;
-  return [group.name, range, t("took {count} min", { count: timing.durationMin })].join(" · ");
+  const range = `${shortDay(timing.start)} ${formatTime(timing.start)} – ${formatTime(timing.end)}`;
+  // a meeting has a length worth stating; a standing project room does not
+  return [group.name, range, ...(meeting.isMeeting ? [t("took {count} min", { count: timing.durationMin })] : [])].join(" · ");
+}
+
+/** "价格对齐会 10-15": the room and the day the meeting started. */
+function filedName(group: Group, meeting: Meeting): string {
+  const day = new Date(meeting.timing?.start ?? Date.now());
+  const mmdd = `${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
+  return `${group.name} ${mmdd}`;
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
@@ -57,7 +58,7 @@ function Participant({ bot, role }: { bot: Bot; role?: string }) {
 function SourceRow({ source, meeting, onJump }: { source: CitedSource; meeting: Meeting; onJump: () => void }) {
   const newer = supersededBy(source, meeting.docs);
   const value = backedOption(source.text, meeting.options);
-  const sub = [source.detail, source.name].filter(Boolean).join(" · ");
+  const sub = [sourceDetail(source), source.name].filter(Boolean).join(" · ");
   return (
     <button type="button" onClick={onJump} className="flex w-full items-center gap-[9px] border-b border-hairline/25 py-[9px] text-left last:border-b-0" title={t("Jump to the message that cited it")}>
       <CiteNumber n={source.n} />
@@ -269,7 +270,7 @@ export function MinutesPanel({
               ? t("{name} keeps these minutes · numbers jump back to the message · you can edit the filed copy", { name: chairName })
               : t("{name} keeps these minutes · numbers jump back to the message", { name: chairName })}
           </div>
-          {meeting.minutesDoc && (
+          {meeting.minutesDoc ? (
             <div className="flex h-9 items-center gap-[7px] rounded-[10px] bg-inset px-3 text-[12px] text-ink-secondary">
               <Folder size={14} className="shrink-0 opacity-70" aria-hidden />
               <span className="min-w-0 flex-1 truncate">
@@ -279,9 +280,53 @@ export function MinutesPanel({
                 {t("Open")}
               </button>
             </div>
+          ) : (
+            meeting.timing && <FileMinutes group={group} meeting={meeting} bots={state.bots} />
           )}
         </div>
       </div>
     </SidePanel>
+  );
+}
+
+/** No filed copy yet: put these minutes in the library (company-wide, linked
+ * to the room's latest decision) so the room can say "纪要已存到资料库". */
+function FileMinutes({ group, meeting, bots }: { group: Group; meeting: Meeting; bots: readonly Bot[] }) {
+  const [state, setState] = useState<"idle" | "saving" | "failed">("idle");
+  const [error, setError] = useState("");
+  const file = async () => {
+    setState("saving");
+    setError("");
+    const latest = meeting.decisions.at(-1);
+    // summary and decisionId are accepted by POST /api/library (A1); the
+    // client helper's input type predates them
+    const input: Parameters<typeof publishLibraryDoc>[0] & { summary?: string; decisionId?: number } = {
+      title: `${t("Meeting minutes")} · ${filedName(group, meeting)}`,
+      section: null,
+      text: minutesMarkdown(group, meeting, bots),
+      note: t("Filed from the {name} group chat", { name: group.name }),
+      ...(meeting.agenda ? { summary: meeting.agenda.topic ?? meeting.agenda.raw } : {}),
+      ...(latest ? { decisionId: latest.id } : {}),
+    };
+    try {
+      await publishLibraryDoc(input);
+      setState("idle");
+    } catch (cause) {
+      setState("failed");
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  };
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex h-9 items-center gap-[7px] rounded-[10px] bg-inset px-3 text-[12px] text-ink-secondary">
+        <Folder size={14} className="shrink-0 opacity-70" aria-hidden />
+        <span className="min-w-0 flex-1 truncate">{t("Not in the library yet")}</span>
+        <button type="button" onClick={() => void file()} disabled={state === "saving"} className="flex shrink-0 items-center gap-1 font-semibold text-accent-text hover:underline disabled:opacity-60">
+          {state === "saving" && <Loader2 size={12} className="animate-spin" aria-hidden />}
+          {t("File in the library")}
+        </button>
+      </div>
+      {state === "failed" && <div className="px-1 text-[11.5px] text-danger">{error || t("Couldn't file the minutes")}</div>}
+    </div>
   );
 }

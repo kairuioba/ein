@@ -111,5 +111,9 @@
   "Action items": "行动项",
   "from {time}": "源自 {time}",
   "Auto-generated": "自动生成",
-  "In the room": "在听"
+  "In the room": "在听",
+  "Filed from the {name} group chat": "从「{name}」群聊存档",
+  "Not in the library yet": "纪要还没存进资料库",
+  "File in the library": "存到资料库",
+  "Couldn't file the minutes": "纪要没能存进资料库"
 }

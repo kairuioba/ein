@@ -53,6 +53,42 @@ describe("extractSources", () => {
   });
 });
 
+describe("library docs named in plain text", () => {
+  const docs = [
+    { id: "price", title: "价格表", versions: [{ version: 3, at: 100 }, { version: 4, at: 200 }] },
+    { id: "quotes", title: "渠道报价单", versions: [{ version: 2, at: 50 }] },
+    { id: "short", title: "计划", versions: [{ version: 1, at: 1 }] },
+  ];
+
+  it("cites a doc named by title, with the version that follows it", () => {
+    const out = extractSources("文案按 699 写的，依据是 3 周前的价格表 v3，渠道报价单昨天更新了，计划不变", docs);
+    expect(out.text).toBe("文案按 699 写的，依据是 3 周前的价格表 v3，渠道报价单昨天更新了，计划不变");
+    expect(out.sources.map((source) => [source.label, source.docId, source.version, source.versionAt])).toEqual([
+      ["价格表 v3", "price", 3, 100],
+      // no version named: dated by the latest version
+      ["渠道报价单", "quotes", undefined, 50],
+    ]);
+  });
+
+  it("does not cite a doc twice when it is also linked", () => {
+    const out = extractSources("看价格表 v3 [价格表 v3](library:price?v=3)", docs);
+    expect(out.sources.map((source) => source.key)).toEqual(["library:price@3"]);
+    expect(out.text).toBe("看价格表 v3");
+  });
+
+  it("numbers mentions across the room like links", () => {
+    const room = numberSources(
+      [
+        { id: "a", at: 1, role: "bot", kind: "text", text: "依据是价格表v3", from: { botId: "w", name: "小文" } },
+        { id: "b", at: 2, role: "bot", kind: "text", text: "价格表 v3 已经过期", from: { botId: "m", name: "市场分析师" } },
+      ],
+      docs,
+    );
+    expect(room.list.map((source) => [source.n, source.label, source.name])).toEqual([[1, "价格表 v3", "小文"]]);
+    expect(room.byMessage.get("b")?.map((chip) => chip.n)).toEqual([1]);
+  });
+});
+
 describe("numberSources", () => {
   const messages = [
     { id: "m1", at: 1, role: "bot" as const, kind: "text", text: "按 699 [价格表 v3 · 9月25日](library:price?v=3)", from: { botId: "wen", name: "小文" } },

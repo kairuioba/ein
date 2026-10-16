@@ -22,7 +22,12 @@ export interface SourceRef {
   /** library citations: the doc and the version cited */
   docId?: string;
   version?: number;
+  /** library citations named in plain text: when the cited version was published */
+  versionAt?: number;
 }
+
+/** What source detection needs to know about the library. */
+export type LibraryDocLike = { id: string; title: string; versions: ReadonlyArray<{ version: number; at: number }> };
 
 export interface NumberedSource extends SourceRef {
   n: number;
@@ -93,10 +98,56 @@ function webLabel(url: string): string {
 
 type Hit = { start: number; end: number; source: SourceRef; replacement: string; alwaysRemove: boolean };
 
+/** Library docs a message names in plain text ("依据是价格表 v3"): the doc's
+ * exact title (3+ characters, longest titles first), with the version when
+ * one follows it. Bots are given the library by title, so this is how they
+ * usually cite it. */
+export function mentionedDocs(text: string, docs: readonly LibraryDocLike[]): SourceRef[] {
+  const found: Array<{ at: number; source: SourceRef }> = [];
+  for (const doc of [...docs].sort((a, b) => b.title.length - a.title.length)) {
+    const title = doc.title.trim();
+    if ([...title].length < 3) continue;
+    const at = text.indexOf(title);
+    // a longer title already claimed these characters ("价格表单" before "价格表")
+    if (at < 0 || found.some((entry) => at < entry.at + entry.source.title.length && at + title.length > entry.at)) continue;
+    const after = /^\s*v(\d{1,4})\b/i.exec(text.slice(at + title.length));
+    const version = after ? Number(after[1]) : undefined;
+    // no version named: the bot was given (and is citing) the latest one
+    const known =
+      version === undefined
+        ? doc.versions.reduce<{ version: number; at: number } | undefined>((latest, entry) => (!latest || entry.version > latest.version ? entry : latest), undefined)
+        : doc.versions.find((entry) => entry.version === version);
+    const label = version === undefined ? title : `${title} v${version}`;
+    found.push({
+      at,
+      source: {
+        key: `library:${doc.id}@${version ?? ""}`,
+        kind: "library",
+        label,
+        title: label,
+        target: `library:${doc.id}${version === undefined ? "" : `?v=${version}`}`,
+        docId: doc.id,
+        version,
+        ...(known ? { versionAt: known.at } : {}),
+      },
+    });
+  }
+  return found.sort((a, b) => a.at - b.at).map((entry) => entry.source);
+}
+
 /** Pull the citations out of one bot message. Trailing citations leave the
  * text entirely (they become chips at the end of the bubble); a link inside a
- * sentence keeps its words in place and also gets a chip. */
-export function extractSources(text: string): { text: string; sources: SourceRef[] } {
+ * sentence keeps its words in place and also gets a chip; a library doc named
+ * in plain text stays in the sentence and gets a chip (pass `docs`). */
+export function extractSources(text: string, docs: readonly LibraryDocLike[] = []): { text: string; sources: SourceRef[] } {
+  const linked = extractLinks(text);
+  if (!docs.length) return linked;
+  const cited = new Set(linked.sources.map((source) => source.docId).filter(Boolean));
+  const named = mentionedDocs(linked.text, docs).filter((source) => !cited.has(source.docId));
+  return named.length ? { text: linked.text, sources: [...named, ...linked.sources] } : linked;
+}
+
+function extractLinks(text: string): { text: string; sources: SourceRef[] } {
   const hits: Hit[] = [];
   for (const match of text.matchAll(ATTACHMENT)) {
     const path = match[1];
@@ -178,15 +229,16 @@ export interface RoomSources {
   list: CitedSource[];
 }
 
-/** Number every distinct source cited by the room's bots, in transcript order. */
-export function numberSources(messages: readonly MessageLike[]): RoomSources {
+/** Number every distinct source cited by the room's bots, in transcript order.
+ * `docs` (the library) lets plain-text mentions of a doc count as citations. */
+export function numberSources(messages: readonly MessageLike[], docs: readonly LibraryDocLike[] = []): RoomSources {
   const byMessage = new Map<string, NumberedSource[]>();
   const texts = new Map<string, string>();
   const list: CitedSource[] = [];
   const numbers = new Map<string, number>();
   for (const message of messages) {
     if (message.role !== "bot" || message.kind !== "text" || !message.text) continue;
-    const { text, sources } = extractSources(message.text);
+    const { text, sources } = extractSources(message.text, docs);
     if (!sources.length) continue;
     texts.set(message.id, text);
     const chips: NumberedSource[] = [];

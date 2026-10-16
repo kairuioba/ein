@@ -59,6 +59,7 @@ function useMinuteClock(live: boolean): number {
 }
 
 const isSpoken = (message: Message) => message.kind !== "activity" && message.kind !== "screen";
+const NO_DOCS: LibraryDoc[] = [];
 
 export function useMeeting(group: Group, members: Bot[], allBots: Bot[]): Meeting {
   const { data: decisionData } = useDecisions();
@@ -67,6 +68,7 @@ export function useMeeting(group: Group, members: Bot[], allBots: Bot[]): Meetin
   const busy = Boolean(group.busyBotId);
   const live = busy || group.messages.length > 0;
   const now = useMinuteClock(live);
+  const docs = library.docs ?? NO_DOCS;
 
   const base = useMemo(() => {
     const agenda = parseAgenda(group.bulletin);
@@ -89,13 +91,14 @@ export function useMeeting(group: Group, members: Bot[], allBots: Bot[]): Meetin
       decided: decisions.length > 0,
       chair,
       chiefId: chief?.id,
-      sources: numberSources(group.messages),
+      // a doc named in a bot's message counts as cited, like a link to it
+      sources: numberSources(group.messages, docs),
       options: question?.card?.options ?? [],
       ownerDecided: decisions.some((decision) => decision.decidedBy === "owner") || group.messages.some(isAnsweredQuestion),
       ownerSpoke: group.messages.some((message) => message.role === "user"),
       colors,
     };
-  }, [group, members, allBots, decisionData.decisions, org]);
+  }, [group, members, allBots, decisionData.decisions, org, docs]);
 
   const state = meetingState({ messages: base.spoken, busy, decided: base.decided });
   const window = useMemo(() => {
@@ -107,8 +110,10 @@ export function useMeeting(group: Group, members: Bot[], allBots: Bot[]): Meetin
   }, [base.spoken, base.decisions]);
   const timing = meetingTiming(window, state, base.agenda?.limitMin, now);
 
-  const docs = library.docs ?? [];
-  const minutesDoc = useMemo(() => minutesDocFor(docs, group.name), [docs, group.name]);
+  const minutesDoc = useMemo(
+    () => minutesDocFor(docs, group.name, base.decisions.map((decision) => decision.id)),
+    [docs, group.name, base.decisions],
+  );
 
   return {
     agenda: base.agenda,

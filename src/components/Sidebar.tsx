@@ -118,6 +118,7 @@ import {
 } from "@/lib/sidebar-rows";
 import { phoneSettingsAction, SidebarPhoneButton } from "./SidebarPhoneButton";
 import { SidebarSectionHeader } from "./SidebarSectionHeader";
+import { BOT_DRAG_TYPE } from "@/components/routines/calendar-model";
 
 // ── shared styles ─────────────────────────────────────────────────────────────
 const MENU =
@@ -419,6 +420,12 @@ function BotRow({
           }
         }}
         onContextMenu={onContextMenu}
+        // drag a bot onto the calendar to give it a routine there
+        draggable
+        onDragStart={(event) => {
+          event.dataTransfer.effectAllowed = "copy";
+          event.dataTransfer.setData(BOT_DRAG_TYPE, bot.id);
+        }}
         className={rowClass}
       >
         {body}

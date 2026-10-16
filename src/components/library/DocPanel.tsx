@@ -36,19 +36,24 @@ export function DocPanel({
   bots,
   onClose,
   onPublishVersion,
+  initialVersion,
 }: {
   doc: LibraryDoc;
   level: DocLevel;
   bots: Bot[];
   onClose: () => void;
   onPublishVersion: (text: string) => void;
+  /** open on this version (a link to "价格表 v3"); the current one otherwise */
+  initialVersion?: number;
 }) {
   const { dispatch } = useStore();
   const current = currentVersion(doc);
   const versions = useMemo(() => [...doc.versions].sort((a, b) => b.version - a.version), [doc.versions]);
   // an older version picked from the history; null follows the current one,
   // so a newly published version takes over the panel
-  const [picked, setPicked] = useState<number | null>(null);
+  const [picked, setPicked] = useState<number | null>(() =>
+    initialVersion !== undefined && initialVersion !== current?.version && doc.versions.some((entry) => entry.version === initialVersion) ? initialVersion : null,
+  );
   const shown = picked ?? current?.version ?? 0;
   const [texts, setTexts] = useState<Record<number, string>>({});
   const [loadError, setLoadError] = useState("");
@@ -153,7 +158,7 @@ export function DocPanel({
         </div>
 
         <section className="flex flex-col gap-2">
-          <Label>{t("Owner")}</Label>
+          <Label>{t("Doc owner")}</Label>
           <div className="flex items-center gap-2">
             {owner ? <BotAvatar bot={owner} size={24} /> : <span className="grid size-6 place-items-center rounded-[7px] bg-control text-[11px] font-bold text-ink-secondary">{t("You").slice(0, 1)}</span>}
             <span className="flex min-w-0 flex-col leading-tight">

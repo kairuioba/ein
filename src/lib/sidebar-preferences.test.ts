@@ -3,12 +3,15 @@ import { describe, expect, it, vi } from "vitest";
 import {
   SIDEBAR_COLLAPSED_SECTIONS_KEY,
   SIDEBAR_DENSITY_KEY,
+  SIDEBAR_EXPANDED_MEMBERS_KEY,
   SIDEBAR_SECTION_ORDER_KEY,
   loadCollapsedSections,
+  loadExpandedMemberSections,
   loadSectionOrder,
   loadSidebarDensity,
   parseSidebarDensity,
   saveCollapsedSections,
+  saveExpandedMemberSections,
   saveSectionOrder,
   saveSidebarDensity,
   toggleCollapsedSection,
@@ -81,6 +84,18 @@ describe("sidebar section preferences", () => {
     expect(loadSectionOrder({ getItem: () => JSON.stringify(oversized) })).toHaveLength(100);
     expect(loadSectionOrder({ getItem: () => { throw new Error("blocked"); } })).toEqual([]);
     expect(() => saveSectionOrder(["section:Work"], { setItem: () => { throw new Error("blocked"); } })).not.toThrow();
+  });
+
+  it("remembers which departments list their quiet members", () => {
+    const values = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value),
+    };
+    saveExpandedMemberSections([userSectionId("Design"), userSectionId("Design")], storage);
+    expect(values.get(SIDEBAR_EXPANDED_MEMBERS_KEY)).toBe(JSON.stringify(["section:Design"]));
+    expect(loadExpandedMemberSections(storage)).toEqual(["section:Design"]);
+    expect(loadExpandedMemberSections({ getItem: () => { throw new Error("blocked"); } })).toEqual([]);
   });
 
   it("persists raw section ids with lone surrogates and max-length emoji names", () => {

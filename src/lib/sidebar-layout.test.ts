@@ -26,7 +26,7 @@ describe("sidebar virtual sections", () => {
       expect(userSectionName(id)).toBe(name);
       expect(sidebarSectionLabel(id)).toBe(name);
     }
-    expect(sidebarSectionLabel(CHANNELS_SECTION_ID)).toBe("Channels");
+    expect(sidebarSectionLabel(CHANNELS_SECTION_ID)).toBe("Group chats");
   });
 
   it("round-trips every valid section name without URI encoding", () => {

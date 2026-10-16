@@ -23,6 +23,28 @@ describe("SidebarSectionHeader", () => {
     expect(html).not.toContain('role="button"');
   });
 
+  it("shows the department colour, its note and the count next to the name", () => {
+    const html = renderToStaticMarkup(
+      createElement(SidebarSectionHeader, {
+        name: "Design",
+        color: "#EC4899",
+        note: createElement("span", null, "Delivered"),
+        count: 3,
+        collapsed: false,
+        onToggle: () => {},
+        reorderable: true,
+        dragging: false,
+      }),
+    );
+
+    expect(html).toContain("background:#EC4899");
+    expect(html).toContain("Delivered");
+    expect(html).toContain(">3</span>");
+    expect(html).toContain('aria-label="Design"');
+    // the grip sits over the count instead of taking width of its own
+    expect(html).toContain("group-hover/section:opacity-0");
+  });
+
   it("renders collapsed attention signals in the heading", () => {
     const html = renderToStaticMarkup(
       createElement(SidebarSectionHeader, {

@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   deriveSidebarPhoneStatus,
   phoneSettingsAction,
+  phoneStatusWorthShowing,
   SIDEBAR_PHONE_RECENT_MS,
   SidebarPhoneStatusButton,
   type SidebarPhoneStatus,
@@ -165,7 +166,18 @@ describe("SidebarPhoneStatusButton", () => {
     });
 
     expect(markup).toContain('data-sidebar-density="compact"');
-    expect(markup).toContain("size-10");
+    expect(markup).toContain("size-8");
     expect(markup).toContain("shrink-0");
+  });
+
+  it("stays out of a quiet footer until a phone is paired", () => {
+    const status = (kind: SidebarPhoneStatus["kind"]): SidebarPhoneStatus => ({ kind, label: kind, pairedCount: 0, connectedCount: 0 });
+    expect(phoneStatusWorthShowing(status("checking"))).toBe(false);
+    expect(phoneStatusWorthShowing(status("unavailable"))).toBe(false);
+    expect(phoneStatusWorthShowing(status("unpaired"))).toBe(false);
+    expect(phoneStatusWorthShowing(status("connected"))).toBe(true);
+    expect(phoneStatusWorthShowing(status("disconnected"))).toBe(true);
+    expect(phoneStatusWorthShowing(status("stale"))).toBe(true);
+    expect(phoneStatusWorthShowing(status("recent"))).toBe(true);
   });
 });

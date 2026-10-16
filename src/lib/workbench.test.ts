@@ -17,6 +17,8 @@ import {
   fitView,
   headcount,
   isLeafSubtask,
+  labelRoom,
+  labelWidth,
   layoutFloor,
   layoutTree,
   parseDeadline,
@@ -166,6 +168,20 @@ describe("floor plan", () => {
     expect(new Set(tech.groups.map((group) => group.y)).size).toBeGreaterThan(1);
     const figures = tech.groups.reduce((sum, group) => sum + group.cells.length, 0);
     expect(figures).toBe(13);
+  });
+
+  it("lets a long label spill only into the room short neighbours leave free", () => {
+    const pitch = 114;
+    const [first, middle, last] = labelRoom([140, 60, 150], pitch);
+    // ends spill toward the room's padding, never past the neighbour's half
+    expect(first).toBeGreaterThan(pitch - 4);
+    expect(first! / 2 + 60 / 2).toBeLessThanOrEqual(pitch);
+    expect(middle).toBe(pitch - 4);
+    expect(last! / 2 + 60 / 2).toBeLessThanOrEqual(pitch);
+    // two long neighbours each keep about their own cell, so they never touch
+    const [a, b] = labelRoom([160, 160], pitch);
+    expect(a! / 2 + b! / 2).toBeLessThan(pitch);
+    expect(labelWidth("Market analyst 2", 12)).toBeGreaterThan(labelWidth("市场分析师", 12));
   });
 
   it("never reorders people: a new squad only adds cells after the existing ones", () => {

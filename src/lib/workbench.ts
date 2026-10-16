@@ -657,6 +657,21 @@ function placeRoom(room: FloorRoomInput, x: number, y: number, w: number, row: n
   return { key: room.key, row, isolated: Boolean(room.isolated), x, y, width: w, height: FLOOR.roomHeight + (lines.length - 1) * FLOOR.lineHeight, groups };
 }
 
+/** Rough rendered width of a label: CJK full width, Latin about 0.6 em —
+ * erring wide, so a neighbour is never assumed narrower than it draws. */
+export const labelWidth = (text: string, fontSize: number) => Array.from(text).reduce((sum, char) => sum + (char.codePointAt(0)! > 0x2e80 ? fontSize : fontSize * 0.62), 0);
+
+/** How wide each label under a row of figures may be. Every label gets its
+ * cell (pitch − 4); a longer one may spill into the room its neighbours leave
+ * free (the ends toward the room's padding), so labels never overlap and a
+ * long English name next to short ones still reads in full. */
+export function labelRoom(natural: readonly number[], pitch: number, edge = 10, max = 156): number[] {
+  const base = pitch - 4;
+  const fitted = natural.map((width) => Math.min(width, base));
+  const space = (neighbour: number | undefined) => (neighbour === undefined ? pitch / 2 + edge - 3 : pitch - neighbour / 2 - 3);
+  return natural.map((width, index) => (width <= base ? base : Math.max(base, Math.min(max, 2 * Math.min(space(fitted[index - 1]), space(fitted[index + 1]))))));
+}
+
 // ── 看事: the work tree with a persistent slot map ──────────────────────────
 
 export const TREE = {

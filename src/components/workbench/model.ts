@@ -144,50 +144,45 @@ export function useWorkbenchModel(): WorkbenchModel {
 
   const runSquads = useMemo(() => activeSquads(dispatch.runs), [dispatch.runs]);
   const rooms = useMemo(() => {
-    const out: Room[] = buildDepartments(bots, org).map((dept: DepartmentView<BotWithMeta>) => {
-      // people added to a running job stand together as their squad; the
-      // original team is squad A and keeps its place
+    // people added to a running job stand together as their squad; the
+    // original team is squad A and keeps its place. Without run squads a
+    // room past the span of control splits into squads of `limit`.
+    const group = (members: BotWithMeta[], lead: BotWithMeta | undefined, limit: number) => {
       const fromRuns: Array<{ info: SquadInfo; members: BotWithMeta[] }> = [];
-      for (const member of dept.members) {
+      for (const member of members) {
         const entry = runSquads.get(member.id);
         if (!entry) continue;
-        let group = fromRuns.find((candidate) => candidate.info.name === entry.squad.name && candidate.info.addedAt === entry.squad.addedAt);
-        if (!group) {
-          group = { info: { name: entry.squad.name, addedAt: entry.squad.addedAt, reviewAt: entry.squad.reviewAt, review: entry.squad.review, leadBotId: entry.squad.leadBotId }, members: [] };
-          fromRuns.push(group);
+        let squad = fromRuns.find((candidate) => candidate.info.name === entry.squad.name && candidate.info.addedAt === entry.squad.addedAt);
+        if (!squad) {
+          squad = { info: { name: entry.squad.name, addedAt: entry.squad.addedAt, reviewAt: entry.squad.reviewAt, review: entry.squad.review, leadBotId: entry.squad.leadBotId }, members: [] };
+          fromRuns.push(squad);
         }
-        group.members.push(member);
+        squad.members.push(member);
       }
-      const others = dept.members.filter((member) => !runSquads.has(member.id));
-      const groups = fromRuns.length ? [others] : squads(others, span);
-      const main = [...(dept.lead ? [dept.lead] : []), ...(groups[0] ?? [])];
+      const others = members.filter((member) => !runSquads.has(member.id));
+      const groups = fromRuns.length ? [others] : squads(others, limit);
+      const main = [...(lead ? [lead] : []), ...(groups[0] ?? [])];
       const extra = [...groups.slice(1).map((members, index) => ({ info: { name: squadName(index + 1) }, members })), ...fromRuns];
-      return {
-        key: dept.section,
-        section: dept.section,
-        label: dept.section,
-        color: dept.color,
-        isolated: Boolean(dept.settings?.isolated),
-        lead: dept.lead,
-        main,
-        squads: extra.map((group) => group.members),
-        squadInfo: extra.map((group) => group.info),
-        everyone: [...main, ...extra.flatMap((group) => group.members)],
-      };
-    });
+      return { main, squads: extra.map((squad) => squad.members), squadInfo: extra.map((squad) => squad.info), everyone: [...main, ...extra.flatMap((squad) => squad.members)] };
+    };
+    const out: Room[] = buildDepartments(bots, org).map((dept: DepartmentView<BotWithMeta>) => ({
+      key: dept.section,
+      section: dept.section,
+      label: dept.section,
+      color: dept.color,
+      isolated: Boolean(dept.settings?.isolated),
+      lead: dept.lead,
+      ...group(dept.members, dept.lead, span),
+    }));
     const loose = unassignedBots(bots, org);
     if (loose.length) {
-      const groups = squads(loose, Math.max(span, 6));
       out.push({
         key: UNASSIGNED,
         section: "",
         label: "",
         color: "#9AA0AC",
         isolated: false,
-        main: groups[0] ?? [],
-        squads: groups.slice(1),
-        squadInfo: groups.slice(1).map((_, index) => ({ name: squadName(index + 1) })),
-        everyone: loose,
+        ...group(loose, undefined, Math.max(span, 6)),
         unassigned: true,
       });
     }

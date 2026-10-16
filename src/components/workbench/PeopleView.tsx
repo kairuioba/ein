@@ -16,6 +16,8 @@ import {
   clip,
   clock,
   headcount,
+  labelRoom,
+  labelWidth,
   layoutFloor,
   poseOf,
   type DeptStats,
@@ -192,13 +194,18 @@ function LegendCard() {
 function ChiefFigure({ model, cx, onOpen }: { model: WorkbenchModel; cx: number; onOpen: () => void }) {
   const chief = model.chief!;
   const state = model.states.get(chief.id);
-  const speech = chiefSpeech(chief);
+  // the chief stands at the top edge, so a bubble over its head would be cut
+  // off: what it waits on (a plan to approve, a question) takes the speech
+  // bubble beside it instead of what it last said
+  const waiting = state?.bubble;
+  const speech = waiting?.lines ?? chiefSpeech(chief);
+  const palette = waiting ? BUBBLE_PALETTE[waiting.tone] : { background: "color-mix(in srgb, var(--color-select) 7%, var(--color-raised))", color: "var(--color-accent-text)", edge: "color-mix(in srgb, var(--color-select) 30%, transparent)" };
   return (
     <>
       <div className="pointer-events-none absolute rounded-[50%]" style={{ left: cx - 120, top: 0, width: 240, height: 180, background: "radial-gradient(closest-side, color-mix(in srgb, var(--color-select) 11%, transparent), transparent)" }} />
       <Figure
         bot={chief}
-        state={state}
+        state={state && { ...state, bubble: undefined }}
         kind={model.mascotOf(chief)}
         driverKind={model.driverOf(chief)}
         lead
@@ -209,14 +216,10 @@ function ChiefFigure({ model, cx, onOpen }: { model: WorkbenchModel; cx: number;
       />
       {speech.length > 0 && (
         <div
-          className="absolute z-[5] rounded-[10px] px-2.5 py-[5px] text-[11.5px] leading-[1.35] font-semibold whitespace-nowrap text-accent-text shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--color-select)_30%,transparent),0_6px_14px_-8px_rgb(46_63_176/0.3)]"
-          style={{ left: cx + 66, top: 36, background: "color-mix(in srgb, var(--color-select) 7%, var(--color-raised))" }}
+          className="absolute z-[5] rounded-[10px] px-2.5 py-[5px] text-[11.5px] leading-[1.35] font-semibold whitespace-nowrap"
+          style={{ left: cx + 66, top: 36, background: palette.background, color: palette.color, boxShadow: `inset 0 0 0 1px ${palette.edge}, 0 6px 14px -8px rgb(16 24 40 / 0.3)` }}
         >
-          <i
-            aria-hidden
-            className="absolute top-[13px] -left-[4.5px] size-2 rotate-45"
-            style={{ background: "inherit", boxShadow: "inset 1px -1px 0 0 color-mix(in srgb, var(--color-select) 30%, transparent)" }}
-          />
+          <i aria-hidden className="absolute top-[13px] -left-[4.5px] size-2 rotate-45" style={{ background: palette.background, boxShadow: `inset 1px -1px 0 0 ${palette.edge}` }} />
           {speech.map((line, index) => (
             <div key={index}>{line}</div>
           ))}
@@ -351,6 +354,24 @@ function TodayCard({ model, x }: { model: WorkbenchModel; x: number }) {
 export const formatYuan = (value: number) => (Math.round(value * 10) / 10).toString();
 
 // ── rooms ────────────────────────────────────────────────────────────────────
+let measureContext: CanvasRenderingContext2D | null | undefined;
+let measureFamily = "";
+/** A semibold label's drawn width in the page's own font; an estimate when
+ * there is no canvas (tests, very old engines). */
+function measureLabel(text: string, size: number): number {
+  if (measureContext === undefined) {
+    try {
+      measureContext = document.createElement("canvas").getContext("2d");
+      measureFamily = getComputedStyle(document.body).fontFamily;
+    } catch {
+      measureContext = null;
+    }
+  }
+  if (!measureContext) return labelWidth(text, size);
+  measureContext.font = `600 ${size}px ${measureFamily}`;
+  return measureContext.measureText(text).width;
+}
+
 function RoomFloor({
   box,
   room,
@@ -420,12 +441,25 @@ function RoomFloor({
           <SquadBox key={`sq${index}`} group={group} squad={room.squads[group.squad - 1] ?? []} info={room.squadInfo[group.squad - 1]} model={model} />
         ) : null,
       )}
-      {box.groups.map((group) =>
-        group.cells.map((cell, i) => {
-          const bot = figures[group.squad]?.[group.offset + i];
+      {box.groups.map((group) => {
+        // a new squad says "新" once on its label, not on every member
+        const squadIsNew = group.squad > 0 && (room.squads[group.squad - 1] ?? []).some((member) => model.states.get(member.id)?.isNew);
+        const members = group.cells.map((_, i) => figures[group.squad]?.[group.offset + i]);
+        // labels may spill into the space short neighbours leave free
+        const pitch = group.cells.length > 1 ? group.cells[1]!.x - group.cells[0]!.x : Math.min(FLOOR.cellMax, group.width);
+        const tagRoom = labelRoom(
+          members.map((bot) => (bot ? measureLabel(bot.name, 12) + 32 + (model.states.get(bot.id)?.isNew && !squadIsNew ? 30 : 0) : 0)),
+          pitch,
+          FLOOR.pad,
+        );
+        const lineRoom = labelRoom(
+          members.map((bot) => (bot ? measureLabel(model.states.get(bot.id)?.line ?? t("Idle"), 11.5) + 16 : 0)),
+          pitch,
+          FLOOR.pad,
+        );
+        return group.cells.map((cell, i) => {
+          const bot = members[i];
           if (!bot) return null;
-          // a new squad says "新" once on its label, not on every member
-          const squadIsNew = group.squad > 0 && (room.squads[group.squad - 1] ?? []).some((member) => model.states.get(member.id)?.isNew);
           return (
             <Figure
               key={bot.id}
@@ -438,11 +472,13 @@ function RoomFloor({
               top={cell.y}
               glass={room.isolated}
               hideNew={squadIsNew}
+              tagMax={tagRoom[i]}
+              lineMax={lineRoom[i]}
               onOpen={() => onOpenChat(bot.id)}
             />
           );
-        }),
-      )}
+        });
+      })}
     </>
   );
 }
@@ -533,6 +569,8 @@ function Figure({
   crown = false,
   glass = false,
   hideNew = false,
+  tagMax = 156,
+  lineMax = 156,
   onOpen,
 }: {
   bot: BotWithMeta;
@@ -545,6 +583,9 @@ function Figure({
   crown?: boolean;
   glass?: boolean;
   hideNew?: boolean;
+  /** how wide the name tag and the status line may be (see labelRoom) */
+  tagMax?: number;
+  lineMax?: number;
   onOpen: () => void;
 }) {
   const pose = state?.pose ?? "idle";
@@ -569,19 +610,19 @@ function Figure({
         )}
         {crown && <Crown className="absolute -top-[4px] left-1/2 z-[3] -translate-x-1/2" />}
       </span>
-      <span className={cn("relative z-[3] -mt-1 flex items-center gap-1", state?.dim && "opacity-70")}>
+      <span className={cn("relative z-[3] -mt-1 flex items-center gap-1", state?.dim && "opacity-70")} style={{ maxWidth: tagMax }}>
         {/* the lead tag's engine chip stays white in every skin: pin the ink the
             Codex/Grok marks are drawn with to the tag's own dark, or they vanish
             in midnight (foundation NameTag fix requested) */}
-        <NameTag name={bot.name} driverKind={driverKind} lead={lead} className={lead ? "[--color-ink:#14161C]" : undefined} />
-        {state?.isNew && !hideNew && <NewTag />}
+        <NameTag name={bot.name} driverKind={driverKind} lead={lead} className={cn("min-w-0", lead && "[--color-ink:#14161C]")} />
+        {state?.isNew && !hideNew && <NewTag className="shrink-0" />}
       </span>
-      <StatusLine tone={tone} status={state?.status ?? "idle"} text={state?.line ?? t("Idle")} />
+      <StatusLine tone={tone} status={state?.status ?? "idle"} text={state?.line ?? t("Idle")} maxWidth={lineMax} />
     </button>
   );
 }
 
-function StatusLine({ tone, status, text }: { tone: PersonState["tone"]; status: PersonStatus; text: string }) {
+function StatusLine({ tone, status, text, maxWidth }: { tone: PersonState["tone"]; status: PersonStatus; text: string; maxWidth: number }) {
   const icon =
     tone === "blue" ? (
       <i className="mx-0.5 inline-block size-[7px] shrink-0 rounded-full bg-current shadow-[0_0_0_3px_color-mix(in_srgb,var(--color-select)_16%,transparent)]" />
@@ -595,20 +636,21 @@ function StatusLine({ tone, status, text }: { tone: PersonState["tone"]; status:
       <Clock size={11} />
     );
   return (
-    <span className={cn("mt-[3px] inline-flex max-w-[150px] items-center gap-1 text-[11.5px] leading-4 font-semibold whitespace-nowrap", TONE_TEXT[tone])}>
+    <span className={cn("mt-[3px] inline-flex items-center gap-1 text-[11.5px] leading-4 font-semibold whitespace-nowrap", TONE_TEXT[tone])} style={{ maxWidth }}>
       {icon}
       <span className="truncate">{text}</span>
     </span>
   );
 }
 
+const BUBBLE_PALETTE: Record<"amber" | "red" | "grey", { background: string; color: string; edge: string }> = {
+  amber: { background: "color-mix(in srgb, #F59E0B 9%, var(--color-raised))", color: "var(--color-warning)", edge: "color-mix(in srgb, #F59E0B 55%, transparent)" },
+  red: { background: "color-mix(in srgb, var(--color-danger) 6%, var(--color-raised))", color: "var(--color-danger)", edge: "color-mix(in srgb, var(--color-danger) 35%, transparent)" },
+  grey: { background: "var(--color-raised)", color: "var(--color-ink-secondary)", edge: "color-mix(in oklab, var(--color-hairline) 60%, transparent)" },
+};
+
 function Bubble({ tone, lines }: { tone: "amber" | "red" | "grey"; lines: string[] }) {
-  const palette =
-    tone === "amber"
-      ? { background: "color-mix(in srgb, #F59E0B 9%, var(--color-raised))", color: "var(--color-warning)", edge: "color-mix(in srgb, #F59E0B 55%, transparent)" }
-      : tone === "red"
-        ? { background: "color-mix(in srgb, var(--color-danger) 6%, var(--color-raised))", color: "var(--color-danger)", edge: "color-mix(in srgb, var(--color-danger) 35%, transparent)" }
-        : { background: "var(--color-raised)", color: "var(--color-ink-secondary)", edge: "color-mix(in oklab, var(--color-hairline) 60%, transparent)" };
+  const palette = BUBBLE_PALETTE[tone];
   return (
     <span
       className={cn("absolute bottom-[calc(100%-10px)] left-1/2 z-[5] -translate-x-1/2 rounded-[10px] px-[9px] py-1 text-center text-[11px] leading-[1.32] whitespace-nowrap", tone === "grey" ? "font-medium" : "font-semibold")}

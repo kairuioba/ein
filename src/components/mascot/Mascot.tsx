@@ -8,7 +8,7 @@ import type { CSSProperties, ReactNode } from "react";
 import mascotSheet from "@/assets/mascots/mascots.png";
 import bustSheet from "@/assets/mascots/busts.png";
 import claudeBust from "@/assets/mascots/claude-bust.jpg";
-import { ProviderMark } from "@/components/ProviderIcons";
+import { ProviderMarkTile } from "@/components/ProviderIcons";
 import { cn } from "@/lib/cn";
 import {
   MASCOT_BRAND,
@@ -195,9 +195,7 @@ export function NameTag({
         className,
       )}
     >
-      <span className={cn("grid size-[15px] shrink-0 place-items-center overflow-hidden rounded-[4px]", lead ? "bg-white" : "bg-control")}>
-        {driverKind ? <ProviderMark driverKind={driverKind} size={11} /> : null}
-      </span>
+      <ProviderMarkTile driverKind={driverKind} size={15} markSize={11} className={lead ? undefined : "shadow-[inset_0_0_0_1px_var(--color-hairline)]"} />
       <span className="truncate">{name}</span>
       {star && (
         <svg aria-hidden width="11" height="11" viewBox="0 0 16 16" className="shrink-0">

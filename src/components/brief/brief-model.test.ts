@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import type { Brief, InboxItem, OrgEvent } from "../../../shared/org-types";
 import { EMPTY_BRIEF } from "@/state/org-api";
-import { briefText, foldTimeline, handlingMinutes, headlineOf, inboxOrder, isImageOption, percent, progressSegments, splitDetail, weekStart } from "./brief-model";
+import { answerRoute, briefText, decideRoute, foldTimeline, handlingMinutes, headlineOf, inboxOrder, isImageOption, percent, progressSegments, splitDetail, weekStart } from "./brief-model";
 
 const item = (kind: InboxItem["kind"], since: number, detail?: string): InboxItem => ({ id: `${kind}${since}`, kind, title: kind, botId: "b", since, detail });
 const event = (minute: number, title: string): OrgEvent => ({ id: String(minute), at: minute * 60_000, kind: "report", title });
@@ -46,6 +46,17 @@ describe("brief model", () => {
     expect(splitDetail(item("approval", 1))).toEqual({});
     expect(isImageOption("https://example.com/kv-2.png")).toBe(true);
     expect(isImageOption("方向 2 · 斑马条纹")).toBe(false);
+  });
+
+  it("answers where the question lives", () => {
+    expect(answerRoute({ requestId: "q", threadId: "t", messageId: "m" })).toBe("request");
+    expect(answerRoute({ requestId: "q", messageId: "m" })).toBe("card");
+    expect(answerRoute({ groupId: "g", messageId: "m" })).toBe("room");
+    expect(answerRoute({ messageId: "m" })).toBe("card");
+    expect(answerRoute({})).toBe("message");
+    expect(decideRoute({ runId: "r", requestId: "q", threadId: "t" })).toBe("run");
+    expect(decideRoute({ requestId: "q", threadId: "t" })).toBe("request");
+    expect(decideRoute({ requestId: "q" })).toBe("chat");
   });
 
   it("folds the middle of a long day", () => {

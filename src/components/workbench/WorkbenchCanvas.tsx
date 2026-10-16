@@ -40,7 +40,7 @@ import type { DispatchRun, DispatchSubtask } from "../../../shared/dispatch-type
 import type { Health, OrgDecision } from "../../../shared/org-types";
 
 import { DayTimeline, type TimelineMark } from "./DayTimeline";
-import type { BotWithMeta, Room, WorkbenchModel } from "./model";
+import type { BotWithMeta, Room, SquadInfo, WorkbenchModel } from "./model";
 import { Badge, DecisionMark, DiamondMark, HealthDot, NewTag, StatusGlyph, TicketMark, healthOfTone, useElementSize, type GlyphStatus } from "./parts";
 
 export type Lens = "tree" | "report" | "collab" | "data" | "deps" | "time";
@@ -66,8 +66,8 @@ export type TreeSelection =
 // ── the tree's content ──────────────────────────────────────────────────────
 export type TreeChild =
   | { kind: "bot"; key: string; bot: BotWithMeta; state?: PersonState }
-  | { kind: "leadTask"; key: string; bot: BotWithMeta; title: string; status: GlyphStatus; subtask?: DispatchSubtask; run?: DispatchRun; decisionId?: number }
-  | { kind: "squad"; key: string; section: string; index: number; members: BotWithMeta[] };
+  | { kind: "leadTask"; key: string; bot: BotWithMeta; title: string; status: GlyphStatus; subtask?: DispatchSubtask; run?: DispatchRun; decisionId?: number; progress?: string }
+  | { kind: "squad"; key: string; section: string; index: number; members: BotWithMeta[]; info?: SquadInfo };
 
 export interface TreeTask {
   key: string;
@@ -119,6 +119,12 @@ export function glyphOf(state: PersonState | undefined): GlyphStatus {
   }
 }
 
+/** A squad keeps its row by when it joined (a run squad) or its position. */
+export function squadKey(room: Room, index: number): string {
+  const info = room.squadInfo[index - 1];
+  return info?.addedAt ? `squad:${room.key}:t${info.addedAt}` : `squad:${room.key}:${index}`;
+}
+
 export function buildTree(model: WorkbenchModel): { departments: TreeDept[]; decisions: OrgDecision[] } {
   const decisions = model.decisions.slice(0, 3);
   const items = model.decisions.flatMap((decision) => decision.actionItems.map((item, index) => ({ decision, item, index })));
@@ -133,7 +139,10 @@ export function buildTree(model: WorkbenchModel): { departments: TreeDept[]; dec
         .slice(0, 3);
       for (const { run, subtask } of own) {
         const origin = items.find(({ item }) => item.subtaskId === subtask.id && (!item.runId || item.runId === run.id));
-        children.push({ kind: "leadTask", key: `task:${run.id}:${subtask.id}`, bot: lead, title: subtask.title, status: SUBTASK_GLYPH[subtask.status], subtask, run, decisionId: origin?.decision.id });
+        // a task the lead handed to its own team shows the team's progress
+        const child = subtask.childRunId ? model.dispatch.runs.find((entry) => entry.id === subtask.childRunId) : undefined;
+        const progress = child ? `${child.subtasks.filter((entry) => entry.status === "done").length}/${child.subtasks.length}` : undefined;
+        children.push({ kind: "leadTask", key: `task:${run.id}:${subtask.id}`, bot: lead, title: subtask.title, status: SUBTASK_GLYPH[subtask.status], subtask, run, decisionId: origin?.decision.id, progress });
       }
       for (const { decision, item, index } of items) {
         if (item.botId !== lead.id || (item.subtaskId && own.some(({ subtask }) => subtask.id === item.subtaskId))) continue;
@@ -142,14 +151,14 @@ export function buildTree(model: WorkbenchModel): { departments: TreeDept[]; dec
     }
     const firstSquad = room.main.filter((bot) => bot.id !== lead?.id);
     for (const bot of firstSquad) children.push({ kind: "bot", key: `bot:${bot.id}`, bot, state: model.states.get(bot.id) });
-    room.squads.forEach((members, index) => children.push({ kind: "squad", key: `squad:${room.key}:${index + 1}`, section: room.section, index: index + 1, members }));
+    room.squads.forEach((members, index) => children.push({ kind: "squad", key: squadKey(room, index + 1), section: room.section, index: index + 1, members, info: room.squadInfo[index] }));
     // outputs owned by members hang off their node (or their squad's)
     for (const { decision, item, index } of items) {
       if (!item.botId || item.botId === lead?.id) continue;
       const owner = room.everyone.find((bot) => bot.id === item.botId);
       if (!owner) continue;
       const squadIndex = room.squads.findIndex((squad) => squad.some((bot) => bot.id === owner.id));
-      const parent = squadIndex >= 0 ? `squad:${room.key}:${squadIndex + 1}` : `bot:${owner.id}`;
+      const parent = squadIndex >= 0 ? squadKey(room, squadIndex + 1) : `bot:${owner.id}`;
       tasks.push({ key: `derived:${decision.id}:${index}`, parent, title: item.title, status: ITEM_GLYPH[item.status], decisionId: decision.id, botId: owner.id });
     }
     return { key: `dept:${room.key}`, room, children, tasks };
@@ -293,7 +302,7 @@ export function WorkbenchCanvas({
       if (!room) return undefined;
       if (room.lead?.id === botId) return nodes[`dept:${room.key}`];
       const squad = room.squads.findIndex((members) => members.some((bot) => bot.id === botId));
-      return squad >= 0 ? nodes[`squad:${room.key}:${squad + 1}`] : nodes[`bot:${botId}`];
+      return squad >= 0 ? nodes[squadKey(room, squad + 1)] : nodes[`bot:${botId}`];
     },
     [model.chief?.id, model.roomOf, nodes],
   );
@@ -303,7 +312,7 @@ export function WorkbenchCanvas({
   const selectedKey =
     selection?.kind === "dept" ? `dept:${selection.section}` :
     selection?.kind === "bot" ? `bot:${selection.id}` :
-    selection?.kind === "squad" ? `squad:${selection.section}:${selection.index}` :
+    selection?.kind === "squad" ? (() => { const room = model.rooms.find((candidate) => candidate.section === selection.section); return room ? squadKey(room, selection.index) : null; })() :
     selection?.kind === "decision" ? `decision:${selection.id}` :
     selection?.kind === "root" ? "root" :
     selection?.kind === "task" ? selection.key : null;
@@ -628,7 +637,7 @@ function DeptBranch({
               key={child.key}
               box={childBox}
               title={child.title}
-              owner={child.bot.name}
+              owner={child.progress ? `${child.progress} · ${child.bot.name}` : child.bot.name}
               status={child.status}
               decisionId={lens === "collab" ? child.decisionId : undefined}
               lens={lens}
@@ -817,7 +826,7 @@ function SquadNode({ child, box, model, lens, selected, onSelect }: { child: Ext
     >
       <span className="flex items-center gap-1.5 leading-[1.2] whitespace-nowrap">
         <StatusGlyph status={glyph} />
-        <b className="text-[13px] text-ink">{squadName(child.index)}</b>
+        <b className="text-[13px] text-ink">{child.info?.name ?? squadName(child.index)}</b>
         {fresh && <NewTag />}
         <span className="text-[11.5px] text-ink-secondary">{t("{count} people", { count: child.members.length })}</span>
         <span className="ml-auto flex">

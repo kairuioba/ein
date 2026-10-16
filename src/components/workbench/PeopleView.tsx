@@ -28,7 +28,7 @@ import { markSeen } from "@/state/org-api";
 import type { LibraryDoc, OrgEvent } from "../../../shared/org-types";
 
 import { DayTimeline, markColor, type TimelineMark } from "./DayTimeline";
-import type { BotWithMeta, Room, WorkbenchModel } from "./model";
+import type { BotWithMeta, Room, SquadInfo, WorkbenchModel } from "./model";
 import { Badge, Crown, DecisionMark, DiamondMark, HealthDot, NewTag, useElementSize } from "./parts";
 
 const TONE_TEXT: Record<PersonState["tone"], string> = {
@@ -368,7 +368,7 @@ function RoomFloor({
   const label = room.unassigned ? t("No department") : room.label;
   const count = room.everyone.length;
   const squadText = room.squads.length
-    ? ` · ${[room.main.length, ...room.squads.map((squad) => squad.length)].map((n, index) => `${squadName(index)} ${n}`).join(" · ")}`
+    ? ` · ${[`${squadName(0)} ${room.main.length}`, ...room.squads.map((squad, index) => `${room.squadInfo[index]?.name ?? squadName(index + 1)} ${squad.length}`)].join(" · ")}`
     : "";
   const figures = [room.main, ...room.squads];
   return (
@@ -417,7 +417,7 @@ function RoomFloor({
       </section>
       {box.groups.map((group, index) =>
         group.boxed ? (
-          <SquadBox key={`sq${index}`} group={group} squad={room.squads[group.squad - 1] ?? []} index={group.squad} model={model} />
+          <SquadBox key={`sq${index}`} group={group} squad={room.squads[group.squad - 1] ?? []} info={room.squadInfo[group.squad - 1]} model={model} />
         ) : null,
       )}
       {box.groups.map((group) =>
@@ -490,23 +490,36 @@ function RoomBadges({ room, stats, now }: { room: Room; stats?: DeptStats; now: 
   );
 }
 
-function SquadBox({ group, squad, index, model }: { group: FloorPlan["rooms"][number]["groups"][number]; squad: BotWithMeta[]; index: number; model: WorkbenchModel }) {
-  const fresh = squad.some((bot) => model.states.get(bot.id)?.isNew);
-  const joined = Math.min(...squad.map((bot) => bot.createdAt ?? Infinity));
+function SquadBox({ group, squad, info, model }: { group: FloorPlan["rooms"][number]["groups"][number]; squad: BotWithMeta[]; info?: SquadInfo; model: WorkbenchModel }) {
+  const fresh = (info?.addedAt !== undefined && model.lastSeen > 0 && info.addedAt > model.lastSeen) || squad.some((bot) => model.states.get(bot.id)?.isNew);
+  const joined = info?.addedAt ?? Math.min(...squad.map((bot) => bot.createdAt ?? Infinity));
+  const name = info?.name ?? squadName(1);
+  const review = info?.review;
   return (
     <div
       className={cn("absolute z-[1] rounded-[13px] border-[1.5px] border-dashed", fresh ? "border-[#8B5CF6]/55 bg-[#8B5CF6]/[0.035]" : "border-hairline/70 bg-inset/40")}
       style={{ left: group.x, top: group.y, width: group.width, height: group.height }}
     >
-      <div className="absolute top-[7px] left-2.5 flex items-center gap-[7px] text-[11.5px] whitespace-nowrap text-ink-secondary">
-        <span className={cn("inline-flex h-[19px] items-center rounded-[6px] px-[7px] text-[11px] font-bold", fresh ? "bg-[#8B5CF6] text-white" : "bg-control text-ink")}>
-          {fresh ? t("{squad} · new", { squad: squadName(index) }) : squadName(index)}
+      <div className="absolute top-[7px] right-2.5 left-2.5 flex items-center gap-[7px] overflow-hidden text-[11.5px] whitespace-nowrap text-ink-secondary">
+        <span className={cn("inline-flex h-[19px] shrink-0 items-center rounded-[6px] px-[7px] text-[11px] font-bold", fresh ? "bg-[#8B5CF6] text-white" : "bg-control text-ink")}>
+          {fresh ? t("{squad} · new", { squad: name }) : name}
         </span>
-        {Number.isFinite(joined) && group.width > 260 && <span>{t("Joined {time} · the squad lead reports for the squad", { time: clock(joined) })}</span>}
+        {Number.isFinite(joined) && group.width > 260 && (
+          <span className="truncate">
+            {t("Joined {time} · the squad lead reports for the squad", { time: clock(joined) })}
+            {review
+              ? ` · ${t("Review {result} {before} → {after} per hour", { result: review.faster ? "✓" : "✕", before: formatRate(review.speedBefore), after: formatRate(review.speedAfter) })}`
+              : info?.reviewAt && info.reviewAt > model.now
+                ? ` · ${t("Review at {time}", { time: clock(info.reviewAt) })}`
+                : ""}
+          </span>
+        )}
       </div>
     </div>
   );
 }
+
+const formatRate = (value: number) => (Math.round(value * 10) / 10).toString();
 
 // ── one person ───────────────────────────────────────────────────────────────
 function Figure({

@@ -66,7 +66,9 @@ interface Props {
 }
 
 export function RunList(props: Props) {
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set(props.runs.slice(0, 1).map((run) => run.id)));
+  // a department lead's own plan shows under the subtask it belongs to
+  const top = props.runs.filter((run) => !run.parentRunId);
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set(top.slice(0, 1).map((run) => run.id)));
   const botOf = (id: string) => props.bots.find((bot) => bot.id === id);
   const toggle = (id: string) =>
     setExpanded((current) => {
@@ -76,7 +78,7 @@ export function RunList(props: Props) {
       return next;
     });
 
-  if (props.runs.length === 0) {
+  if (top.length === 0) {
     return (
       <div className="rounded-[14px] bg-inset px-4 py-6 text-center text-[12.5px] leading-relaxed text-ink-secondary">
         {t("No dispatches yet. Give a Chief a multi-step task — its plan and every subtask will show up here live.")}
@@ -85,7 +87,7 @@ export function RunList(props: Props) {
   }
   return (
     <div className="flex flex-col gap-2">
-      {props.runs.map((run) => {
+      {top.map((run) => {
         const chief = botOf(run.chiefBotId);
         const progress = runProgress(run);
         const open = expanded.has(run.id);
@@ -121,10 +123,17 @@ export function RunList(props: Props) {
                 )}
               </div>
             )}
+            {open && run.report && (
+              <div className="border-t border-hairline/30 px-3 py-2 text-[12.5px] leading-relaxed whitespace-pre-wrap text-ink">
+                <div className="mb-0.5 text-[11.5px] font-semibold text-ink-secondary">{t("The chief's report")}</div>
+                {run.report.length > 600 ? `${run.report.slice(0, 600)}…` : run.report}
+              </div>
+            )}
             {open && (
               <div className="border-t border-hairline/30">
                 {run.subtasks.map((subtask) => {
                   const assignee = botOf(subtask.assigneeBotId);
+                  const child = subtask.childRunId ? props.runs.find((entry) => entry.id === subtask.childRunId) : undefined;
                   return (
                     <div key={subtask.id} className="flex items-center gap-2 border-b border-hairline/20 px-3 py-1.5 last:border-b-0">
                       <div className="min-w-0 flex-1">
@@ -132,6 +141,7 @@ export function RunList(props: Props) {
                         <div className="truncate text-[11px] text-ink-secondary">
                           {assignee?.name ?? "?"}
                           {subtask.dependsOn.length ? ` · ${t("After {ids}", { ids: subtask.dependsOn.join(t(", ")) })}` : ""}
+                          {child ? ` · ${t("Team plan {done}/{total}", { done: child.subtasks.filter((entry) => entry.status === "done").length, total: child.subtasks.length })}` : ""}
                           {subtask.error && subtask.status !== "done" ? ` · ${subtask.error}` : ""}
                         </div>
                       </div>

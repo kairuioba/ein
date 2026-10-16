@@ -16,12 +16,12 @@ import { formatDateTime, t } from "@/lib/i18n";
 import { chiefBot } from "@/lib/org";
 import { clip, clock } from "@/lib/workbench";
 import { EMPTY_BRIEF, EMPTY_ORG, EMPTY_USAGE, getLastSeen, markSeen, refreshApi, useBrief, useDecisions, useOrg, useUsageSummary } from "@/state/org-api";
-import { useStore, type Bot } from "@/state/store";
+import { api, useStore, type Bot } from "@/state/store";
 import type { Brief, BriefDepartment, InboxItem, OrgEvent } from "../../../shared/org-types";
 
 import { DecisionMark, DiamondMark, HealthDot, StatusGlyph, useElementSize, useNow, useStoredState } from "../workbench/parts";
 import { formatYuan } from "../workbench/PeopleView";
-import { briefText, foldTimeline, handlingMinutes, headlineOf, inboxOrder, isImageOption, percent, progressSegments, splitDetail, weekStart } from "./brief-model";
+import { answerRoute, briefText, decideRoute, foldTimeline, handlingMinutes, headlineOf, inboxOrder, isImageOption, percent, progressSegments, splitDetail, weekStart } from "./brief-model";
 
 type Range = "today" | "week";
 const RANGES = ["today", "week"] as const;
@@ -120,7 +120,6 @@ export function BriefPage() {
             brief={brief}
             connected={connected}
             now={now}
-            chief={chief}
             dailyAt={org.rules.reportCadence.dailyBriefAt}
             tileOf={tileOf}
             botOf={botOf}
@@ -207,7 +206,11 @@ function Digest({
   const segments = progressSegments(brief.departments, brief.total);
   const reports = brief.departments.filter((dept) => dept.lastReportAt).length;
   const risk = brief.risks[0];
-  const left = usage.budgetPerDay > 0 ? Math.max(0, usage.budgetPerDay - usage.todayCost) : null;
+  // the week view shows the week's spend against seven days of budget
+  const week = range === "week" && typeof usage.weekCost === "number";
+  const spent = week ? usage.weekCost! : usage.todayCost;
+  const budget = week ? usage.budgetPerDay * 7 : usage.budgetPerDay;
+  const left = budget > 0 ? Math.max(0, budget - spent) : null;
   return (
     <div className="flex items-start gap-2.5">
       <span className="-mt-1.5 shrink-0">{chief ? tileOf(chief.id, 24, true) : null}</span>
@@ -262,13 +265,15 @@ function Digest({
                 {t("Spend")}
               </div>
               <span className="flex items-baseline gap-[5px] whitespace-nowrap">
-                <b className="text-[17px] leading-[1.2]">¥{formatYuan(usage.todayCost)}</b>
-                <span className="text-[12px] text-ink-secondary">{usage.budgetPerDay > 0 ? t("/ budget ¥{budget}", { budget: formatYuan(usage.budgetPerDay) }) : t("· no budget set")}</span>
+                <b className="text-[17px] leading-[1.2]">¥{formatYuan(spent)}</b>
+                <span className="text-[12px] text-ink-secondary">{budget > 0 ? t("/ budget ¥{budget}", { budget: formatYuan(budget) }) : t("· no budget set")}</span>
               </span>
               <span className="my-px block h-1 overflow-hidden rounded-full bg-control">
-                <i className="block h-full rounded-full bg-ink-secondary" style={{ width: `${usage.budgetPerDay > 0 ? Math.min(100, (usage.todayCost / usage.budgetPerDay) * 100) : 0}%` }} />
+                <i className="block h-full rounded-full bg-ink-secondary" style={{ width: `${budget > 0 ? Math.min(100, (spent / budget) * 100) : 0}%` }} />
               </span>
-              <span className="text-[11.5px] whitespace-nowrap text-ink-secondary">{left !== null ? t("Today · ¥{left} left", { left: formatYuan(left) }) : t("Today")}</span>
+              <span className="text-[11.5px] whitespace-nowrap text-ink-secondary">
+                {left !== null ? (week ? t("This week · ¥{left} left", { left: formatYuan(left) }) : t("Today · ¥{left} left", { left: formatYuan(left) })) : week ? t("This week") : t("Today")}
+              </span>
             </div>
           </div>
         </div>
@@ -458,7 +463,6 @@ function NeedsYou({
   brief,
   connected,
   now,
-  chief,
   dailyAt,
   tileOf,
   botOf,
@@ -468,7 +472,6 @@ function NeedsYou({
   brief: Brief;
   connected: boolean;
   now: number;
-  chief?: Bot;
   dailyAt: string;
   tileOf: TileOf;
   botOf: (id: string) => Bot | undefined;
@@ -478,21 +481,36 @@ function NeedsYou({
   const { dispatch } = useStore();
   const [answered, setAnswered] = useState<Record<string, string>>({});
   const items = inboxOrder(brief.needsYou);
+  // answering follows where the question lives (see answerRoute)
   const answer = (item: InboxItem, text: string) => {
     const lastAsker = item.chain?.length ? item.chain[item.chain.length - 1]!.botId : item.botId;
-    if (item.groupId) dispatch({ type: "sendGroup", groupId: item.groupId, text, replyToId: item.messageId });
-    else if (item.messageId && botOf(item.botId)?.messages.some((message) => message.id === item.messageId)) dispatch({ type: "answerCard", botId: item.botId, messageId: item.messageId, answer: text });
+    const route = answerRoute(item);
+    if (route === "request") dispatch({ type: "decideRequest", threadId: item.threadId!, requestId: item.requestId!, behavior: "answer", message: text });
+    else if (route === "room") dispatch({ type: "sendGroup", groupId: item.groupId!, text, replyToId: item.messageId });
+    else if (route === "card") dispatch({ type: "answerCard", botId: item.botId, messageId: item.messageId!, answer: text });
     else dispatch({ type: "send", botId: lastAsker, text: t("About “{title}”: {answer}", { title: item.title, answer: text }) });
     setAnswered((current) => ({ ...current, [item.id]: text }));
     onAnswered(t("Answered: {answer}", { answer: clip(text, 16) }));
     void refreshApi("/api/brief");
   };
-  const decide = (item: InboxItem, behavior: "allow" | "deny") => {
-    if (!item.requestId || !item.threadId) {
+  const decide = async (item: InboxItem, behavior: "allow" | "deny") => {
+    const route = decideRoute(item);
+    if (route === "run") {
+      try {
+        await api(`/api/dispatch/runs/${encodeURIComponent(item.runId!)}/${behavior === "allow" ? "approve" : "cancel"}`, { method: "POST", body: "{}" });
+        setAnswered((current) => ({ ...current, [item.id]: behavior === "allow" ? t("Started") : t("Canceled") }));
+        onAnswered(behavior === "allow" ? t("The plan is running") : t("The plan was canceled"));
+      } catch (error) {
+        onAnswered(error instanceof Error ? error.message : String(error));
+      }
+      void refreshApi("/api/brief");
+      return;
+    }
+    if (route === "chat") {
       onOpenChat(item.botId, item.threadId);
       return;
     }
-    dispatch({ type: "decideRequest", threadId: item.threadId, requestId: item.requestId, behavior, message: behavior === "deny" ? "Denied by the owner from the brief." : undefined });
+    dispatch({ type: "decideRequest", threadId: item.threadId!, requestId: item.requestId!, behavior, message: behavior === "deny" ? "Denied by the owner from the brief." : undefined });
     setAnswered((current) => ({ ...current, [item.id]: behavior === "allow" ? t("Approved") : t("Refused") }));
     onAnswered(behavior === "allow" ? t("Approved — it goes out as scheduled") : t("Refused — it won't go out"));
     void refreshApi("/api/brief");
@@ -519,14 +537,14 @@ function NeedsYou({
         item.kind === "choice" ? (
           <ChoiceCard key={item.id} item={item} now={now} tileOf={tileOf} botOf={botOf} done={answered[item.id]} onAnswer={(text) => answer(item, text)} onOpenChat={onOpenChat} />
         ) : item.kind === "approval" ? (
-          <ApprovalCard key={item.id} item={item} now={now} tileOf={tileOf} botOf={botOf} done={answered[item.id]} onDecide={(behavior) => decide(item, behavior)} onOpenChat={onOpenChat} />
+          <ApprovalCard key={item.id} item={item} now={now} tileOf={tileOf} botOf={botOf} done={answered[item.id]} onDecide={(behavior) => void decide(item, behavior)} onOpenChat={onOpenChat} />
         ) : (
           <EscalationCard key={item.id} item={item} now={now} tileOf={tileOf} botOf={botOf} done={answered[item.id]} onAnswer={(text) => answer(item, text)} onOpenChat={onOpenChat} />
         ),
       )}
       {brief.autoApproved.length > 0 && (
         <>
-          <div className="mt-1 -mb-1 ml-0.5 text-[12px] font-semibold text-ink-secondary">{t("The chief approved for you · {count}", { count: brief.autoApproved.length })}</div>
+          <div className="mt-1 -mb-1 ml-0.5 text-[12px] font-semibold text-ink-secondary">{t("The chief approved for you · {count}", { count: brief.autoApprovedTotal ?? brief.autoApproved.length })}</div>
           {brief.autoApproved.map((entry) => (
             <div key={entry.id} className="flex h-[34px] items-center gap-2 rounded-[10px] bg-inset pr-3 pl-[9px] text-[12.5px] whitespace-nowrap">
               {tileOf(entry.botId, 14, true)}
@@ -560,7 +578,6 @@ function NeedsYou({
       <div className="mt-2 flex h-7 items-center justify-center gap-[5px] border-t border-hairline/30 text-[12px] whitespace-nowrap text-ink-secondary">
         <Clock size={12} />
         {t("Next daily brief at {time}", { time: dailyAt || "18:00" })}
-        {chief ? ` · ${chief.name}` : ""}
       </div>
     </section>
   );
@@ -679,6 +696,7 @@ function ChoiceCard({ item, now, tileOf, botOf, done, onAnswer, onOpenChat }: { 
 
 function ApprovalCard({ item, now, tileOf, botOf, done, onDecide, onOpenChat }: { item: InboxItem; now: number; tileOf: TileOf; botOf: (id: string) => Bot | undefined; done?: string; onDecide: (behavior: "allow" | "deny") => void; onOpenChat: (botId: string, threadId?: string) => void }) {
   const { consequence, body } = splitDetail(item);
+  const plan = Boolean(item.runId);
   return (
     <CardShell icon={<Lock size={12} />} tag={t("Approval")} item={item} now={now} tileOf={tileOf} botOf={botOf} consequence={consequence}>
       {body && (
@@ -693,13 +711,13 @@ function ApprovalCard({ item, now, tileOf, botOf, done, onDecide, onOpenChat }: 
       ) : (
         <div className="flex items-center gap-1.5 whitespace-nowrap">
           <Button size="sm" onClick={() => onDecide("allow")}>
-            {t("Approve and send")}
+            {plan ? t("Start the plan") : t("Approve and send")}
           </Button>
           <Button variant="soft" size="sm" onClick={() => onOpenChat(item.botId, item.threadId)}>
-            {t("Change it")}
+            {plan ? t("Look at the plan") : t("Change it")}
           </Button>
           <Button variant="soft" size="sm" onClick={() => onDecide("deny")}>
-            {t("Refuse")}
+            {plan ? t("Cancel") : t("Refuse")}
           </Button>
           {item.rule && (
             <span className="ml-auto inline-flex min-w-0 items-center gap-1 text-[11.5px] text-ink-secondary">

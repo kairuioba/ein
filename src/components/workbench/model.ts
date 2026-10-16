@@ -4,11 +4,12 @@
 // routes are missing). Views get plain data and stay renderers.
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { buildDepartments, chiefBot, squads, unassignedBots, type DepartmentView } from "@/lib/org";
+import { buildDepartments, chiefBot, squadName, squads, unassignedBots, type DepartmentView } from "@/lib/org";
 import { mascotForBot, type MascotKind } from "@/lib/engine-mascots";
 import { EMPTY_TEAM_MAP_SNAPSHOT, type TeamMapSnapshot } from "@/lib/team-map";
 import {
   activeRun,
+  activeSquads,
   departmentStats,
   isActiveRun,
   peopleStates,
@@ -19,7 +20,7 @@ import {
 } from "@/lib/workbench";
 import { EMPTY_BRIEF, EMPTY_ORG, EMPTY_USAGE, getLastSeen, useBrief, useDecisions, useLibrary, useOrg, useUsageSummary } from "@/state/org-api";
 import { api, useStore, type Bot, type Group } from "@/state/store";
-import { DEFAULT_DISPATCH_SETTINGS, type DispatchRoute, type DispatchRun, type DispatchSettings } from "../../../shared/dispatch-types";
+import { DEFAULT_DISPATCH_SETTINGS, type DispatchRoute, type DispatchRun, type DispatchSettings, type DispatchSquad } from "../../../shared/dispatch-types";
 import { DEFAULT_ORG_RULES, type Brief, type InboxItem, type LibraryDoc, type OrgConfig, type OrgDecision, type UsageSummary } from "../../../shared/org-types";
 
 import { useNow } from "./parts";
@@ -63,6 +64,16 @@ export function useDispatchState(intervalMs = 2_000) {
 
 export type BotWithMeta = Bot & { createdAt?: number };
 
+export interface SquadInfo {
+  /** "组 B" — from the run when people were added mid-run, else by position */
+  name: string;
+  /** set when the squad came from adding people to a running job */
+  addedAt?: number;
+  reviewAt?: number;
+  review?: DispatchSquad["review"];
+  leadBotId?: string;
+}
+
 export interface Room {
   key: string;
   section: string;
@@ -74,6 +85,8 @@ export interface Room {
   main: BotWithMeta[];
   /** squads after the first, drawn as dashed sub-rooms (组 B …) */
   squads: BotWithMeta[][];
+  /** name and history of each of `squads`, same order */
+  squadInfo: SquadInfo[];
   /** every bot in the room, lead first */
   everyone: BotWithMeta[];
   unassigned?: boolean;
@@ -129,10 +142,26 @@ export function useWorkbenchModel(): WorkbenchModel {
   const chief = useMemo(() => chiefBot(bots, org), [bots, org]);
   const span = Math.max(2, org.rules?.spanOfControl || 5);
 
+  const runSquads = useMemo(() => activeSquads(dispatch.runs), [dispatch.runs]);
   const rooms = useMemo(() => {
     const out: Room[] = buildDepartments(bots, org).map((dept: DepartmentView<BotWithMeta>) => {
-      const groups = squads(dept.members, span);
+      // people added to a running job stand together as their squad; the
+      // original team is squad A and keeps its place
+      const fromRuns: Array<{ info: SquadInfo; members: BotWithMeta[] }> = [];
+      for (const member of dept.members) {
+        const entry = runSquads.get(member.id);
+        if (!entry) continue;
+        let group = fromRuns.find((candidate) => candidate.info.name === entry.squad.name && candidate.info.addedAt === entry.squad.addedAt);
+        if (!group) {
+          group = { info: { name: entry.squad.name, addedAt: entry.squad.addedAt, reviewAt: entry.squad.reviewAt, review: entry.squad.review, leadBotId: entry.squad.leadBotId }, members: [] };
+          fromRuns.push(group);
+        }
+        group.members.push(member);
+      }
+      const others = dept.members.filter((member) => !runSquads.has(member.id));
+      const groups = fromRuns.length ? [others] : squads(others, span);
       const main = [...(dept.lead ? [dept.lead] : []), ...(groups[0] ?? [])];
+      const extra = [...groups.slice(1).map((members, index) => ({ info: { name: squadName(index + 1) }, members })), ...fromRuns];
       return {
         key: dept.section,
         section: dept.section,
@@ -141,18 +170,30 @@ export function useWorkbenchModel(): WorkbenchModel {
         isolated: Boolean(dept.settings?.isolated),
         lead: dept.lead,
         main,
-        squads: groups.slice(1),
-        everyone: [...main, ...groups.slice(1).flat()],
+        squads: extra.map((group) => group.members),
+        squadInfo: extra.map((group) => group.info),
+        everyone: [...main, ...extra.flatMap((group) => group.members)],
       };
     });
     const loose = unassignedBots(bots, org);
     if (loose.length) {
       const groups = squads(loose, Math.max(span, 6));
-      out.push({ key: UNASSIGNED, section: "", label: "", color: "#9AA0AC", isolated: false, main: groups[0] ?? [], squads: groups.slice(1), everyone: loose, unassigned: true });
+      out.push({
+        key: UNASSIGNED,
+        section: "",
+        label: "",
+        color: "#9AA0AC",
+        isolated: false,
+        main: groups[0] ?? [],
+        squads: groups.slice(1),
+        squadInfo: groups.slice(1).map((_, index) => ({ name: squadName(index + 1) })),
+        everyone: loose,
+        unassigned: true,
+      });
     }
     // isolated rooms close the first row, so the glass room sits at the edge
     return [...out.filter((room) => !room.isolated && !room.unassigned), ...out.filter((room) => room.isolated), ...out.filter((room) => room.unassigned)];
-  }, [bots, org, span]);
+  }, [bots, org, span, runSquads]);
 
   const roomOf = useMemo(() => {
     const map = new Map<string, Room>();

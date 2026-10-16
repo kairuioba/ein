@@ -7,7 +7,7 @@
 //         adding people never moves the nodes already on screen.
 //   both  compressDay() for the day timeline, projectOf()/parseDeadline() for
 //         the header, buildWires() for dispatch routes, view math, undo.
-import type { DispatchRoute, DispatchRun, DispatchSubtask } from "../../shared/dispatch-types";
+import type { DispatchRoute, DispatchRun, DispatchSquad, DispatchSubtask } from "../../shared/dispatch-types";
 import type { Brief, BriefDepartment, Health, InboxItem, OrgEvent } from "../../shared/org-types";
 import { MASCOT_KINDS, poseForStatus, type MascotKind, type MascotPose, type MascotStatus } from "./engine-mascots";
 import { formatDateTime, t } from "./i18n";
@@ -68,9 +68,27 @@ const newestFirst = (runs: readonly DispatchRun[]) => [...runs].sort((a, b) => b
 
 // ── the header: current project and its deadline ────────────────────────────
 
-/** The newest run still in progress — the project the workbench is about. */
+/** The newest top-level run still in progress — the project the workbench is
+ * about. A department lead's own plan (parentRunId) is part of its parent. */
 export function activeRun(runs: readonly DispatchRun[]): DispatchRun | undefined {
-  return newestFirst(runs).find(isActiveRun);
+  return newestFirst(runs).find((run) => isActiveRun(run) && !run.parentRunId);
+}
+
+/** A subtask a lead handed to its own team is a container: the child run's
+ * subtasks are the real work, so counts skip it. */
+export const isLeafSubtask = (subtask: Pick<DispatchSubtask, "childRunId">) => !subtask.childRunId;
+
+/** Squads added to running jobs that are still together, by member. */
+export function activeSquads(runs: readonly DispatchRun[]): Map<string, { squad: DispatchSquad; run: DispatchRun }> {
+  const out = new Map<string, { squad: DispatchSquad; run: DispatchRun }>();
+  for (const run of runs) {
+    if (!isActiveRun(run)) continue;
+    for (const squad of run.squads ?? []) {
+      if (squad.endedAt) continue;
+      for (const botId of squad.botIds) out.set(botId, { squad, run });
+    }
+  }
+  return out;
 }
 
 /** The project title: the active run's goal (first line), else null. */
@@ -313,7 +331,7 @@ export function peopleStates(input: PeopleInput): Map<string, PersonState> {
       continue;
     }
     if (bot.id === input.chiefId) {
-      const inFlight = runs.filter(isActiveRun).reduce((sum, run) => sum + run.subtasks.filter((subtask) => subtask.status === "running").length, 0);
+      const inFlight = runs.filter(isActiveRun).reduce((sum, run) => sum + run.subtasks.filter((subtask) => subtask.status === "running" && isLeafSubtask(subtask)).length, 0);
       set({
         status: "leading",
         tone: inFlight || bot.busy ? "blue" : "grey",
@@ -423,7 +441,7 @@ export function departmentStats(
     const ids = new Set(botIds);
     const subtasks = runs
       .filter((run) => isActiveRun(run) || run.status === "done")
-      .flatMap((run) => run.subtasks.filter((subtask) => ids.has(subtask.assigneeBotId) && subtask.status !== "canceled" && subtask.status !== "skipped"));
+      .flatMap((run) => run.subtasks.filter((subtask) => ids.has(subtask.assigneeBotId) && isLeafSubtask(subtask) && subtask.status !== "canceled" && subtask.status !== "skipped"));
     const people = botIds.map((id) => states.get(id)).filter((state): state is PersonState => Boolean(state));
     const count = (status: PersonStatus) => people.filter((state) => state.status === status).length;
     const derived: DeptStats = {
@@ -888,13 +906,13 @@ export function mascotForModelName(name: string): MascotKind {
 /** Split the not-started items: newcomers take the last, independent ones
  * (about two each); the current people keep the rest. Finished and running
  * items never move. Uses the server's own assignment when it sends one. */
-export function splitRemaining<T extends { status: "done" | "running" | "pending" }>(remaining: readonly T[], add: number) {
+export function splitRemaining<T extends { status: "done" | "running" | "pending"; moved?: boolean }>(remaining: readonly T[], add: number) {
   const done = remaining.filter((item) => item.status === "done");
   const running = remaining.filter((item) => item.status === "running");
   const pending = remaining.filter((item) => item.status === "pending");
-  const assigned = pending.filter((item) => typeof (item as { toNew?: unknown }).toNew === "boolean");
-  if (assigned.length === pending.length && pending.length) {
-    return { done, running, keep: pending.filter((item) => !(item as { toNew?: boolean }).toNew), fresh: pending.filter((item) => (item as { toNew?: boolean }).toNew) };
+  // the server marks what the suggestion hands to the new squad
+  if (remaining.some((item) => typeof item.moved === "boolean")) {
+    return { done, running, keep: pending.filter((item) => !item.moved), fresh: pending.filter((item) => item.moved) };
   }
   const toNew = Math.min(pending.length, Math.max(1, add * 2));
   return { done, running, keep: pending.slice(0, pending.length - toNew), fresh: pending.slice(pending.length - toNew) };

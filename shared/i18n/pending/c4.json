@@ -346,5 +346,18 @@
   "{count} things need your call.": "有 {count} 件事要你拍板。",
   "Overall {done}/{total}; {count} things need your call.": "整体 {done}/{total}；有 {count} 件事要你拍板。",
   "Overall {done}/{total}; nothing needs you right now.": "整体 {done}/{total}；现在没有要你拍板的事。",
-  "Brief · {time}": "简报 · {time}"
+  "Brief · {time}": "简报 · {time}",
+  "Goal": "目标",
+  "Added {count} people to “{goal}” as {squad}": "已给「{goal}」加了 {count} 个人 · {squad}",
+  "The chief's report": "总控的汇总",
+  "Team plan {done}/{total}": "部门计划 {done}/{total}",
+  "Review {result} {before} → {after} per hour": "复核 {result} {before} → {after} 项/时",
+  "Review at {time}": "{time} 复核",
+  "This week · ¥{left} left": "本周 · 还剩 ¥{left}",
+  "Started": "已开工",
+  "The plan is running": "计划开工了",
+  "The plan was canceled": "计划已取消",
+  "Start the plan": "开工",
+  "Look at the plan": "看看计划",
+  "Don't add now": "先不加"
 }

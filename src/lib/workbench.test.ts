@@ -2,24 +2,28 @@
 // the compressed day, the project header, routes, view math and undo.
 import { describe, expect, it } from "vitest";
 
-import type { DispatchRun, DispatchSubtask } from "../../shared/dispatch-types";
+import type { DispatchRun, DispatchSquad, DispatchSubtask } from "../../shared/dispatch-types";
 import type { InboxItem } from "../../shared/org-types";
 import { EMPTY_TEAM_MAP_SNAPSHOT } from "./team-map";
 import {
   EditHistory,
   FLOOR,
   TREE,
+  activeRun,
+  activeSquads,
   buildWires,
   compressDay,
   departmentStats,
   fitView,
   headcount,
+  isLeafSubtask,
   layoutFloor,
   layoutTree,
   parseDeadline,
   peopleStates,
   placeLabels,
   projectTitle,
+  splitRemaining,
   zoomAround,
   type TreeInput,
   type WorkbenchBot,
@@ -253,6 +257,47 @@ describe("project header", () => {
     expect(Math.round((friday - NOW) / (60 * MIN))).toBe(27);
     expect(new Date(parseDeadline("明天 18:00 前", NOW)!).getDate()).toBe(16);
     expect(parseDeadline("尽快", NOW)).toBeNull();
+  });
+
+  it("treats a department's own plan as part of its parent run", () => {
+    const parent = run([subtask("1", "lead", "running", { childRunId: "child" }), subtask("2", "c", "pending")], { createdAt: NOW - 60 * MIN });
+    const child = run([subtask("c1", "a", "running")], { id: "child", goal: "内容部自己的计划", parentRunId: "r1", parentSubtaskId: "1", createdAt: NOW - 5 * MIN });
+    expect(activeRun([parent, child])?.id).toBe("r1");
+    expect(projectTitle([child])).toBeNull();
+    expect(parent.subtasks.filter(isLeafSubtask).map((item) => item.id)).toEqual(["2"]);
+  });
+});
+
+describe("adding people mid-run", () => {
+  const squad = (name: string, botIds: string[], extra: Partial<DispatchSquad> = {}): DispatchSquad => ({
+    name,
+    leadBotId: botIds[0]!,
+    botIds,
+    subtaskIds: [],
+    addedAt: NOW - 20 * MIN,
+    by: "owner",
+    reviewAt: NOW + 10 * MIN,
+    ...extra,
+  });
+
+  it("finds the squads still together on running work, by member", () => {
+    const live = run([], { squads: [squad("组 B", ["x", "y"]), squad("组 C", ["z"], { endedAt: NOW })] });
+    const finished = run([], { id: "r0", status: "done", squads: [squad("组 B", ["old"])] });
+    const squads = activeSquads([live, finished]);
+    expect([...squads.keys()].sort()).toEqual(["x", "y"]);
+    expect(squads.get("y")?.squad.name).toBe("组 B");
+  });
+
+  it("follows the server's split when it marks what moves, else hands newcomers the last items", () => {
+    const item = (status: "done" | "running" | "pending", id: string, moved?: boolean) => ({ id, status, moved });
+    const marked = splitRemaining([item("done", "a", false), item("running", "b", false), item("pending", "c", false), item("pending", "d", true), item("pending", "e", true)], 1);
+    expect(marked.keep.map((entry) => entry.id)).toEqual(["c"]);
+    expect(marked.fresh.map((entry) => entry.id)).toEqual(["d", "e"]);
+    expect(marked.done.map((entry) => entry.id)).toEqual(["a"]);
+    const guessed = splitRemaining(["p1", "p2", "p3", "p4", "p5"].map((id) => ({ id, status: "pending" as const })), 1);
+    expect(guessed.keep.map((entry) => entry.id)).toEqual(["p1", "p2", "p3"]);
+    expect(guessed.fresh.map((entry) => entry.id)).toEqual(["p4", "p5"]);
+    expect(splitRemaining([{ status: "pending" as const }], 4).fresh).toHaveLength(1);
   });
 });
 

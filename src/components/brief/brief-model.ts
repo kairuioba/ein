@@ -47,6 +47,25 @@ export function splitDetail(item: Pick<InboxItem, "kind" | "detail">): { consequ
   return item.kind === "choice" ? { consequence: lines[0] } : { body: lines[0] };
 }
 
+/** Where a pick goes: a live provider ask answers through its thread, a room
+ * card in the room, an options card is patched (that records 决议 #n and tells
+ * the bot), and anything else is said to whoever passed it up. */
+export function answerRoute(item: Pick<InboxItem, "requestId" | "threadId" | "groupId" | "messageId">): "request" | "room" | "card" | "message" {
+  if (item.requestId && item.threadId) return "request";
+  if (item.groupId) return "room";
+  if (item.messageId) return "card";
+  return "message";
+}
+
+/** Where an approve/refuse goes: a dispatch plan waiting to start is approved
+ * (or canceled) on its run, a provider ask through its thread; anything else
+ * opens the chat so the owner can say it there. */
+export function decideRoute(item: Pick<InboxItem, "runId" | "requestId" | "threadId">): "run" | "request" | "chat" {
+  if (item.runId) return "run";
+  if (item.requestId && item.threadId) return "request";
+  return "chat";
+}
+
 /** Options that are pictures (a URL or data URL of an image) show as thumbnails. */
 export const isImageOption = (option: string) => /^data:image\//.test(option) || /^(https?:|\/)\S+\.(png|jpe?g|webp|gif|svg)(\?\S*)?$/i.test(option);
 
@@ -60,7 +79,8 @@ export function foldTimeline(events: readonly OrgEvent[], head = 2, tail = 1, ma
   const middle = sorted.slice(head, sorted.length - tail);
   return [
     ...sorted.slice(0, head).map((event) => ({ kind: "event" as const, event })),
-    { kind: "fold", from: middle[0]!.at, to: middle[middle.length - 1]!.at, titles: middle.slice(0, 3).map((event) => clip(event.title, 8)), count: middle.length },
+    // the head of each title ("加 4 人" of "加 4 人 · 组 B") keeps the fold short
+    { kind: "fold", from: middle[0]!.at, to: middle[middle.length - 1]!.at, titles: middle.slice(0, 3).map((event) => clip(event.title.split(" · ")[0]!, 8)), count: middle.length },
     ...sorted.slice(sorted.length - tail).map((event) => ({ kind: "event" as const, event })),
   ];
 }

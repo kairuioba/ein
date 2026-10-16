@@ -3,18 +3,20 @@
 // and proposes how many to add as a new squad, what it costs and saves, which
 // not-yet-started items the newcomers take, and their onboarding pack.
 // Nothing changes until the owner picks: not now / add a few / as suggested.
-import { useCallback, useEffect, useState } from "react";
-import { BarChart3, Bell, Check, ChevronDown, Clock, Image as ImageIcon, Loader2, Repeat, Users, X } from "lucide-react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { BarChart3, Check, ChevronDown, Clock, Image as ImageIcon, Loader2, MessageCircleQuestion, Repeat, Target, Users, X } from "lucide-react";
 
 import { BotTile } from "@/components/mascot/Mascot";
 import { Button, Dialog } from "@/components/ui";
 import { cn } from "@/lib/cn";
+import { mascotForBot } from "@/lib/engine-mascots";
 import { msg, t } from "@/lib/i18n";
 import { squadName } from "@/lib/org";
 import { clip, clock, mascotForModelName, splitRemaining, ungroupedLines } from "@/lib/workbench";
 import { amendRun, diagnoseRun } from "@/state/org-api";
-import type { DispatchRun } from "../../../shared/dispatch-types";
-import type { LibraryDoc, RunDiagnosis } from "../../../shared/org-types";
+import { useStore } from "@/state/store";
+import type { DispatchAmendResult, DispatchDiagnosis, DispatchRun } from "../../../shared/dispatch-types";
+import type { RunDiagnosis } from "../../../shared/org-types";
 
 import type { WorkbenchModel } from "./model";
 import { formatYuan } from "./PeopleView";
@@ -26,12 +28,22 @@ const CHECK_LABEL: Record<RunDiagnosis["checks"][number]["id"], string> = {
   rateLimit: msg("Outside rate limits?"),
 };
 
-const modelLabel = (name: string) => {
-  const kind = mascotForModelName(name);
-  return kind === "workbuddy" && !/workbuddy/i.test(name) ? name : kind === "local" ? t("Local model") : kind.charAt(0).toUpperCase() + kind.slice(1);
+type PackId = NonNullable<DispatchDiagnosis["suggestion"]>["pack"][number]["id"];
+const PACK_LABEL: Record<PackId, { label: string; icon: ReactNode }> = {
+  acceptance: { label: msg("Acceptance"), icon: <Check size={13} /> },
+  examples: { label: msg("Follow"), icon: <ImageIcon size={13} /> },
+  scope: { label: msg("Your scope"), icon: <Target size={13} /> },
+  goal: { label: msg("Goal"), icon: <Users size={13} /> },
+  contact: { label: msg("Ask whom"), icon: <MessageCircleQuestion size={13} /> },
 };
 
-type Phase = { kind: "loading" } | { kind: "error"; message: string } | { kind: "ready"; diagnosis: RunDiagnosis; tookMs: number; at: number };
+/** A diagnosis from an older server may lack the add-people sheet's extras. */
+type Diagnosis = RunDiagnosis & Partial<Pick<DispatchDiagnosis, "at" | "speedPerHour">> & {
+  remaining: Array<RunDiagnosis["remaining"][number] & { assigneeBotId?: string; squad?: string; moved?: boolean }>;
+  suggestion?: NonNullable<RunDiagnosis["suggestion"]> & Partial<Pick<NonNullable<DispatchDiagnosis["suggestion"]>, "linesUngrouped" | "people" | "pack" | "concurrency">>;
+};
+
+type Phase = { kind: "loading" } | { kind: "error"; message: string } | { kind: "ready"; diagnosis: Diagnosis; tookMs: number; at: number };
 
 export function AddPeopleDialog({
   open,
@@ -52,36 +64,42 @@ export function AddPeopleDialog({
   const [busy, setBusy] = useState<number | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [packOpen, setPackOpen] = useState(false);
+  const runId = run?.id;
 
   const diagnose = useCallback(async () => {
-    if (!run) return;
+    if (!runId) return;
     setPhase({ kind: "loading" });
     setSubmitError(null);
     const started = Date.now();
     try {
-      const diagnosis = await diagnoseRun(run.id);
-      setPhase({ kind: "ready", diagnosis, tookMs: Date.now() - started, at: Date.now() });
+      const diagnosis = (await diagnoseRun(runId)) as Diagnosis;
+      setPhase({ kind: "ready", diagnosis, tookMs: Date.now() - started, at: diagnosis.at ?? Date.now() });
     } catch (error) {
       setPhase({ kind: "error", message: error instanceof Error ? error.message : String(error) });
     }
-  }, [run]);
+  }, [runId]);
 
+  // one check per opening (the run itself refreshes every poll)
   useEffect(() => {
-    if (open && run) void diagnose();
+    if (open && runId) void diagnose();
     if (!open) {
       setBusy(null);
       setPackOpen(false);
     }
-  }, [open, run, diagnose]);
+  }, [open, runId, diagnose]);
 
   const add = async (count: number) => {
     if (!run) return;
     setBusy(count);
     setSubmitError(null);
     try {
-      const result = await amendRun(run.id, count);
+      const result = (await amendRun(run.id, count)) as Partial<DispatchAmendResult> & { added: string[] };
       await model.dispatch.refresh();
-      onDone(t("Added {count} people to “{goal}”", { count: result.added?.length || count, goal: clip(run.goal, 16) }));
+      onDone(
+        result.squad
+          ? t("Added {count} people to “{goal}” as {squad}", { count: result.added.length || count, goal: clip(run.goal, 14), squad: result.squad.name })
+          : t("Added {count} people to “{goal}”", { count: result.added.length || count, goal: clip(run.goal, 16) }),
+      );
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -91,6 +109,7 @@ export function AddPeopleDialog({
 
   const title = run ? t("Add-people check · {goal}", { goal: clip(run.goal, 14) }) : t("Add people");
   const chief = model.chief;
+  const suggestion = phase.kind === "ready" && phase.diagnosis.verdict === "add-helps" ? phase.diagnosis.suggestion : undefined;
   return (
     <Dialog open={open} onClose={onClose} label={title} width={640} className="max-h-[calc(100dvh-48px)]">
       <header className="flex h-[62px] shrink-0 items-center gap-2.5 pr-3.5 pl-[22px]">
@@ -127,13 +146,13 @@ export function AddPeopleDialog({
             action={<Button variant="ghost" size="sm" onClick={() => void diagnose()}>{t("Try again")}</Button>}
           />
         ) : (
-          <Diagnosis diagnosis={phase.diagnosis} run={run} model={model} packOpen={packOpen} onTogglePack={() => setPackOpen((value) => !value)} />
+          <DiagnosisView diagnosis={phase.diagnosis} packOpen={packOpen} onTogglePack={() => setPackOpen((value) => !value)} />
         )}
       </div>
 
       <footer className="flex h-[70px] shrink-0 items-center gap-2 border-t border-hairline/30 pr-5 pl-3">
         <button type="button" onClick={onClose} className="h-10 rounded-[10px] px-3 text-[14px] font-semibold text-ink-secondary hover:bg-control hover:text-ink">
-          {t("Not now")}
+          {t("Don't add now")}
         </button>
         {submitError && <span className="min-w-0 truncate text-[12px] text-danger">{t("Could not add people: {error}", { error: submitError })}</span>}
         <span className="flex-1" />
@@ -141,17 +160,17 @@ export function AddPeopleDialog({
           <Button size="lg" onClick={onOpenChief}>
             {t("Talk to the chief")}
           </Button>
-        ) : phase.kind === "ready" && phase.diagnosis.verdict === "add-helps" && phase.diagnosis.suggestion ? (
+        ) : suggestion ? (
           <>
-            {phase.diagnosis.suggestion.add > 2 && (
+            {suggestion.add > 2 && (
               <Button variant="soft" size="lg" disabled={busy !== null} onClick={() => void add(2)}>
                 {busy === 2 && <Loader2 size={14} className="animate-spin" />}
                 {t("Only add {count}", { count: 2 })}
               </Button>
             )}
-            <Button size="lg" disabled={busy !== null} onClick={() => void add(phase.diagnosis.suggestion!.add)}>
-              {busy === phase.diagnosis.suggestion.add && <Loader2 size={14} className="animate-spin" />}
-              {t("Add {count} as suggested", { count: phase.diagnosis.suggestion.add })}
+            <Button size="lg" disabled={busy !== null} onClick={() => void add(suggestion.add)}>
+              {busy === suggestion.add && <Loader2 size={14} className="animate-spin" />}
+              {t("Add {count} as suggested", { count: suggestion.add })}
             </Button>
           </>
         ) : phase.kind === "ready" ? (
@@ -169,7 +188,7 @@ export function AddPeopleDialog({
   );
 }
 
-function Notice({ title, detail, action, tone = "info" }: { title: string; detail: string; action?: React.ReactNode; tone?: "info" | "error" }) {
+function Notice({ title, detail, action, tone = "info" }: { title: string; detail: string; action?: ReactNode; tone?: "info" | "error" }) {
   return (
     <div className={cn("my-6 flex flex-col items-center gap-1.5 rounded-[14px] px-6 py-8 text-center", tone === "error" ? "bg-danger/[0.06]" : "bg-inset")}>
       <b className={cn("text-[14px]", tone === "error" ? "text-danger" : "text-ink")}>{title}</b>
@@ -192,7 +211,7 @@ const CheckIcon = ({ ok }: { ok: boolean }) =>
     </svg>
   );
 
-function Diagnosis({ diagnosis, run, model, packOpen, onTogglePack }: { diagnosis: RunDiagnosis; run: DispatchRun; model: WorkbenchModel; packOpen: boolean; onTogglePack: () => void }) {
+function DiagnosisView({ diagnosis, packOpen, onTogglePack }: { diagnosis: Diagnosis; packOpen: boolean; onTogglePack: () => void }) {
   const helps = diagnosis.verdict === "add-helps";
   const suggestion = diagnosis.suggestion;
   return (
@@ -220,7 +239,7 @@ function Diagnosis({ diagnosis, run, model, packOpen, onTogglePack }: { diagnosi
           <b className="text-warning">{t("Why not")}</b> · {diagnosis.reason ?? t("The bottleneck is not the number of people.")}
         </div>
       )}
-      {helps && suggestion && <Suggestion diagnosis={diagnosis} suggestion={suggestion} run={run} model={model} packOpen={packOpen} onTogglePack={onTogglePack} />}
+      {helps && suggestion && <Suggestion diagnosis={diagnosis} suggestion={suggestion} packOpen={packOpen} onTogglePack={onTogglePack} />}
     </>
   );
 }
@@ -228,23 +247,22 @@ function Diagnosis({ diagnosis, run, model, packOpen, onTogglePack }: { diagnosi
 function Suggestion({
   diagnosis,
   suggestion,
-  run,
-  model,
   packOpen,
   onTogglePack,
 }: {
-  diagnosis: RunDiagnosis;
-  suggestion: NonNullable<RunDiagnosis["suggestion"]>;
-  run: DispatchRun;
-  model: WorkbenchModel;
+  diagnosis: Diagnosis;
+  suggestion: NonNullable<Diagnosis["suggestion"]>;
   packOpen: boolean;
   onTogglePack: () => void;
 }) {
+  const { state } = useStore();
   const split = splitRemaining(diagnosis.remaining, suggestion.add);
-  const letter = /([A-Z])\s*$/.exec(suggestion.squad)?.[1];
-  const existingName = letter && letter > "A" ? squadName(letter.charCodeAt(0) - 66) : t("Current people");
+  // the people who stay keep their squad's name (the original team is 组 A)
+  const keepSquad = split.keep.find((item) => item.squad)?.squad ?? squadName(0);
+  const people = suggestion.people ?? [];
+  const lead = people[0]?.modelLabel ?? (suggestion.models[0] ? modelName(suggestion.models[0]) : null);
   const currentPeople = Math.round((1 + Math.sqrt(1 + 8 * suggestion.linesBefore)) / 2);
-  const lead = suggestion.models[0] ? modelLabel(suggestion.models[0]) : null;
+  const ungrouped = suggestion.linesUngrouped ?? ungroupedLines(currentPeople + suggestion.add);
   const stats = [
     {
       icon: <Clock size={13} />,
@@ -269,34 +287,21 @@ function Suggestion({
       icon: <Users size={13} />,
       label: t("Lines of talk"),
       value: `${suggestion.linesBefore} → ${suggestion.linesAfter}`,
-      note: t("ungrouped {count}", { count: ungroupedLines(currentPeople + suggestion.add) }),
+      note: t("ungrouped {count}", { count: ungrouped }),
     },
   ];
   const groups: Array<{ cells: typeof split.done; cls: string; label: string; labelClass?: string }> = [
     { cells: split.done, cls: "bg-success/15 text-success", label: t("{count} done · untouched", { count: split.done.length }) },
     { cells: split.running, cls: "bg-raised text-accent-text shadow-[inset_0_0_0_1.5px_color-mix(in_srgb,var(--color-select)_55%,transparent)]", label: t("{count} in progress · kept", { count: split.running.length }) },
-    { cells: split.keep, cls: "bg-[#F59E0B]/15 text-warning shadow-[inset_0_0_0_1px_rgb(242_194_122)]", label: t("{squad} {count} items", { squad: existingName, count: split.keep.length }), labelClass: "font-semibold text-warning" },
+    { cells: split.keep, cls: "bg-[#F59E0B]/15 text-warning shadow-[inset_0_0_0_1px_rgb(242_194_122)]", label: t("{squad} {count} items", { squad: keepSquad, count: split.keep.length }), labelClass: "font-semibold text-warning" },
     { cells: split.fresh, cls: "bg-[#8B5CF6]/12 text-[#6D3FE0] shadow-[inset_0_0_0_1px_rgb(185_165_248)]", label: t("{squad} {count} · newcomers", { squad: suggestion.squad, count: split.fresh.length }), labelClass: "font-semibold text-[#6D3FE0]" },
   ].filter((group) => group.cells.length);
   const indexOf = new Map(diagnosis.remaining.map((item, index) => [item.subtaskId, index + 1]));
-
-  // the onboarding pack: what a newcomer reads instead of the whole chat
-  const pendingSubtasks = run.subtasks.filter((subtask) => split.fresh.some((item) => item.subtaskId === subtask.id));
-  const acceptance = pendingSubtasks.find((subtask) => subtask.acceptance)?.acceptance ?? run.subtasks.find((subtask) => subtask.acceptance)?.acceptance;
-  const examples = split.done.length ? (split.done.length > 1 ? t("{first} – {last} finished examples", { first: clip(split.done[0]!.title, 8), last: clip(split.done[split.done.length - 1]!.title, 8) }) : t("{title} as the finished example", { title: clip(split.done[0]!.title, 12) })) : t("No finished example yet");
-  const docs = model.library.filter((doc: LibraryDoc) => doc.versions.length).slice(0, 2);
-  const docsLine = docs.length ? t("Subscribed: {docs}", { docs: docs.map((doc) => `${doc.title} v${Math.max(...doc.versions.map((version) => version.version))}`).join(t(", ")) }) : t("No shared documents yet");
-  const room = model.rooms.find((candidate) => run.subtasks.some((subtask) => candidate.everyone.some((bot) => bot.id === subtask.assigneeBotId)));
-  const pack: Array<{ icon: React.ReactNode; label: string; value: string }> = [
-    { icon: <Check size={13} />, label: t("Acceptance"), value: acceptance ?? t("Same as the finished items") },
-    { icon: <ImageIcon size={13} />, label: t("Follow"), value: examples },
-    { icon: <Bell size={13} />, label: t("Sources"), value: docsLine },
-  ];
-  const more: typeof pack = [
-    { icon: <Repeat size={13} />, label: t("Agreements"), value: t("Report each item when done; stuck {count} min goes up a level", { count: model.org.rules.escalateAfterMin }) },
-    { icon: <Users size={13} />, label: t("Your scope"), value: t("Only the {count} items given to {squad}; leave finished and running ones alone", { count: split.fresh.length, squad: suggestion.squad }) },
-    { icon: <Bell size={13} />, label: t("Ask whom"), value: t("{squad} lead → {lead} → chief", { squad: suggestion.squad, lead: room?.lead?.name ?? t("the department lead") }) },
-  ];
+  const pack = suggestion.pack ?? [];
+  const shown = packOpen ? pack : pack.slice(0, 3);
+  const avatars = people.length
+    ? people.map((person, index) => <BotTile key={index} kind={mascotForBot({ modelSelection: person.modelSelection }, state.instances)} size={17} title={`${person.name} · ${person.modelLabel}`} />)
+    : suggestion.models.slice(0, 6).map((name, index) => <BotTile key={index} kind={mascotForModelName(name)} size={17} />);
   return (
     <>
       <div className="rounded-[14px] bg-inset px-4 py-3 shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_30%,transparent)]">
@@ -305,11 +310,7 @@ function Suggestion({
             {t("Suggestion: add {count}, as a new squad", { count: suggestion.add })} <em className="text-[#6D3FE0] not-italic">{suggestion.squad}</em>
             {lead ? t(" (lead: {model})", { model: lead }) : ""}
           </b>
-          <span className="ml-auto flex shrink-0 gap-px">
-            {suggestion.models.slice(0, 6).map((name, index) => (
-              <BotTile key={index} kind={mascotForModelName(name)} size={17} />
-            ))}
-          </span>
+          <span className="ml-auto flex shrink-0 gap-px">{avatars}</span>
         </div>
         <div className="mt-2.5 grid grid-cols-3 gap-2">
           {stats.map((stat) => (
@@ -344,30 +345,40 @@ function Suggestion({
           ))}
         </div>
       </div>
-      <div className="rounded-xl shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_55%,transparent)]">
-        <button type="button" onClick={onTogglePack} className="flex h-[38px] w-full items-center gap-2 pr-3.5 pl-3 text-left whitespace-nowrap">
-          <ChevronDown size={14} className={cn("text-ink-secondary transition-transform", !packOpen && "-rotate-90")} />
-          <b className="text-[13.5px] text-ink">{t("{squad} onboarding pack", { squad: suggestion.squad })}</b>
-          <span className="truncate text-[12px] text-ink-secondary">{t("Written by the chief · newcomers read only this page")}</span>
-          <span className="ml-auto text-[12px] text-ink-secondary">{t("1 page · {count} items", { count: pack.length + more.length })}</span>
-        </button>
-        {[...pack, ...(packOpen ? more : [])].map((row) => (
-          <div key={row.label} className="grid h-[26px] grid-cols-[22px_74px_1fr] items-center pr-3.5 pl-3 text-[13px] whitespace-nowrap">
-            <span className="grid w-[22px] place-items-center text-ink-secondary">{row.icon}</span>
-            <b className="ml-1.5 font-semibold text-ink">{row.label}</b>
-            <span className="truncate text-ink-secondary">{row.value}</span>
-          </div>
-        ))}
-        <button type="button" onClick={onTogglePack} className="mt-1 flex h-[34px] w-full items-center gap-[5px] border-t border-hairline/30 px-3.5 text-[12.5px] font-semibold whitespace-nowrap text-accent-text">
-          {packOpen ? t("Show less") : t("Show all {count} items", { count: pack.length + more.length })}
-          <ChevronDown size={12} className={cn(packOpen && "rotate-180")} />
-          {!packOpen && <span className="ml-1.5 truncate font-normal text-ink-secondary/70">{t("plus agreements, your scope, whom to ask")}</span>}
-        </button>
-      </div>
+      {pack.length > 0 && (
+        <div className="rounded-xl shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_55%,transparent)]">
+          <button type="button" onClick={onTogglePack} className="flex h-[38px] w-full items-center gap-2 pr-3.5 pl-3 text-left whitespace-nowrap">
+            <ChevronDown size={14} className={cn("text-ink-secondary transition-transform", packOpen && "rotate-180")} />
+            <b className="text-[13.5px] text-ink">{t("{squad} onboarding pack", { squad: suggestion.squad })}</b>
+            <span className="truncate text-[12px] text-ink-secondary">{t("Written by the chief · newcomers read only this page")}</span>
+            <span className="ml-auto text-[12px] text-ink-secondary">{t("1 page · {count} items", { count: pack.length })}</span>
+          </button>
+          {shown.map((row, index) => (
+            <div key={`${row.id}${index}`} className="grid min-h-[26px] grid-cols-[22px_74px_1fr] items-start py-[3px] pr-3.5 pl-3 text-[13px]">
+              <span className="grid h-5 w-[22px] place-items-center text-ink-secondary">{PACK_LABEL[row.id]?.icon}</span>
+              <b className="ml-1.5 font-semibold whitespace-nowrap text-ink">{t(PACK_LABEL[row.id]?.label ?? row.id)}</b>
+              <span className={cn("text-ink-secondary", packOpen ? "leading-relaxed" : "truncate")}>{row.text}</span>
+            </div>
+          ))}
+          {pack.length > 3 && (
+            <button type="button" onClick={onTogglePack} className="mt-1 flex h-[34px] w-full items-center gap-[5px] border-t border-hairline/30 px-3.5 text-[12.5px] font-semibold whitespace-nowrap text-accent-text">
+              {packOpen ? t("Show less") : t("Show all {count} items", { count: pack.length })}
+              <ChevronDown size={12} className={cn(packOpen && "rotate-180")} />
+              {!packOpen && <span className="ml-1.5 truncate font-normal text-ink-secondary/70">{pack.slice(3).map((row) => t(PACK_LABEL[row.id]?.label ?? row.id)).join(t(", "))}</span>}
+            </button>
+          )}
+        </div>
+      )}
       <div className="flex items-center gap-[7px] text-[12.5px] text-ink-secondary">
         <Repeat size={14} className="text-accent-text" />
         {t("Checked again after 30 minutes; if it isn't faster you'll hear why, with a suggestion to undo")}
       </div>
     </>
   );
+}
+
+/** "kimi-k2" → "Kimi" for the squad lead line when the server sends model names only. */
+function modelName(name: string): string {
+  const kind = mascotForModelName(name);
+  return kind === "workbuddy" && !/workbuddy/i.test(name) ? name : kind === "local" ? t("Local model") : kind.charAt(0).toUpperCase() + kind.slice(1);
 }

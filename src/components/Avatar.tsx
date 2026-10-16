@@ -25,6 +25,8 @@ import { t } from "@/lib/i18n";
 import { BotTile, type TileState } from "@/components/mascot/Mascot";
 import { mascotForBot } from "@/lib/engine-mascots";
 import { useStore } from "@/state/store";
+import { useOrg } from "@/state/org-api";
+import { chiefBot } from "@/lib/org";
 
 /**
  * The pack's baked-in silhouette was exported with the body fill hardcoded
@@ -216,6 +218,8 @@ export const MausAvatar = memo(forwardRef(MausAvatarComponent));
 
 export type BotAvatarProps = Omit<MausAvatarProps, "color"> & {
   bot: {
+    /** lets the tile find out whether this bot is the 主 Bot (crowned) */
+    id?: string;
     name?: string;
     color: MausColor;
     avatarUrl?: string | null;
@@ -224,7 +228,8 @@ export type BotAvatarProps = Omit<MausAvatarProps, "color"> & {
     modelSelection?: { instanceId: string; model?: string } | null;
     chiefOfStaff?: boolean;
   };
-  /** draw the chief's crown above the tile (default: the bot's own flag) */
+  /** draw the crown above the tile (default: only on the 主 Bot — department
+   * leads are chiefs of staff too, but they wear the dark name plate, not the crown) */
   crown?: boolean;
   /** the amber "waiting on you" diamond or the blue "working" pixels */
   marker?: TileState;
@@ -242,6 +247,8 @@ export function BotAvatar({ bot, size = 44, label, crown, marker, state }: BotAv
   const profile = botAvatarProfile(bot);
   const [imageFailed, setImageFailed] = useState(false);
   const { state: app } = useStore();
+  const { data: org } = useOrg();
+  const crowned = crown ?? (bot.id !== undefined && bot.id === chiefBot(app.bots, org)?.id);
 
   useEffect(() => setImageFailed(false), [profile.avatarUrl]);
 
@@ -252,7 +259,7 @@ export function BotAvatar({ bot, size = 44, label, crown, marker, state }: BotAv
       <BotTile
         kind={mascotForBot(bot, app.instances)}
         size={size}
-        chief={crown ?? bot.chiefOfStaff ?? false}
+        chief={crowned}
         state={marker ?? (state && WORKING_STATES.has(state) ? "working" : null)}
         title={label ?? bot.name}
       />

@@ -78,7 +78,7 @@ function useNavMeta(): Partial<Record<AppSettingsSection, ReactNode>> {
       org: departments ? t("{count} departments", { count: departments }) : undefined,
       engines: engines.total ? t("{count} usable", { count: engines.usable }) : undefined,
       review: t("{count} rules", { count: review.ask + review.allow }),
-      cadence: t("Daily {time}", { time: rules.reportCadence.dailyBriefAt }),
+      cadence: t("Daily brief {time}", { time: rules.reportCadence.dailyBriefAt }),
       connections: configured ? t("{count} set up", { count: configured }) : undefined,
       usage: usage.weekPercent !== null ? `${Math.round(usage.weekPercent)}%` : undefined,
       experimental: experimental ? t("{count} on", { count: experimental }) : undefined,

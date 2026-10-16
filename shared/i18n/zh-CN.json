@@ -172,9 +172,9 @@
   "Allow this bot to use connected apps": "允许此机器人使用已连接应用",
   "Allowed": "已允许",
   "Allowed apps": "允许的连接应用",
-  "Always allow": "始终允许",
+  "Always allow": "总是允许",
   "Always allowed": "总是允许",
-  "Always allowed: {key}": "始终允许：{key}",
+  "Always allowed: {key}": "总是允许：{key}",
   "An Android device is required": "需要一台 Android 设备",
   "An engine is rate limiting this work; more people would only hit the limit harder. Wait a few minutes or switch engines.": "有引擎在限流，加人只会更快撞上限额。等几分钟，或换个引擎。",
   "An update is ready": "有新版本",
@@ -788,7 +788,7 @@
   "Daily brief at": "每天出日报：",
   "Daily brief time": "日报时间",
   "Daily budget line": "每天预算线",
-  "Daily {time}": "日报 {time}",
+  "Daily {time}": "每天 {time}",
   "Data": "数据",
   "Data & analytics": "数据分析",
   "Data lens": "数据镜头",
@@ -3264,7 +3264,7 @@
   "at once on trouble": "出事立即报",
   "attachment": "附件",
   "attachments storage is full (limit {limit} bytes)": "附件存储空间已满（上限 {limit} 字节）",
-  "auto-approved {key} (always allowed)": "已自动批准 {key}（始终允许）",
+  "auto-approved {key} (always allowed)": "已自动批准 {key}（总是允许）",
   "auto-approved {tool}": "已自动批准 {tool}",
   "autonomy mode \"{mode}\"": "自主模式“{mode}”",
   "avatar changed while generation was in progress": "生成过程中头像已被更改",
@@ -4072,5 +4072,6 @@
   "← in": "← 收到",
   "→ out": "→ 发出",
   "⌘↩ to send": "⌘↩ 发送",
-  "✕ removes a step": "点 ✕ 删掉一步"
+  "✕ removes a step": "点 ✕ 删掉一步",
+  "Daily brief {time}": "日报 {time}"
 }

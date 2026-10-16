@@ -98,7 +98,7 @@ import {
 import { sidebarSectionAttention, type SidebarSectionAttention } from "@/lib/sidebar-attention";
 import {
   activeRunsByLead,
-  addedSquadName,
+  addedSquadsBySection,
   botRowStatus,
   departmentDelivered,
   foldDepartmentMembers,
@@ -1449,6 +1449,10 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     });
   };
   const botById = useMemo(() => new Map(state.bots.map((bot) => [bot.id, bot])), [state.bots]);
+  const squadBySection = useMemo(
+    () => addedSquadsBySection(runs, (id) => botById.get(id)?.section?.trim() || undefined),
+    [runs, botById],
+  );
   const groupMembers = (group: Group) =>
     group.memberIds.map((id) => botById.get(id)).filter((bot): bot is Bot => Boolean(bot && !bot.hidden));
 
@@ -1497,7 +1501,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
       (expanded ? folding.folded + folding.inRun > 0 : folding.folded > 0);
     const everyone = [...(lead ? [lead] : []), ...members];
     const delivered = departmentDelivered(department.section, brief.departments, runs, new Set(everyone.map((bot) => bot.id)), now);
-    const squad = leadRun ? addedSquadName(leadRun) : null;
+    const squad = squadBySection.get(department.section);
     const toggleMembers = () => {
       const next = toggleCollapsedSection(expandedMembers, id);
       setExpandedMembers(next);

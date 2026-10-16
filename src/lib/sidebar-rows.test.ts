@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import type { DispatchRun, DispatchSubtask } from "../../shared/dispatch-types";
+import type { DispatchRun, DispatchSquad, DispatchSubtask } from "../../shared/dispatch-types";
 import type { InboxItem, LibraryDoc, OrgDecision } from "../../shared/org-types";
 import type { Routine } from "./routines";
 import {
-  addedSquadName,
+  addedSquadsBySection,
   activeRunsByLead,
   botRowStatus,
   callOccursBetween,
@@ -71,6 +71,8 @@ describe("nav counts", () => {
   it("counts running dispatch runs first, and busy bots only when no run is going", () => {
     const bots = [{ busy: true, activity: "working" as const }, { activity: "waiting-on-you" as const, busy: true }, { hidden: true, busy: true }];
     expect(runningWorkCount([run("a", "running", []), run("b", "synthesizing", []), run("c", "done", [])], bots)).toBe(2);
+    // a lead's run for one step of the chief's run is part of it
+    expect(runningWorkCount([run("a", "running", []), run("child", "running", [], { parentRunId: "a" })], bots)).toBe(1);
     expect(runningWorkCount([run("c", "done", [])], bots)).toBe(1);
     expect(runningWorkCount([], [])).toBe(0);
   });
@@ -161,13 +163,31 @@ describe("rows", () => {
     expect(byLead.has("other")).toBe(false);
   });
 
-  it("names a squad only when the run records one being added", () => {
-    const base = run("r", "running", []);
-    expect(addedSquadName(base)).toBeNull();
-    expect(addedSquadName({ ...base, squads: [{ name: "Squad A", createdAt: base.createdAt }] } as DispatchRun)).toBeNull();
-    expect(addedSquadName({ ...base, squads: [{ name: "Squad A" }, { name: "Squad B" }] } as DispatchRun)).toBe("Squad B");
-    expect(addedSquadName({ ...base, squads: [{ name: "Squad B", addedAt: base.createdAt + 60_000 }] } as DispatchRun)).toBe("Squad B");
-    expect(addedSquadName({ ...base, squads: [{}, { added: true }] } as DispatchRun)).toBe("Squad B");
+  it("puts an added squad on the department it joined while the work goes on", () => {
+    const squad = (name: string, leadBotId: string, addedAt: number, endedAt?: number): DispatchSquad => ({
+      name,
+      leadBotId,
+      botIds: [leadBotId],
+      subtaskIds: [],
+      addedAt,
+      by: "chief",
+      reviewAt: addedAt + 30 * 60_000,
+      endedAt,
+    });
+    const sections: Record<string, string> = { "kimi-1": "Engineering", "kimi-2": "Engineering", lead: "Design", "new-x": "" };
+    const sectionOf = (id: string) => sections[id] || undefined;
+    const runs = [
+      run("tech", "running", [], { squads: [squad("Squad B", "kimi-1", NOW - 40 * 60_000), squad("Squad C", "kimi-2", NOW - 5 * 60_000)] }),
+      // a squad whose lead has no department lands on the run lead's
+      run("design", "running", [], { squads: [squad("", "new-x", NOW - 60_000)] }),
+      run("ended", "running", [], { chiefBotId: "x", squads: [squad("Squad B", "kimi-1", NOW, NOW)] }),
+      run("done", "done", [], { squads: [squad("Squad D", "kimi-1", NOW)] }),
+    ];
+    const chips = addedSquadsBySection(runs, sectionOf);
+    expect(chips.get("Engineering")).toBe("Squad C");
+    expect(chips.get("Design")).toBe("Squad B");
+    expect(chips.size).toBe(2);
+    expect(addedSquadsBySection([run("plain", "running", [])], sectionOf).size).toBe(0);
   });
 
   it("counts a group's unread messages since you last spoke", () => {

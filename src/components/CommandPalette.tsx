@@ -258,7 +258,7 @@ function PaletteDialog({ initialQuery, onClose }: { initialQuery: string; onClos
       [...library.docs].sort((a, b) => b.updatedAt - a.updatedAt),
       q,
       (doc) => doc.title,
-      (doc) => [doc.section],
+      (doc) => [doc.section, doc.summary],
     );
     const files: Array<Extract<Item, { kind: "file" }>> = [];
     for (const doc of docs) {

@@ -21,13 +21,14 @@ export function runIsActive(run: Pick<DispatchRun, "status">): boolean {
   return ACTIVE_RUN.has(run.status);
 }
 
-/** 工作台 "N running": dispatch runs in flight; with none, the bots that are
- * busy on a turn of their own (a bot waiting on you is not running). */
+/** 工作台 "N running": dispatch runs in flight (a lead's run for one step of
+ * the chief's run is part of that run, not another one); with none, the bots
+ * that are busy on a turn of their own (a bot waiting on you is not running). */
 export function runningWorkCount(
-  runs: ReadonlyArray<Pick<DispatchRun, "status">>,
+  runs: ReadonlyArray<Pick<DispatchRun, "status" | "parentRunId">>,
   bots: ReadonlyArray<{ hidden?: boolean; busy?: boolean; activity?: Activity }>,
 ): number {
-  const active = runs.filter(runIsActive).length;
+  const active = runs.filter((run) => runIsActive(run) && !run.parentRunId).length;
   if (active) return active;
   return bots.filter(
     (bot) => !bot.hidden && bot.activity !== "waiting-on-you" && (bot.activity === "working" || Boolean(bot.busy)),
@@ -146,24 +147,27 @@ export function runAssignees(run: Pick<DispatchRun, "subtasks"> | undefined): Se
   return new Set(run ? run.subtasks.filter(COUNTED).map((subtask) => subtask.assigneeBotId) : []);
 }
 
-type SquadRecord = { name?: unknown; label?: unknown; added?: unknown; createdAt?: unknown; addedAt?: unknown };
-
-/** The squad a run took on after it started ("组 B"), when the run records its
- * squads; runs that don't simply show no chip. */
-export function addedSquadName(run: DispatchRun): string | null {
-  const squads = (run as DispatchRun & { squads?: unknown }).squads;
-  if (!Array.isArray(squads) || squads.length === 0) return null;
-  const records = squads.filter((squad): squad is SquadRecord => typeof squad === "object" && squad !== null);
-  const addedAt = (squad: SquadRecord) =>
-    typeof squad.addedAt === "number" ? squad.addedAt : typeof squad.createdAt === "number" ? squad.createdAt : null;
-  const added = records.filter((squad) => {
-    const at = addedAt(squad);
-    return squad.added === true || (at !== null && at > run.createdAt + 1_000);
-  });
-  const pick = added.at(-1) ?? (records.length >= 2 ? records.at(-1) : undefined);
-  if (!pick) return null;
-  const name = typeof pick.name === "string" ? pick.name : typeof pick.label === "string" ? pick.label : "";
-  return name.trim() || squadName(records.indexOf(pick));
+/** Squads added to work that is still going ("Squad B"), by the department
+ * they joined — the squad lead's section, else the run lead's — newest per
+ * department: the "Squad B new" chip on a department heading. A run lists
+ * only added squads; the original team is the implicit Squad A. */
+export function addedSquadsBySection(
+  runs: ReadonlyArray<Pick<DispatchRun, "status" | "chiefBotId" | "squads">>,
+  sectionOf: (botId: string) => string | undefined,
+): Map<string, string> {
+  const newest = new Map<string, { name: string; at: number }>();
+  for (const run of runs) {
+    if (!runIsActive(run)) continue;
+    (run.squads ?? []).forEach((squad, index) => {
+      if (squad.endedAt) return;
+      const section = sectionOf(squad.leadBotId) || sectionOf(run.chiefBotId);
+      if (!section) return;
+      const current = newest.get(section);
+      // the original team is Squad A, so the first added one is B
+      if (!current || squad.addedAt > current.at) newest.set(section, { name: squad.name.trim() || squadName(index + 1), at: squad.addedAt });
+    });
+  }
+  return new Map([...newest].map(([section, squad]) => [section, squad.name]));
 }
 
 // ── rows ──────────────────────────────────────────────────────────────────────

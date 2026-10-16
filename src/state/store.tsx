@@ -749,8 +749,16 @@ export function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case "hydrate": {
       const known = (id: string) => action.bots.some((b) => b.id === id) || action.groups.some((g) => g.id === id);
-      const selectedId =
-        state.selectedId && known(state.selectedId) ? state.selectedId : (action.bots[0]?.id ?? "");
+      // nothing chosen yet: open on the 主 Bot (the pinned, unsectioned chief
+      // of staff), never on an archived bot or simply the newest one
+      const visible = action.bots.filter((bot) => !bot.hidden);
+      const opening =
+        visible.find((bot) => bot.pinned && bot.chiefOfStaff && !bot.section?.trim()) ??
+        visible.find((bot) => bot.chiefOfStaff && !bot.section?.trim()) ??
+        visible.find((bot) => bot.pinned) ??
+        visible[0] ??
+        action.bots[0];
+      const selectedId = state.selectedId && known(state.selectedId) ? state.selectedId : (opening?.id ?? "");
       return reconcileSnapshotQueues(
         {
           ...state,

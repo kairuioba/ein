@@ -619,6 +619,20 @@ describe("pending queued chip", () => {
     expect(late.consumedQueueIds["q-snapshot"]).toBeUndefined();
   });
 
+  it("opens on the 主 Bot, never on an archived or merely newest bot", () => {
+    const newest = { ...bot, id: "new", threadId: "t-new", name: "newest" };
+    const archived = { ...bot, id: "old", threadId: "t-old", hidden: true };
+    const main = { ...bot, id: "main", threadId: "t-main", chiefOfStaff: true, pinned: true, section: undefined };
+    const lead = { ...bot, id: "lead", threadId: "t-lead", chiefOfStaff: true, section: "市场部" };
+    const opened = reducer(initialState, { type: "hydrate", bots: [archived, newest, lead, main], groups: [], computerControl: {} });
+    expect(opened.selectedId).toBe("main");
+    // without a 主 Bot, the first bot that is not archived
+    const plain = reducer(initialState, { type: "hydrate", bots: [archived, newest, lead], groups: [], computerControl: {} });
+    expect(plain.selectedId).toBe("new");
+    // a choice already made survives a reconnect
+    expect(reducer(plain, { type: "hydrate", bots: [archived, newest, lead, main], groups: [], computerControl: {} }).selectedId).toBe("new");
+  });
+
   it("bounds unmatched queue tombstones from other clients", () => {
     const withBot = reducer(initialState, { type: "botPatched", bot });
     let state = withBot;

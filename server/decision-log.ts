@@ -32,13 +32,16 @@ export type DecisionKind =
   | "user-approved"
   | "user-denied"
   | "review-would-approve"
-  | "review-would-deny";
+  | "review-would-deny"
+  // an unattended card nobody answered in time: denied, the action never ran
+  | "expired";
 
 /** Who or what produced the decision. The AutoVerdictSource values carry
  * straight through from auto-approve.ts; `question` marks cards a rule may
  * never answer, `auto-fallback` a card shown after delivery failed, `routine`
  * a durable chat scheduling proposal, `skill` a staged learned-skill card,
- * `user` the human's answer, and auto-review sources the isolated model reviewer. */
+ * `user` the human's answer, auto-review sources the isolated model reviewer,
+ * and `unattended-expiry` the org rule that voids unanswered unattended cards. */
 export type DecisionSource =
   | AutoVerdictSource
   | "question"
@@ -47,7 +50,8 @@ export type DecisionSource =
   | "skill"
   | "user"
   | "auto-review"
-  | "auto-review-shadow";
+  | "auto-review-shadow"
+  | "unattended-expiry";
 
 export interface DecisionRow {
   at: string;

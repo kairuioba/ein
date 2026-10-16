@@ -570,7 +570,10 @@ function Figure({
         {crown && <Crown className="absolute -top-[4px] left-1/2 z-[3] -translate-x-1/2" />}
       </span>
       <span className={cn("relative z-[3] -mt-1 flex items-center gap-1", state?.dim && "opacity-70")}>
-        <NameTag name={bot.name} driverKind={driverKind} lead={lead} />
+        {/* the lead tag's engine chip stays white in every skin: pin the ink the
+            Codex/Grok marks are drawn with to the tag's own dark, or they vanish
+            in midnight (foundation NameTag fix requested) */}
+        <NameTag name={bot.name} driverKind={driverKind} lead={lead} className={lead ? "[--color-ink:#14161C]" : undefined} />
         {state?.isNew && !hideNew && <NewTag />}
       </span>
       <StatusLine tone={tone} status={state?.status ?? "idle"} text={state?.line ?? t("Idle")} />

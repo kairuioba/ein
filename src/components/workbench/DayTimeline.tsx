@@ -102,13 +102,19 @@ export function DayTimeline({
       placeLabels(
         sorted.map((mark) => {
           const text = clip(mark.title, 11);
-          return { mark, text, x: xOf(mark.at), width: textWidth(text) + 44 };
+          const labelWidth = textWidth(text) + 44;
+          // the dot sits on the time; the label slides inward at the ends so it
+          // never hangs over the card's edge (the 44 px includes the gap)
+          const dot = xOf(mark.at);
+          const half = (labelWidth - 8) / 2;
+          const x = width > labelWidth ? Math.min(Math.max(dot, half + 8), width - half - 8) : dot;
+          return { mark, text, dot, x, width: labelWidth };
         }),
         10,
       ),
     // xOf depends on width + scale only
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [sorted, inner, scale],
+    [sorted, width, scale],
   );
   const zoomStart = new Date(now);
   zoomStart.setHours(scale.zoomHour, 0, 0, 0);
@@ -143,7 +149,7 @@ export function DayTimeline({
               className="absolute top-[32px] h-[2px]"
               style={{ left: nowX, width: Math.max(0, 24 + inner - nowX), background: "repeating-linear-gradient(90deg, color-mix(in srgb, var(--color-ink-secondary) 40%, transparent) 0 4px, transparent 4px 8px)" }}
             />
-            {labels.map(({ mark, text, x, row, hidden }) => {
+            {labels.map(({ mark, text, dot, x, row, hidden }) => {
               const future = mark.at > now;
               const lit = mark.at <= head;
               const color = markColor(mark);
@@ -151,7 +157,7 @@ export function DayTimeline({
                 <div key={mark.id} className={cn("transition-opacity duration-300", playAt !== null && !lit && "opacity-25")}>
                   <i
                     className="absolute top-[28px] z-[2] size-[10px] -translate-x-1/2 rounded-full"
-                    style={{ left: x, background: future ? "var(--color-raised)" : color, boxShadow: future ? `0 0 0 2px var(--color-raised), inset 0 0 0 2px ${color}` : "0 0 0 2px var(--color-raised)" }}
+                    style={{ left: dot, background: future ? "var(--color-raised)" : color, boxShadow: future ? `0 0 0 2px var(--color-raised), inset 0 0 0 2px ${color}` : "0 0 0 2px var(--color-raised)" }}
                   />
                   {!hidden && (
                     <span
@@ -172,7 +178,7 @@ export function DayTimeline({
             })}
             <div className="absolute top-[2px] z-[3] h-[38px] w-[2px] -translate-x-1/2 bg-select" style={{ left: playAt === null ? nowX : xOf(head) }} />
             {playAt === null && (
-              <span className="absolute -top-[30px] z-[3] h-5 -translate-x-1/2 rounded-full bg-select px-2 text-[11px] leading-5 font-bold whitespace-nowrap text-white" style={{ left: nowX }}>
+              <span className="absolute -top-[30px] z-[3] h-5 -translate-x-1/2 rounded-full bg-select px-2 text-[11px] leading-5 font-bold whitespace-nowrap text-white" style={{ left: Math.max(40, Math.min(nowX, width - 40)) }}>
                 {t("Now {time}", { time: clock(now) })}
               </span>
             )}

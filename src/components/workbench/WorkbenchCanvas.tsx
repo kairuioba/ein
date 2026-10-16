@@ -897,7 +897,7 @@ function TaskNodeBox({
         {owner && <span className="ml-[5px] shrink-0 text-[11px] text-ink-secondary/80">{owner}</span>}
       </span>
       <span className="ml-auto flex shrink-0 items-center gap-[5px]">
-        {decisionId !== undefined && <span className="inline-flex h-[18px] items-center rounded-[5px] bg-control/80 px-[5px] text-[10.5px] text-ink-secondary">{t("From decision #{id}", { id: decisionId })}</span>}
+        {decisionId !== undefined && <span className="inline-flex h-[18px] items-center rounded-[5px] bg-control/80 px-[5px] text-[10.5px] text-ink-secondary">{t("Derived from decision #{id}", { id: decisionId })}</span>}
         {lens === "report" && subtask && (
           <>
             <HealthDot health={status === "fail" ? "red" : status === "wait" ? "yellow" : "green"} />
@@ -1273,7 +1273,7 @@ function LensLegend({ lens }: { lens: Lens }) {
       item("d", <svg width="30" height="12" aria-hidden><path d="M2 4H28" stroke="#EC4899" strokeWidth="5" opacity=".55" strokeLinecap="round" /><path d="M2 10H28" stroke="#EC4899" strokeWidth="1.6" opacity=".7" strokeLinecap="round" /></svg>, t("Discussion · thicker = more")),
       item("o", <svg width="26" height="10" aria-hidden><path d="M2 5H20" stroke="#3B5BFF" strokeWidth="1.6" strokeDasharray="4 3" /><path d="M19 1.5L24 5L19 8.5z" fill="#3B5BFF" /></svg>, t("Work order")),
       item("k", <DecisionMark size={12} />, t("Decision")),
-      item("t", <span className="inline-flex h-[18px] items-center rounded-[5px] bg-control/80 px-[5px] text-[10.5px]">{t("From decision #{id}", { id: 3 })}</span>, t("Derived task")),
+      item("t", <span className="inline-flex h-[18px] items-center rounded-[5px] bg-control/80 px-[5px] text-[10.5px]">{t("Derived from decision #{id}", { id: 3 })}</span>, t("Derived task")),
       item("b", <svg width="26" height="10" aria-hidden><path d="M2 5H24" stroke="#E5484D" strokeWidth="1.6" strokeDasharray="4 3" /></svg>, t("Blocked dependency")),
       item("m", <i className="inline-block h-3.5 w-[22px] rounded-[7px] bg-[#EC4899]/15" />, t("Meeting")),
     ];

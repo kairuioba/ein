@@ -310,6 +310,9 @@ function handle(msg: any) {
       break;
     }
     case "session/load": {
+      // a resumed session gets its MCP servers again, like a new one
+      const loaded: McpEntry[] = Array.isArray(msg.params?.mcpServers) ? msg.params.mcpServers : [];
+      agentsMcp = loaded.find((s: any) => s?.name === "agents") ?? agentsMcp;
       const opts = configOptions();
       const mdls = sessionModels();
       result(msg.id, { ...(opts ? { configOptions: opts } : {}), ...(mdls ? { models: mdls } : {}) });

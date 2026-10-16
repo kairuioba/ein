@@ -14,7 +14,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSectionDef[] = [
   {
     id: "general",
     label: msg("General"),
-    keywords: ["profile", "name", "email", "dispatch", "chief", "tool calls", "analytics", "diagnostics", "channel", "个人资料", "名字", "邮箱", "派发", "调度", "总控", "工具调用", "诊断", "频道"],
+    keywords: ["profile", "name", "email", "dispatch", "chief", "tool calls", "analytics", "diagnostics", "channel", "个人资料", "名字", "邮箱", "派发", "调度", "总控", "工具调用", "诊断", "群聊", "频道"],
   },
   {
     id: "appearance",

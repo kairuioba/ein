@@ -28,12 +28,13 @@ import {
   PinOff,
   RefreshCw,
   Search,
+  Star,
   Trash2,
   Users,
   X,
 } from "lucide-react";
 import { api, useStore, visibleMessages, type Bot, type Group, type Message } from "@/state/store";
-import { getLastSeen, useApi, useBrief, useDecisions, useLibrary, useOrg, useUsageSummary } from "@/state/org-api";
+import { getLastSeen, saveOrg, useApi, useBrief, useDecisions, useLibrary, useOrg, useUsageSummary } from "@/state/org-api";
 import type { DispatchRun } from "../../shared/dispatch-types";
 import type { CalendarCall } from "@/lib/calendar-calls";
 import { DEPARTMENT_COLORS, type InboxItem } from "../../shared/org-types";
@@ -943,7 +944,9 @@ function BotContextMenu({
   onMoveToSection: (botId: string) => void;
 }) {
   const { state, dispatch } = useStore();
+  const { data: org } = useOrg();
   const bot = state.bots.find((b) => b.id === menu.botId);
+  const isMain = Boolean(bot) && chiefBot(state.bots, org)?.id === bot?.id;
 
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
@@ -965,8 +968,12 @@ function BotContextMenu({
   const canCoordinate = engine?.capabilities?.agentsMcp === true;
   const visibleBotCount = state.bots.filter((candidate) => !candidate.hidden).length;
   const archiveBlocked = Boolean(bot.chiefOfStaff) || visibleBotCount <= 1;
+  // in a department the chief of staff is its lead (主管); unsectioned, the 总控
+  const department = bot.section?.trim() || "";
   const archiveHint = bot.chiefOfStaff
-    ? t("Choose another Chief of Staff first")
+    ? department
+      ? t("Choose another lead for {department} first", { department })
+      : t("Choose another Chief of Staff first")
     : visibleBotCount <= 1
       ? t("Keep at least one active bot")
       : undefined;
@@ -1005,9 +1012,24 @@ function BotContextMenu({
           bot.pinned ? t("Unpin") : t("Pin"),
           () => dispatch({ type: "updateBot", botId: bot.id, patch: { pinned: !bot.pinned } }),
         ),
+        ...(isMain
+          ? []
+          : [
+              item(<Star size={15} className="text-ink-secondary" />, t("Make main bot"), () => {
+                void saveOrg({ chiefBotId: bot.id }).catch((error: unknown) =>
+                  dispatch({ type: "error", message: error instanceof Error ? error.message : String(error) }),
+                );
+              }),
+            ]),
         item(
           <Crown size={15} className={bot.chiefOfStaff ? "text-select" : "text-ink-secondary"} />,
-          bot.chiefOfStaff ? t("Remove Chief of Staff") : t("Make Chief of Staff"),
+          department
+            ? bot.chiefOfStaff
+              ? t("Remove as lead of {department}", { department })
+              : t("Make lead of {department}", { department })
+            : bot.chiefOfStaff
+              ? t("Remove Chief of Staff")
+              : t("Make Chief of Staff"),
           () => dispatch({ type: "updateBot", botId: bot.id, patch: { chiefOfStaff: !bot.chiefOfStaff } }),
           {
             disabled: !bot.chiefOfStaff && !canCoordinate,

@@ -21,7 +21,7 @@ const MAC_ZH = {
   "Show All": "全部显示",
   "Quit {app}": "退出“{app}”",
   File: "文件",
-  "New Bot": "新建机器人",
+  "New Bot": "新建 Bot",
   Workbench: "工作台",
   "Close Window": "关闭窗口",
   Edit: "编辑",

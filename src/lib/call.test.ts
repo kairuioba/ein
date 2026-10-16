@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { currentCall, deferCallCleanup, endCall, startCall } from "./call";
+import { callStartedAt, currentCall, deferCallCleanup, endCall, startCall } from "./call";
 
 describe("call ownership", () => {
   beforeEach(() => {
@@ -36,5 +36,19 @@ describe("call ownership", () => {
     await Promise.resolve();
 
     expect(currentCall()).toBeNull();
+  });
+
+  it("remembers when the call started until it ends", () => {
+    expect(callStartedAt()).toBeNull();
+    startCall("room-a", 1_000);
+    expect(callStartedAt()).toBe(1_000);
+    // placing the same call again keeps the original start
+    startCall("room-a", 5_000);
+    expect(callStartedAt()).toBe(1_000);
+    // a different call restarts the clock
+    startCall("room-b", 9_000);
+    expect(callStartedAt()).toBe(9_000);
+    endCall("room-b");
+    expect(callStartedAt()).toBeNull();
   });
 });

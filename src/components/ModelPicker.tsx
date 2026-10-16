@@ -97,6 +97,9 @@ export function ModelPicker({
   className,
   contained = false,
   label,
+  hideTrigger = false,
+  defaultOpen = false,
+  onClose,
 }: {
   bot: Bot;
   className?: string;
@@ -104,14 +107,20 @@ export function ModelPicker({
    * narrow parent (the Agent profile sidebar). */
   contained?: boolean;
   label?: ReactNode;
+  /** No trigger of its own: the caller opens it (mount with defaultOpen)
+   * and hears onClose when it shuts — the Bot panel's "change model" link. */
+  hideTrigger?: boolean;
+  defaultOpen?: boolean;
+  onClose?: () => void;
 }) {
   const { state, dispatch, refreshInstances } = useStore();
-  const [open, setOpen] = useState(false);
-  const [railId, setRailId] = useState<string | null>(null);
+  const [open, setOpen] = useState(defaultOpen);
+  const [railId, setRailId] = useState<string | null>(defaultOpen ? bot.modelSelection.instanceId : null);
   const [pane, setPane] = useState<"main" | "custom">("main");
   const [query, setQuery] = useState("");
   const [showAll, setShowAll] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const wasOpen = useRef(open);
 
   const selection = bot.modelSelection;
   const active = state.instances.find((instance) => instance.instanceId === selection.instanceId);
@@ -121,6 +130,17 @@ export function ModelPicker({
   useEffect(() => {
     if (open) void refreshInstances();
   }, [open, refreshInstances]);
+
+  // An externally opened picker starts on the bot's current engine and pane.
+  useEffect(() => {
+    if (defaultOpen) openFor(active);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once, on mount
+  }, []);
+
+  useEffect(() => {
+    if (wasOpen.current && !open) onClose?.();
+    wasOpen.current = open;
+  }, [open, onClose]);
 
   useEffect(() => {
     if (!open) return;
@@ -245,7 +265,7 @@ export function ModelPicker({
 
   return (
     <div ref={rootRef} className={cn(contained ? "w-full" : "relative", className)}>
-      {contained ? (
+      {hideTrigger ? null : contained ? (
         <div className="flex items-center justify-between gap-4">
           {label}
           {trigger}

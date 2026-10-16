@@ -3,6 +3,7 @@ import { Check, Copy } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 
+/** The settings toggle: a small cobalt switch (34 × 20) as in the Fog kit. */
 export function Switch({
   checked,
   className,
@@ -15,34 +16,46 @@ export function Switch({
       role="switch"
       aria-checked={checked}
       className={cn(
-        "relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-40",
-        checked ? "bg-accent" : "bg-control",
+        "relative h-5 w-[34px] shrink-0 rounded-full transition-colors disabled:opacity-40",
+        checked ? "bg-select" : "bg-ink-secondary/35",
         className,
       )}
     >
       <span
         className={cn(
-          "absolute top-[3px] h-[18px] w-[18px] rounded-full bg-white transition-all",
-          checked ? "left-[21px]" : "left-[3px]",
+          "absolute top-[2px] size-4 rounded-full bg-white shadow-[0_1px_2px_rgb(16_24_40/0.2)] transition-all",
+          checked ? "left-4" : "left-[2px]",
         )}
       />
     </button>
   );
 }
 
+/** A white settings card with the hairline edge. */
 export function Card({
   title,
   subtitle,
   children,
+  className,
 }: {
   title?: string;
   subtitle?: string;
   children?: React.ReactNode;
+  className?: string;
 }) {
   return (
-    <div className="rounded-xl bg-card p-4">
-      {title && <div className="text-[15px] font-medium text-ink">{title}</div>}
-      {subtitle && <div className={title ? "mt-0.5 text-[13px] leading-relaxed text-ink-secondary" : "text-[13px] leading-relaxed text-ink-secondary"}>{subtitle}</div>}
+    <div
+      className={cn(
+        "rounded-[14px] bg-raised p-4 shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_55%,transparent),0_1px_2px_rgb(16_24_40/0.04)]",
+        className,
+      )}
+    >
+      {title && <div className="text-[14.5px] font-semibold text-ink">{title}</div>}
+      {subtitle && (
+        <div className={title ? "mt-0.5 text-[12.5px] leading-relaxed text-ink-secondary" : "text-[12.5px] leading-relaxed text-ink-secondary"}>
+          {subtitle}
+        </div>
+      )}
       {children && <div className={title || subtitle ? "mt-4" : undefined}>{children}</div>}
     </div>
   );

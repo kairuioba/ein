@@ -911,7 +911,7 @@ export function Composer({
               aria-label={t("Message {name}", { name })}
               // rooms: who answers when nobody is mentioned
               title={group ? t("Message {name} — {hint}", { name, hint: groupComposerHint(group, members ?? []) }) : undefined}
-              className="max-h-[9rem] min-h-[34px] min-w-0 flex-1 resize-none self-center overflow-y-auto bg-transparent px-1 py-[7px] text-[13.5px] leading-5 text-ink placeholder:text-ink-secondary/70 focus:outline-none disabled:cursor-not-allowed"
+              className="max-h-[9rem] min-h-[34px] min-w-0 flex-1 resize-none self-center overflow-y-auto bg-transparent px-1 py-[7px] text-[13.5px] leading-5 text-ink placeholder:truncate placeholder:text-ink-secondary/70 focus:outline-none disabled:cursor-not-allowed"
             />
             {!locked && (
               <div className="flex shrink-0 items-center gap-1 self-center">

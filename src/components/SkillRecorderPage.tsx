@@ -716,21 +716,27 @@ export function SkillRecorderPage() {
           <div className="relative flex h-[138px] shrink-0 items-end gap-3.5 rounded-2xl bg-[linear-gradient(170deg,color-mix(in_srgb,var(--color-select)_7%,var(--color-stage))_0,var(--color-stage)_100%)] pb-3.5 pl-[18px] pr-3.5 shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--color-select)_14%,transparent)]">
             <Mascot kind={mascotForBot(learner, state.instances)} pose={pose} scale={1.5} shadow className="-mb-1 shrink-0" title={learner.name} />
             <div className="flex min-w-0 flex-col gap-1 pb-1">
-              <div className="flex items-center gap-1.5">
-                <b className="truncate text-[17px]">{recording ? t("{name} is learning", { name: learner.name }) : learner.name}</b>
+              <div className="flex min-w-0 items-center gap-1.5">
+                {phase === "idle" && visibleBots.length > 1 ? (
+                  // before recording, the name is where you pick who learns
+                  <label className="min-w-0">
+                    <span className="sr-only">{t("Who learns")}</span>
+                    <select
+                      value={learner.id}
+                      onChange={(event) => setLearnerId(event.target.value)}
+                      className="max-w-full cursor-pointer truncate rounded-md bg-transparent pr-1 text-[17px] font-bold text-ink outline-none hover:bg-control/50"
+                    >
+                      {visibleBots.map((bot) => <option key={bot.id} value={bot.id}>{bot.name}</option>)}
+                    </select>
+                  </label>
+                ) : (
+                  <b className="truncate text-[17px]">{recording ? t("{name} is learning", { name: learner.name }) : learner.name}</b>
+                )}
                 {recording && !paused && <span className="size-[15px] shrink-0 animate-spin rounded-full border-2 border-select/25 border-t-select" aria-hidden />}
               </div>
               <span className="truncate text-[12px] text-ink-secondary">{[learner.title, t("watches you once, takes notes")].filter(Boolean).join(" · ")}</span>
               <span className="mt-1 rounded-xl rounded-tl-[4px] bg-stage px-2.5 py-[7px] text-[12.5px] leading-normal text-ink shadow-[0_0_0_1px_color-mix(in_srgb,var(--color-select)_14%,transparent)]">{say}</span>
             </div>
-            {phase === "idle" && visibleBots.length > 1 && (
-              <label className="absolute right-3 top-3 flex items-center gap-1 text-[11.5px] text-ink-secondary">
-                <span className="sr-only">{t("Who learns")}</span>
-                <select value={learner.id} onChange={(event) => setLearnerId(event.target.value)} className="max-w-[120px] rounded-md bg-control/60 px-1.5 py-0.5 text-[11.5px] text-ink outline-none">
-                  {visibleBots.map((bot) => <option key={bot.id} value={bot.id}>{bot.name}</option>)}
-                </select>
-              </label>
-            )}
           </div>
         )}
 

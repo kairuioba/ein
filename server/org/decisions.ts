@@ -29,6 +29,52 @@ export function actionStatus(status: SubtaskStatus): ActionStatus {
   return "failed";
 }
 
+type BasisDoc = { id: string; title: string; versions: ReadonlyArray<{ version: number }> };
+
+const LIBRARY_LINK = /(?:\b(?:omb-library|library):(?:\/\/)?|(?:^|[\s(（])\/library\/)([^?#\s)>]+)(?:[?#](?:v(?:ersion)?=?)?(\d{1,4}))?/gi;
+
+/** The library docs a question leans on, as "价格表 v3": docs named (with or
+ * without a version) or linked (`library:<id>?v=3`) in the texts, oldest text
+ * first — the messages that led up to the ask, then the card itself. A doc
+ * named without a version means the latest one (bots are given the latest).
+ * Each doc appears once, where it was first cited, at the last version cited;
+ * at most 8. */
+export function basisFromTexts(texts: readonly string[], docs: readonly BasisDoc[]): string[] {
+  const latest = (doc: BasisDoc) => doc.versions.reduce((max, entry) => Math.max(max, entry.version), 0);
+  const cited = new Map<string, { doc: BasisDoc; version: number }>();
+  const byTitle = docs.filter((doc) => [...doc.title.trim()].length >= 3).sort((a, b) => b.title.trim().length - a.title.trim().length);
+  for (const text of texts) {
+    if (!text) continue;
+    const hits: Array<{ at: number; end: number; doc: BasisDoc; version: number }> = [];
+    for (const match of text.matchAll(LIBRARY_LINK)) {
+      let id = match[1] ?? "";
+      try {
+        id = decodeURIComponent(id);
+      } catch {
+        /* keep the raw id */
+      }
+      const doc = docs.find((entry) => entry.id === id);
+      if (doc) hits.push({ at: match.index, end: match.index + match[0].length, doc, version: match[2] ? Number(match[2]) : latest(doc) });
+    }
+    for (const doc of byTitle) {
+      const title = doc.title.trim();
+      for (let at = text.indexOf(title); at >= 0; at = text.indexOf(title, at + title.length)) {
+        const end = at + title.length;
+        // a longer title (or a link) already claimed these characters
+        if (hits.some((hit) => at < hit.end && end > hit.at)) continue;
+        const named = /^\s*v(\d{1,4})\b/i.exec(text.slice(end));
+        hits.push({ at, end: end + (named ? named[0].length : 0), doc, version: named ? Number(named[1]) : latest(doc) });
+      }
+    }
+    for (const hit of hits.sort((a, b) => a.at - b.at)) {
+      const seen = cited.get(hit.doc.id);
+      if (seen) seen.version = hit.version;
+      else cited.set(hit.doc.id, { doc: hit.doc, version: hit.version });
+    }
+  }
+  return [...cited.values()].slice(0, 8).map(({ doc, version }) => (version > 0 ? `${doc.title.trim()} v${version}` : doc.title.trim()));
+}
+
 export interface NewDecision {
   title: string;
   options: string[];

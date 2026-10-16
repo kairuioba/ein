@@ -305,7 +305,7 @@ function Shell() {
       ) : bot ? (
         <ChatView bot={bot} />
       ) : (
-        <main className="flex h-full min-w-0 flex-1 flex-col items-center justify-center gap-3 bg-app text-ink-secondary">
+        <main className="flex h-full min-w-0 flex-1 flex-col items-center justify-center gap-3 bg-stage text-ink-secondary">
           <Loader2 size={20} className="animate-spin" />
           <div className="text-[14px]">
             {state.connected ? t("No bots yet") : t("Connecting to the bot server…")}
@@ -313,7 +313,7 @@ function Shell() {
           {!state.connected && (
             <div className="text-[12px]">
               {tRich("Start it with <code>pnpm dev:server</code>", {
-                code: (children) => <code className="rounded bg-raised px-1.5 py-0.5">{children}</code>,
+                code: (children) => <code className="rounded bg-control px-1.5 py-0.5">{children}</code>,
               })}
             </div>
           )}

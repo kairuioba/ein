@@ -173,7 +173,7 @@ export function SidebarPhoneStatusButton({
       data-phone-status={status.kind}
       data-sidebar-density={density}
       className={cn(
-        "relative flex size-10 shrink-0 items-center justify-center rounded-md hover:bg-raised",
+        "relative flex size-8 shrink-0 items-center justify-center rounded-[9px] hover:bg-raised",
         density === "icons" && "mx-auto",
         connected ? "text-success" : "text-ink-secondary hover:text-ink",
       )}
@@ -199,13 +199,23 @@ export function SidebarPhoneStatusButton({
   );
 }
 
+/** Statuses worth a footer button when the sidebar keeps quiet: a phone is
+ * paired. Pairing a first phone lives in Settings → Phone. */
+export function phoneStatusWorthShowing(status: SidebarPhoneStatus): boolean {
+  return status.kind === "connected" || status.kind === "disconnected" || status.kind === "stale" || status.kind === "recent";
+}
+
 export function SidebarPhoneButton({
   density,
   onOpen,
+  quiet = false,
 }: {
   density: SidebarDensity;
   onOpen: () => void;
+  /** hide the button until a phone is paired */
+  quiet?: boolean;
 }) {
   const status = useSidebarPhoneStatus();
+  if (quiet && !phoneStatusWorthShowing(status)) return null;
   return <SidebarPhoneStatusButton density={density} status={status} onOpen={onOpen} />;
 }

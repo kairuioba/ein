@@ -3,8 +3,8 @@
 // backstops (read-only) and each bot's own permissions (the bot PATCH).
 import { useState, type ReactNode } from "react";
 import { Bot as BotIcon, Building2, Clock, Lock, ShieldCheck, ShieldQuestion, Wallet, X } from "lucide-react";
-import { api, useStore, type Bot, type BotAnnouncement } from "@/state/store";
-import { useUsageSummary } from "@/state/org-api";
+import { api, useStore, type Bot, type BotAnnouncement, type ConfigStatus } from "@/state/store";
+import { refreshApi, useUsageSummary } from "@/state/org-api";
 import { BotAvatar } from "@/components/Avatar";
 import { Panel, Progress, Segmented } from "@/components/ui";
 import { Switch } from "@/components/SettingsPrimitives";
@@ -15,7 +15,7 @@ import { formatNumber, msg, t } from "@/lib/i18n";
 import { formatTokens } from "@/lib/usage";
 import { rulesOf } from "./org-model";
 import { reviewRules, type ReviewRule, type RuleSource } from "./review-model";
-import { Checkbox, NumberField, SaveStatus, SectionHeader, Stepper } from "./parts";
+import { Checkbox, NumberField, SaveStatus, SectionHeader, Stepper, useSaveState } from "./parts";
 import { useOrgEditor } from "./OrgSection";
 
 const SOURCE_LABEL: Record<RuleSource, string> = {
@@ -283,7 +283,7 @@ export function CadenceSection() {
                   value={time}
                   onChange={(event) => setTime(event.target.value)}
                   onBlur={() => time && time !== cadence.dailyBriefAt && setCadence({ dailyBriefAt: time })}
-                  className="mx-0.5 h-7 rounded-lg bg-raised px-2 text-[13.5px] font-bold tabular-nums text-ink shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_75%,transparent)] focus:shadow-[inset_0_0_0_1.5px_var(--color-select)]"
+                  className="mx-0.5 h-7 rounded-lg bg-raised px-2 text-[13.5px] font-bold tabular-nums text-ink shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-ink-secondary)_32%,transparent)] focus:shadow-[inset_0_0_0_1.5px_var(--color-select)]"
                 />
               </>
             }
@@ -335,10 +335,21 @@ export function CadenceSection() {
   );
 }
 
+/** What the server converts dollar prices at when the config names no rate. */
+const DEFAULT_USD_TO_CNY = 7.2;
+
 export function UsageBillingSection() {
-  const { state } = useStore();
+  const { state, dispatch } = useStore();
   const { data: usage, loaded, error } = useUsageSummary();
   const { org, save, apply } = useOrgEditor();
+  const rateSave = useSaveState();
+  // the rate lives in the app config (usage.usdToCny); the summary reports it back
+  const saveRate = (usdToCny: number) =>
+    rateSave.run(async () => {
+      const config: ConfigStatus = await api("/api/config", { method: "PATCH", body: JSON.stringify({ usage: { usdToCny } }) });
+      dispatch({ type: "configStatus", config });
+      await refreshApi("/api/usage/summary");
+    });
   const rules = rulesOf(org);
   const budget = usage.budgetPerDay || rules.budgetPerDay;
   const spenders = usage.byBot
@@ -366,7 +377,11 @@ export function UsageBillingSection() {
           <Panel className="px-4 py-3.5">
             <div className="text-[12px] font-semibold text-ink-secondary">{t("This week")}</div>
             <div className="mt-1 text-[22px] leading-tight font-bold tabular-nums text-ink">{usage.weekPercent === null ? "—" : `${Math.round(usage.weekPercent)}%`}</div>
-            <div className="mt-1.5 text-[12px] text-ink-secondary">{t("of the week's budget")}</div>
+            <div className="mt-1.5 text-[12px] text-ink-secondary">
+              {usage.weekCost !== undefined
+                ? t("of the week's budget · ¥{amount} so far", { amount: formatNumber(usage.weekCost, { maximumFractionDigits: 2 }) })
+                : t("of the week's budget")}
+            </div>
           </Panel>
           <Panel className="px-4 py-3.5">
             <div className="flex items-center gap-1.5 text-[12px] font-semibold text-ink-secondary">
@@ -381,6 +396,24 @@ export function UsageBillingSection() {
             <div className="mt-1.5 text-[12px] text-ink-secondary">{t("Inside it the Chief may act; over it, it asks you")}</div>
           </Panel>
         </div>
+        <Panel aria-label={t("Exchange rate")} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3">
+          <span className="text-[13px] font-semibold text-ink">{t("Exchange rate")}</span>
+          <span className="inline-flex items-center gap-1 text-[13px] whitespace-nowrap text-ink">
+            {t("1 US dollar =")}
+            <NumberField
+              label={t("Yuan per US dollar")}
+              value={usage.usdToCny ?? DEFAULT_USD_TO_CNY}
+              min={0.01}
+              max={1000}
+              decimals={2}
+              width={58}
+              onCommit={(value) => value !== null && void saveRate(value)}
+            />
+            {t("yuan")}
+          </span>
+          <span className="min-w-0 flex-1 text-[12px] text-ink-secondary">{t("Engines that price in dollars are counted in yuan at this rate")}</span>
+          {rateSave.state.kind !== "idle" && <SaveStatus state={rateSave.state} />}
+        </Panel>
         {missing && (
           <div className="rounded-xl bg-inset px-3 py-2 text-[12.5px] text-ink-secondary">
             {t("Today's spending summary isn't available from the server yet; the per-bot totals below are counted on this computer.")}

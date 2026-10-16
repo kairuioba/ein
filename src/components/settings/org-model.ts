@@ -23,16 +23,18 @@ export const DECISION_LEVEL_LABEL: Record<DecisionLevel, string> = {
   owner: msg("Boss"),
 };
 
-/** The table the owner starts with (O3): who settles what. Labels are English
- * sources; the matrix shows them through t(). */
+/** The table the owner starts with (O3): who settles what. The same rows,
+ * ids and English sources as the server's defaults (server/org/config.ts), so
+ * the page reads the same before the org service answers; the matrix shows
+ * the labels through t(). */
 export const DEFAULT_DECISION_RIGHTS: readonly DecisionRight[] = [
-  { id: "own-task", label: msg("How to do one's own task"), decides: "employee", suggest: [] },
-  { id: "department-work", label: msg("Splitting work in a department, passing internal drafts"), decides: "lead", suggest: ["employee"] },
-  { id: "accept-requests", label: msg("Taking requests from other departments"), decides: "lead", suggest: ["employee"] },
-  { id: "cross-department", label: msg("Moving people across departments, meetings, arbitration"), decides: "chief", suggest: ["employee", "lead"] },
-  { id: "within-budget", label: msg("Spending, adding people and new specialists within the budget line"), decides: "chief", suggest: ["employee", "lead"] },
-  { id: "publish", label: msg("Publishing outside (posts, emails, going live)"), decides: "owner", suggest: ["employee", "lead", "chief"], locked: true },
-  { id: "over-budget", label: msg("Going over budget, changing direction, new departments"), decides: "owner", suggest: ["employee", "lead", "chief"] },
+  { id: "own-task", label: msg("How to do their own task"), decides: "employee", suggest: [] },
+  { id: "department-work", label: msg("Splitting work inside a department, approving internal drafts"), decides: "lead", suggest: ["employee"] },
+  { id: "department-requests", label: msg("Accepting requests from other departments"), decides: "lead", suggest: ["employee"] },
+  { id: "cross-department", label: msg("Moving people across departments, calling coordination meetings, arbitration"), decides: "chief", suggest: ["employee", "lead"] },
+  { id: "within-budget", label: msg("Spending within the budget line, adding people, creating specialists"), decides: "chief", suggest: ["employee", "lead"] },
+  { id: "external-publish", label: msg("Publishing outside (posts, emails, going live)"), decides: "owner", suggest: ["employee", "lead", "chief"], locked: true },
+  { id: "over-budget", label: msg("Going over budget, changing direction, creating departments"), decides: "owner", suggest: ["employee", "lead", "chief"] },
   { id: "isolated-data", label: msg("Seeing isolated departments' data"), decides: "owner", suggest: ["employee", "lead", "chief"] },
 ];
 
@@ -207,8 +209,11 @@ export function membershipPatches<B extends { id: string; section?: string }>(
   return patches;
 }
 
+/** A new project group. Its id must pass the server's `[\w-]{1,64}` rule, so
+ * it is built from the ASCII part of the name, or "project" for a name
+ * written only in Chinese. */
 export function newProject(input: { name: string; leadBotId?: string; memberBotIds: string[]; until?: string }, existing: readonly OrgProject[]): OrgProject {
-  const base = input.name.trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "") || "project";
+  const base = input.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48) || "project";
   let id = base;
   for (let n = 2; existing.some((project) => project.id === id); n += 1) id = `${base}-${n}`;
   return {

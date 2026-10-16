@@ -3,8 +3,30 @@
 // checkbox and the label/value rows the Fog designs use.
 import { useEffect, useState, type ReactNode } from "react";
 import { Check, Loader2, Minus, Plus, TriangleAlert } from "lucide-react";
+import { ProviderMark } from "@/components/ProviderIcons";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
+
+// marks drawn light, for dark grounds; every other one-colour mark paints with --color-ink
+const LIGHT_MARKS = new Set(["hermesAgent", "cursorAgent"]);
+
+/** The little square behind an engine's mark on a dark name plate. White with
+ * light-skin ink, so one-colour marks show in every skin; the marks drawn
+ * light (Hermes, Cursor) sit on a dark square instead. */
+export function MarkTile({ driverKind, size, markSize }: { driverKind?: string; size: number; markSize: number }) {
+  const dark = driverKind !== undefined && LIGHT_MARKS.has(driverKind);
+  return (
+    <span
+      style={{ width: size, height: size }}
+      className={cn(
+        "grid shrink-0 place-items-center overflow-hidden rounded-[4px]",
+        dark ? "bg-[#2A2E37]" : "bg-white text-[#14161C] [--color-ink-secondary:#5A606C] [--color-ink:#14161C]",
+      )}
+    >
+      {driverKind ? <ProviderMark driverKind={driverKind} size={markSize} /> : null}
+    </span>
+  );
+}
 
 export type SaveState = { kind: "idle" } | { kind: "saving" } | { kind: "saved" } | { kind: "error"; message: string };
 
@@ -89,7 +111,7 @@ export function Stepper({
     <span
       role="group"
       aria-label={label}
-      className="mx-0.5 inline-flex h-7 items-center rounded-lg bg-raised align-middle shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_75%,transparent)]"
+      className="mx-0.5 inline-flex h-7 items-center rounded-lg bg-raised align-middle shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-ink-secondary)_32%,transparent)]"
     >
       <button
         type="button"
@@ -116,7 +138,8 @@ export function Stepper({
   );
 }
 
-/** A short number input that commits on blur or Enter; empty commits null. */
+/** A short number input that commits on blur or Enter; empty commits null.
+ * `decimals` allows that many digits after the point (an exchange rate). */
 export function NumberField({
   value,
   onCommit,
@@ -127,6 +150,7 @@ export function NumberField({
   placeholder,
   allowEmpty = false,
   disabled,
+  decimals = 0,
 }: {
   value: number | null | undefined;
   onCommit: (next: number | null) => void;
@@ -137,9 +161,11 @@ export function NumberField({
   placeholder?: string;
   allowEmpty?: boolean;
   disabled?: boolean;
+  decimals?: number;
 }) {
   const [draft, setDraft] = useState(value == null ? "" : String(value));
   useEffect(() => setDraft(value == null ? "" : String(value)), [value]);
+  const scale = 10 ** decimals;
   const commit = () => {
     const text = draft.trim();
     if (!text) {
@@ -148,7 +174,7 @@ export function NumberField({
       } else setDraft(value == null ? "" : String(value));
       return;
     }
-    const parsed = Math.round(Number(text));
+    const parsed = Math.round(Number(text) * scale) / scale;
     if (!Number.isFinite(parsed)) {
       setDraft(value == null ? "" : String(value));
       return;
@@ -159,12 +185,12 @@ export function NumberField({
   };
   return (
     <input
-      inputMode="numeric"
+      inputMode={decimals ? "decimal" : "numeric"}
       aria-label={label}
       value={draft}
       placeholder={placeholder}
       disabled={disabled}
-      onChange={(event) => setDraft(event.target.value.replace(/[^\d]/g, ""))}
+      onChange={(event) => setDraft(decimals ? event.target.value.replace(/[^\d.]/g, "").replace(/(\..*)\./g, "$1") : event.target.value.replace(/[^\d]/g, ""))}
       onBlur={commit}
       onKeyDown={(event) => {
         if (event.key === "Enter") (event.target as HTMLInputElement).blur();
@@ -174,7 +200,7 @@ export function NumberField({
         }
       }}
       style={{ width }}
-      className="mx-0.5 h-7 rounded-lg bg-raised text-center align-middle text-[13.5px] font-bold tabular-nums text-ink shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_75%,transparent)] placeholder:font-normal placeholder:text-ink-secondary/60 focus:shadow-[inset_0_0_0_1.5px_var(--color-select),0_0_0_3px_color-mix(in_oklab,var(--color-select)_16%,transparent)] disabled:opacity-50"
+      className="mx-0.5 h-7 rounded-lg bg-raised text-center align-middle text-[13.5px] font-bold tabular-nums text-ink shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-ink-secondary)_32%,transparent)] placeholder:font-normal placeholder:text-ink-secondary/60 focus:shadow-[inset_0_0_0_1.5px_var(--color-select),0_0_0_3px_color-mix(in_oklab,var(--color-select)_16%,transparent)] disabled:opacity-50"
     />
   );
 }
@@ -205,7 +231,8 @@ export function Checkbox({
       <span
         className={cn(
           "grid size-4 shrink-0 place-items-center rounded-[5px] text-white",
-          checked ? "bg-select" : "bg-raised shadow-[inset_0_0_0_1.5px_color-mix(in_oklab,var(--color-hairline)_85%,transparent)]",
+          // the outline is a tint of the secondary ink so an empty box shows on the dark skins too
+          checked ? "bg-select" : "bg-raised shadow-[inset_0_0_0_1.5px_color-mix(in_oklab,var(--color-ink-secondary)_40%,transparent)]",
         )}
       >
         {checked && <Check size={11} strokeWidth={3} />}
@@ -259,4 +286,4 @@ export function FieldLabel({ children, hint, right }: { children: ReactNode; hin
 }
 
 export const inputClass =
-  "w-full rounded-[10px] bg-raised px-2.5 py-2 text-[13px] leading-[1.55] text-ink shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_60%,transparent)] placeholder:text-ink-secondary/60 focus:shadow-[inset_0_0_0_1.5px_var(--color-select),0_0_0_3px_color-mix(in_oklab,var(--color-select)_16%,transparent)] disabled:opacity-60";
+  "w-full rounded-[10px] bg-raised px-2.5 py-2 text-[13px] leading-[1.55] text-ink shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-ink-secondary)_26%,transparent)] placeholder:text-ink-secondary/60 focus:shadow-[inset_0_0_0_1.5px_var(--color-select),0_0_0_3px_color-mix(in_oklab,var(--color-select)_16%,transparent)] disabled:opacity-60";

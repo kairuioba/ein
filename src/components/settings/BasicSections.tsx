@@ -43,7 +43,7 @@ function ProfileFields() {
   };
 
   const inputClass =
-    "w-full rounded-[10px] bg-raised px-3 py-2 text-[13.5px] text-ink shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_60%,transparent)] placeholder:text-ink-secondary/70 focus:shadow-[inset_0_0_0_1.5px_var(--color-select)] focus:outline-none";
+    "w-full rounded-[10px] bg-raised px-3 py-2 text-[13.5px] text-ink shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-ink-secondary)_26%,transparent)] placeholder:text-ink-secondary/70 focus:shadow-[inset_0_0_0_1.5px_var(--color-select)] focus:outline-none";
   return (
     <div className="grid gap-3 sm:grid-cols-2">
       <input value={name} onChange={(e) => setName(e.target.value)} onBlur={save} placeholder={t("Your name")} aria-label={t("Your name")} className={inputClass} />

@@ -32,7 +32,7 @@ describe("decision rights", () => {
   it("falls back to the default table while the org has none", () => {
     const rights = decisionRightsOf(org());
     expect(rights.map((right) => right.id)).toEqual(DEFAULT_DECISION_RIGHTS.map((right) => right.id));
-    expect(rights.find((right) => right.id === "publish")).toMatchObject({ decides: "owner", locked: true });
+    expect(rights.find((right) => right.id === "external-publish")).toMatchObject({ decides: "owner", locked: true });
   });
 
   it("uses the org's own table when it has one", () => {
@@ -52,8 +52,8 @@ describe("decision rights", () => {
 
   it("never changes a locked row", () => {
     const before = decisionRightsOf(org());
-    const after = setDecider(before, "publish", "employee");
-    expect(after.find((right) => right.id === "publish")).toEqual(before.find((right) => right.id === "publish"));
+    const after = setDecider(before, "external-publish", "employee");
+    expect(after.find((right) => right.id === "external-publish")).toEqual(before.find((right) => right.id === "external-publish"));
   });
 });
 
@@ -154,7 +154,11 @@ describe("projects", () => {
     const first = newProject({ name: "Landing page", memberBotIds: ["a", "a", "b"] }, []);
     expect(first).toEqual({ id: "landing-page", name: "Landing page", leadBotId: undefined, memberBotIds: ["a", "b"], until: undefined });
     expect(newProject({ name: "Landing page", memberBotIds: ["c"] }, [first]).id).toBe("landing-page-2");
-    expect(newProject({ name: "落地页专项", memberBotIds: ["c"], until: "2026-10-23" }, []).id).toBe("落地页专项");
+    // the server accepts only [\w-] ids: a Chinese name still gets a valid one
+    const chinese = newProject({ name: "落地页专项 v2", memberBotIds: ["c"], until: "2026-10-23" }, []);
+    expect(chinese.id).toBe("v2");
+    expect(newProject({ name: "落地页专项", memberBotIds: ["c"] }, []).id).toBe("project");
+    expect(/^[\w-]{1,64}$/.test(newProject({ name: "x".repeat(90), memberBotIds: [] }, []).id)).toBe(true);
   });
 
   it("reports to its lead's department", () => {

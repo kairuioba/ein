@@ -12,7 +12,6 @@ import { chiefBot, buildDepartments } from "@/lib/org";
 import { stateForBot } from "@/lib/mascot";
 import { MASCOT_BODY, MASCOT_BRAND, mascotForBot } from "@/lib/engine-mascots";
 import { Mascot, BotTile } from "@/components/mascot/Mascot";
-import { ProviderMark } from "@/components/ProviderIcons";
 import { Pill, Segmented } from "@/components/ui";
 import { CloudBackendPicker } from "./CloudBackendPicker";
 import { ModelPicker } from "./ModelPicker";
@@ -33,7 +32,7 @@ import { msg, t, tn, tRich } from "@/lib/i18n";
 import { useAppCatalog } from "./settings/app-catalog";
 import { countMemoryNotes, heroStatus, superiorOf, teamSize } from "./settings/bot-panel-model";
 import { recommendedFor } from "./settings/engine-model";
-import { FieldLabel, RowGroup, SettingRow, inputClass } from "./settings/parts";
+import { FieldLabel, MarkTile, RowGroup, SettingRow, inputClass } from "./settings/parts";
 
 /** A bordered sub-card inside the panel (the panel itself is the white stage). */
 const cardCls = "rounded-xl p-3.5 shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_55%,transparent)]";
@@ -564,9 +563,7 @@ function HeroNameTag({ name, driverKind }: { name: string; driverKind?: string }
   return (
     <span className="relative mb-1 inline-flex h-9 max-w-full items-center gap-2 rounded-[4px] bg-[#14161C] pr-3 pl-2 shadow-[inset_0_0_0_2px_#3A404D,0_6px_14px_-8px_rgb(20_22_28/0.6)]">
       <span aria-hidden className="absolute top-3 -left-2 border-y-[6px] border-r-[8px] border-y-transparent border-r-[#14161C]" />
-      <span className="grid size-[18px] shrink-0 place-items-center overflow-hidden rounded-[4px] bg-white">
-        {driverKind ? <ProviderMark driverKind={driverKind} size={13} /> : null}
-      </span>
+      <MarkTile driverKind={driverKind} size={18} markSize={13} />
       <span className="truncate text-[16px] leading-none" style={{ fontFamily: "Unifont, ui-monospace, SFMono-Regular, Menlo, monospace" }}>
         <span className="text-[#4ADE80]">&gt;_ </span>
         <span className="text-[#F3F4F7]">{name}</span>

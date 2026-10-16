@@ -23,9 +23,10 @@ function loadCatalog(): Promise<Array<{ slug: string; label: string }>> {
   return catalog;
 }
 
-/** Every app the catalog knows, connected ones first. */
-export function useAppCatalog(): { apps: AppEntry[]; labelOf: (slug: string) => string; connected: AppEntry[] } {
+/** Every app the catalog knows, connected ones first; `loaded` once both lists answered. */
+export function useAppCatalog(): { apps: AppEntry[]; loaded: boolean; labelOf: (slug: string) => string; connected: AppEntry[] } {
   const [apps, setApps] = useState<AppEntry[]>([]);
+  const [loaded, setLoaded] = useState(false);
   useEffect(() => {
     let alive = true;
     void Promise.all([loadCatalog(), preloadConnectedApps().catch(() => ({ services: {} as Record<string, { connected: boolean }> }))]).then(
@@ -40,6 +41,7 @@ export function useAppCatalog(): { apps: AppEntry[]; labelOf: (slug: string) => 
         }
         entries.sort((a, b) => Number(b.connected) - Number(a.connected));
         setApps(entries);
+        setLoaded(true);
       },
     );
     return () => {
@@ -47,7 +49,7 @@ export function useAppCatalog(): { apps: AppEntry[]; labelOf: (slug: string) => 
     };
   }, []);
   const labelOf = (slug: string) => apps.find((app) => app.slug === slug)?.label ?? prettySlug(slug);
-  return { apps, labelOf, connected: apps.filter((app) => app.connected) };
+  return { apps, loaded, labelOf, connected: apps.filter((app) => app.connected) };
 }
 
 export function prettySlug(slug: string): string {

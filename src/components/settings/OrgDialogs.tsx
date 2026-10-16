@@ -13,7 +13,7 @@ import { t } from "@/lib/i18n";
 import { DEPARTMENT_COLORS, type OrgConfig, type OrgDepartment, type OrgProject } from "../../../shared/org-types";
 import { membershipPatches, newProject, nextDepartmentColor, renameDepartment, upsertDepartment, type DepartmentCard } from "./org-model";
 import { FieldLabel, inputClass } from "./parts";
-import { useAppCatalog } from "./app-catalog";
+import { prettySlug, useAppCatalog, type AppEntry } from "./app-catalog";
 
 type OrgPatch = Partial<Omit<OrgConfig, "version" | "updatedAt">>;
 type Apply = (patch: OrgPatch) => Promise<unknown>;
@@ -65,7 +65,7 @@ function BotChecklist({
         return (
           <div key={bot.id} className={cn("flex h-9 items-center gap-2 rounded-lg px-2", on && "bg-select/[0.06]")}>
             <button type="button" role="checkbox" aria-checked={on} onClick={() => onToggle(bot.id)} className="flex min-w-0 flex-1 items-center gap-2 text-left">
-              <span className={cn("grid size-4 shrink-0 place-items-center rounded-[5px] text-white", on ? "bg-select" : "bg-raised shadow-[inset_0_0_0_1.5px_color-mix(in_oklab,var(--color-hairline)_85%,transparent)]")}>
+              <span className={cn("grid size-4 shrink-0 place-items-center rounded-[5px] text-white", on ? "bg-select" : "bg-raised shadow-[inset_0_0_0_1.5px_color-mix(in_oklab,var(--color-ink-secondary)_40%,transparent)]")}>
                 {on && <Check size={11} strokeWidth={3} />}
               </span>
               <BotAvatar bot={bot} size={20} />
@@ -103,7 +103,17 @@ export function DepartmentDialog({
     () => state.bots.filter((bot) => !bot.hidden && bot.id !== chief?.id).sort((a, b) => Number((b.section ?? "") === section) - Number((a.section ?? "") === section)),
     [state.bots, chief?.id, section],
   );
-  const { apps } = useAppCatalog();
+  const { apps, loaded: appsLoaded } = useAppCatalog();
+  // the department's own apps lead the list (even ones the catalog does not
+  // list), then connected ones; the order is fixed when the sheet opens so
+  // chips do not jump while you tick them
+  const [startAllowed] = useState<ReadonlySet<string>>(() => new Set(settings?.allowedApps ?? []));
+  const appChoices = useMemo<AppEntry[]>(() => {
+    const known = new Set(apps.map((app) => app.slug));
+    const unlisted = [...startAllowed].filter((slug) => !known.has(slug)).map((slug) => ({ slug, label: prettySlug(slug), connected: false }));
+    const ordered = [...apps].sort((a, b) => Number(startAllowed.has(b.slug)) - Number(startAllowed.has(a.slug)) || Number(b.connected) - Number(a.connected));
+    return [...unlisted, ...ordered].slice(0, Math.max(24, startAllowed.size));
+  }, [apps, startAllowed]);
 
   const [name, setName] = useState(section ?? "");
   const [color, setColor] = useState(card?.color ?? nextDepartmentColor(org.departments, cards.length));
@@ -141,9 +151,10 @@ export function DepartmentDialog({
     const renamed = mode === "edit" && nextName !== section;
     if ((mode === "new" || renamed) && cards.some((entry) => entry.section === nextName)) return setError(t("There is already a department called “{name}”.", { name: nextName }));
     if (!members.size) return setError(t("Pick at least one bot for this department."));
-    const parse = (value: string) => (value.trim() ? Math.max(0, Math.round(Number(value))) : undefined);
-    const nextHeadcount = parse(headcount);
-    const nextBudget = parse(budget);
+    const parse = (value: string, min: number, max: number) => (value.trim() ? Math.min(max, Math.max(min, Math.round(Number(value)))) : undefined);
+    // the org service keeps headcount within 1–100 and budgets within ¥0–1,000,000
+    const nextHeadcount = parse(headcount, 1, 100);
+    const nextBudget = parse(budget, 0, 1_000_000);
     if ((nextHeadcount !== undefined && !Number.isFinite(nextHeadcount)) || (nextBudget !== undefined && !Number.isFinite(nextBudget))) return setError(t("Headcount and budget must be whole numbers."));
 
     // people: leavers drop out first, then everyone chosen moves in
@@ -276,8 +287,10 @@ export function DepartmentDialog({
           </FieldLabel>
           {!allApps && (
             <div className="flex flex-wrap gap-1.5 pt-1">
-              {apps.length === 0 && <span className="text-[12px] text-ink-secondary">{t("Loading the app list…")}</span>}
-              {apps.slice(0, 24).map((app) => {
+              {appChoices.length === 0 && (
+                <span className="text-[12px] text-ink-secondary">{appsLoaded ? t("No apps to choose from yet. Connect one under Connected apps.") : t("Loading the app list…")}</span>
+              )}
+              {appChoices.map((app) => {
                 const on = allowed.has(app.slug);
                 return (
                   <button

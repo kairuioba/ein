@@ -591,7 +591,13 @@ function RulesCard({
             </Checkbox>
           </>
         }
-        sub={t("It tells you when it's done; anything over the budget line asks you first")}
+        sub={
+          // the dispatcher adds people mid-run on its own only with this box on,
+          // when its diagnosis says more people help and it stays in budget
+          rules.chiefMay.addPeople
+            ? t("A slow job that more people would help gets them from the Chief within the line, and you hear after; over the line it asks first")
+            : t("It tells you when it's done; anything over the budget line asks you first")
+        }
       />
       <RuleRow
         locked

@@ -9,7 +9,6 @@ import { ArrowRight, Check, Eye, Loader2, Mic, RefreshCw, Sparkles, X } from "lu
 import { identifyEmail, setEmailGateDone, track } from "@/lib/analytics";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { EngineSetup } from "./EngineSetup";
-import { ProviderMark } from "./ProviderIcons";
 import { PhoneSetupFlow } from "./PhoneSetupFlow";
 import { Mascot, BotTile } from "./mascot/Mascot";
 import { Button, Dialog } from "./ui";
@@ -19,6 +18,7 @@ import { cn } from "@/lib/cn";
 import { msg, t, tn } from "@/lib/i18n";
 import type { MascotPose } from "@/lib/engine-mascots";
 import { RECOMMENDED_DRIVER, engineState, engineUsable, mascotForInstance, onboardingEngines, type EngineState } from "./settings/engine-model";
+import { MarkTile } from "./settings/parts";
 
 type Step = "profile" | "engines" | "bot" | "chief" | "permissions" | "phone";
 
@@ -42,7 +42,7 @@ const cardCls =
   "rounded-2xl bg-raised shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_55%,transparent),0_1px_2px_rgb(16_24_40/0.05),0_12px_28px_-16px_rgb(16_24_40/0.22)]";
 
 const fieldCls =
-  "flex h-[38px] items-center gap-2 rounded-[10px] bg-raised px-3 shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_60%,transparent)] focus-within:shadow-[inset_0_0_0_1.5px_var(--color-select),0_0_0_3px_color-mix(in_oklab,var(--color-select)_16%,transparent)]";
+  "flex h-[38px] items-center gap-2 rounded-[10px] bg-raised px-3 shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-ink-secondary)_26%,transparent)] focus-within:shadow-[inset_0_0_0_1.5px_var(--color-select),0_0_0_3px_color-mix(in_oklab,var(--color-select)_16%,transparent)]";
 
 function Stepper({ step }: { step: Step }) {
   const current = STAGES.findIndex((stage) => stage.steps.includes(step));
@@ -64,14 +64,14 @@ function Stepper({ step }: { step: Step }) {
                     ? "bg-select text-white"
                     : on
                       ? "text-accent-text shadow-[inset_0_0_0_2px_var(--color-select)]"
-                      : "text-ink-secondary/60 shadow-[inset_0_0_0_1.5px_color-mix(in_oklab,var(--color-hairline)_85%,transparent)]",
+                      : "text-ink-secondary/60 shadow-[inset_0_0_0_1.5px_color-mix(in_oklab,var(--color-ink-secondary)_40%,transparent)]",
                 )}
               >
                 {done ? <Check size={12} strokeWidth={3} /> : index + 1}
               </i>
               {t(stage.label)}
             </span>
-            {index < STAGES.length - 1 && <span className={cn("h-0.5 w-[34px] rounded-full", done ? "bg-select" : "bg-hairline/50")} />}
+            {index < STAGES.length - 1 && <span className={cn("h-0.5 w-[34px] rounded-full", done ? "bg-select" : "bg-ink-secondary/25")} />}
           </span>
         );
       })}
@@ -187,7 +187,7 @@ function PreviewNameTag({ name, driverKind }: { name: string; driverKind?: strin
     <div className="flex flex-col items-center">
       <span className="block bg-[#AEB4C0] p-0.5" style={{ clipPath: corners(4) }}>
         <span className="flex h-9 items-center gap-2 bg-[#16181E] pr-3.5 pl-[9px] text-[#F4F5F7]" style={{ clipPath: corners(2) }}>
-          <span className="grid size-5 place-items-center overflow-hidden rounded-[4px] bg-white">{driverKind ? <ProviderMark driverKind={driverKind} size={14} /> : null}</span>
+          <MarkTile driverKind={driverKind} size={20} markSize={14} />
           <span className="max-w-[220px] truncate text-[16px] leading-none" style={{ fontFamily: "Unifont, ui-monospace, SFMono-Regular, Menlo, monospace" }}>
             <span className="text-[#9AA3AF]">&gt;_ </span>
             {name}
@@ -581,7 +581,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
                     onChange={(e) => setBotDescription(e.target.value)}
                     rows={2}
                     aria-label={t("Description")}
-                    className="resize-none rounded-[10px] bg-raised px-3 py-[9px] text-[13.5px] leading-[1.65] text-ink shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_60%,transparent)] focus:shadow-[inset_0_0_0_1.5px_var(--color-select),0_0_0_3px_color-mix(in_oklab,var(--color-select)_16%,transparent)] focus:outline-none"
+                    className="resize-none rounded-[10px] bg-raised px-3 py-[9px] text-[13.5px] leading-[1.65] text-ink shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-ink-secondary)_26%,transparent)] focus:shadow-[inset_0_0_0_1.5px_var(--color-select),0_0_0_3px_color-mix(in_oklab,var(--color-select)_16%,transparent)] focus:outline-none"
                   />
                 </label>
                 <div className="flex flex-col gap-[7px]">

@@ -147,7 +147,7 @@ export function DispatchSettingsCard() {
             label={t("Subtasks per plan")}
             value={settings.maxSubtasks}
             min={1}
-            max={20}
+            max={30}
             disabled={disabled}
             onChange={(maxSubtasks) => save({ maxSubtasks })}
           />

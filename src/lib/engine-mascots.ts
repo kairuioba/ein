@@ -127,20 +127,20 @@ export function tint(hex: string, toWhite: number): string {
 }
 
 /** Minimal shapes so this module stays free of the store's types. */
-type InstanceLike = { instanceId: string; driverKind: string; access?: "subscription" | "custom"; models?: { options: Array<{ id: string; custom?: boolean }> } };
+type InstanceLike = { instanceId: string; driverKind: string; models?: { options: Array<{ id: string; custom?: boolean }> } };
 type BotLike = { modelSelection?: { instanceId: string; model?: string } | null };
 
 /** The mascot for a bot: its engine's, resolved through the instance it runs
- * on. A bot on a local model (a custom-only engine, or a model the app marks
- * as local) gets the chip even when the driver is a cloud engine's. */
+ * on. A bot on a local model gets the chip even when the driver is a cloud
+ * engine's. */
 export function mascotForBot(bot: BotLike, instances: readonly InstanceLike[]): MascotKind {
   const selection = bot.modelSelection;
   if (!selection) return "workbuddy";
   const instance = instances.find((i) => i.instanceId === selection.instanceId);
   if (!instance) return mascotForDriver(selection.instanceId);
-  if (instance.driverKind !== "boxAgent") {
-    const option = instance.models?.options.find((o) => o.id === selection.model);
-    if (instance.access === "custom" || option?.custom) return "local";
-  }
+  // A model the app marks as local (Ollama, LM Studio …), or an engine that is
+  // nothing but an OpenAI-compatible server, is "running on your machine".
+  const option = instance.models?.options.find((o) => o.id === selection.model);
+  if (option?.custom || instance.driverKind === "openai-compat") return "local";
   return mascotForDriver(instance.driverKind);
 }

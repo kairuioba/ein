@@ -19,8 +19,11 @@ export class OrgEventLog {
   private recent: OrgEvent[] = [];
   private listeners = new Set<Listener>();
   private loaded = false;
+  private readonly dataDir: string;
 
-  constructor(private readonly dataDir: string) {}
+  constructor(dataDir: string) {
+    this.dataDir = dataDir;
+  }
 
   private get file() {
     return join(this.dataDir, FILE_NAME);

@@ -54,9 +54,7 @@ export function PublishDialog({
     setWorking(true);
     setError("");
     try {
-      // POST /api/library also takes `summary`; publishLibraryDoc's input type
-      // (src/state/org-api.ts) does not list it yet, so widen it here.
-      const input: Parameters<typeof publishLibraryDoc>[0] & { summary?: string } = {
+      const input: Parameters<typeof publishLibraryDoc>[0] = {
         id: existing?.id,
         title: title.trim(),
         section: section.trim() || null,
@@ -102,7 +100,7 @@ export function PublishDialog({
             </select>
           </label>
           <label className="block">
-            <span className="mb-1.5 block text-[12px] font-semibold text-ink-secondary">{t("Owner")}</span>
+            <span className="mb-1.5 block text-[12px] font-semibold text-ink-secondary">{t("Doc owner")}</span>
             <select value={ownerBotId} onChange={(event) => setOwnerBotId(event.target.value)} className={FIELD}>
               <option value="">{t("You")}</option>
               {bots.map((bot) => <option key={bot.id} value={bot.id}>{bot.name}</option>)}

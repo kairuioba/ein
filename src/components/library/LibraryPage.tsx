@@ -15,6 +15,7 @@ import { t } from "@/lib/i18n";
 import { currentVersion, docLevel, oldestStaleVersion, staleUsers, type DocLevel } from "@/lib/library-view";
 import { buildDepartments } from "@/lib/org";
 import { useLibrary, useOrg } from "@/state/org-api";
+import { LIBRARY_OPEN_EVENT, LIBRARY_OPEN_KEY, useHandOff, type LibraryOpen } from "@/lib/deep-links";
 import { useStore } from "@/state/store";
 import type { LibraryDoc } from "../../../shared/org-types";
 import { DocPanel } from "./DocPanel";
@@ -60,6 +61,13 @@ export function LibraryPage() {
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<"updated" | "name">("updated");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // a link elsewhere (⌘K, a meeting's sources, a decision) opened one doc
+  const [linkedVersion, setLinkedVersion] = useState<{ docId: string; version?: number; nonce: number } | null>(null);
+  useHandOff<LibraryOpen>(LIBRARY_OPEN_KEY, LIBRARY_OPEN_EVENT, (detail) => {
+    if (!detail.docId) return;
+    setSelectedId(detail.docId);
+    setLinkedVersion({ docId: detail.docId, version: detail.version, nonce: Date.now() });
+  });
   const [publish, setPublish] = useState<PublishSeed | null>(null);
   const visibleBots = state.bots.filter((bot) => !bot.hidden);
   const departments = useMemo(() => buildDepartments(visibleBots, org), [visibleBots, org]);
@@ -147,7 +155,7 @@ export function LibraryPage() {
                 <span />
                 <span>{t("Name")}</span>
                 <span>{t("Level")}</span>
-                <span>{t("Owner")}</span>
+                <span>{t("Doc owner")}</span>
                 <span>{t("Subscribers")}</span>
                 <span>{t("Updated")}</span>
                 <span>{t("Status")}</span>
@@ -210,6 +218,8 @@ export function LibraryPage() {
 
       {selected && (
         <DocPanel
+          key={linkedVersion?.docId === selected.id ? `${selected.id}:${linkedVersion.nonce}` : selected.id}
+          initialVersion={linkedVersion?.docId === selected.id ? linkedVersion.version : undefined}
           doc={selected}
           level={levels.get(selected.id)!}
           bots={visibleBots}

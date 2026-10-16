@@ -18,6 +18,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { t } from "../shared/i18n.ts";
+import { reasonLabel } from "./reason-labels.ts";
 import type { Capability } from "../shared/model-profiles.ts";
 import { assessTask, type Recommendation, type RecommendationPolicy, type TaskProfile } from "../shared/model-recommender.ts";
 import { writeFileAtomic } from "./atomic.ts";
@@ -541,7 +542,7 @@ export class Dispatcher {
         t("@{name} finished “{title}” ({done}/{total})", { name: bot?.name ?? "?", title: subtask.title, done: finishedCount(), total: run.subtasks.length }),
       );
     } else {
-      const why = reason?.trim() || (ok ? t("finished without a reply") : t("did not finish"));
+      const why = reason?.trim() ? reasonLabel(reason) : ok ? t("finished without a reply") : t("did not finish");
       if (subtask.attempts < this.host.settings().maxAttempts && run.status === "running") {
         subtask.status = "pending";
         subtask.error = why;

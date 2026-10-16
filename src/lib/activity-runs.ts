@@ -5,6 +5,7 @@
 // SAID. Consecutive finished steps fold into a single row that names them;
 // text between two stretches breaks the run, so the bot's words always
 // separate one run from the next.
+import { t } from "@/lib/i18n";
 import type { Message } from "@/state/store";
 
 export type TranscriptItem =
@@ -64,7 +65,7 @@ export function describeRun(messages: Message[]): string {
     counts.set(name, (counts.get(name) ?? 0) + 1);
   }
   const names = [...counts].map(([name, count]) => (count > 1 ? `${name} ×${count}` : name));
-  const shown = names.slice(0, MAX_NAMES).join(", ");
-  const rest = names.length > MAX_NAMES ? ` +${names.length - MAX_NAMES} more` : "";
-  return `${messages.length} steps · ${shown}${rest}`;
+  const shown = names.slice(0, MAX_NAMES).join(t(", "));
+  const rest = names.length > MAX_NAMES ? t(" +{count} more", { count: names.length - MAX_NAMES }) : "";
+  return t("{count} steps · {tools}", { count: messages.length, tools: `${shown}${rest}` });
 }

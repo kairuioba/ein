@@ -57,6 +57,7 @@ import * as box from "./box.ts";
 import { cloudBackendChangeError, vpsAliasChangeError } from "./cloud-backend.ts";
 import * as composio from "./composio.ts";
 import { chiefOfStaffSystemPrompt } from "./chief-of-staff.ts";
+import { reasonLabel } from "./reason-labels.ts";
 import { Dispatcher, dispatchSettings } from "./dispatch.ts";
 import { handleDispatchApi } from "./dispatch-api.ts";
 import { candidatesFromInstances, recommendModels, type InstanceLike } from "../shared/model-recommender.ts";
@@ -1753,7 +1754,7 @@ bus.subscribe((event: RuntimeEvent) => {
       pushMessage({
         role: "bot",
         kind: "activity",
-        tool: { name: t("retrying — attempt {attempt}/{max} in {seconds}s — {reason}", { attempt: event.attempt + 1, max: RETRY_MAX_ATTEMPTS, seconds: Math.round(event.delayMs / 1000), reason: event.reason }), ok: true },
+        tool: { name: t("retrying — attempt {attempt}/{max} in {seconds}s — {reason}", { attempt: event.attempt + 1, max: RETRY_MAX_ATTEMPTS, seconds: Math.round(event.delayMs / 1000), reason: reasonLabel(event.reason) }), ok: true },
       });
       break;
     case "runtime.error":
@@ -1853,7 +1854,7 @@ bus.subscribe((event: RuntimeEvent) => {
       // channel that only ever shows requests is half a record. Mirror the
       // reply on success; mirror a failed/stopped terminal chip otherwise.
       const delegationFailureName = !event.ok && event.stopReason?.trim()
-        ? t("Delegated turn did not finish — {reason}", { reason: event.stopReason.trim().slice(0, 120) })
+        ? t("Delegated turn did not finish — {reason}", { reason: reasonLabel(event.stopReason.trim().slice(0, 120)) })
         : undefined;
       finalizeDelegationWatch(event.threadId, event.ok, reply, delegationFailureName);
       dispatcher.onTurnSettled(event.threadId, event.ok, reply, event.ok ? undefined : event.stopReason ?? undefined);

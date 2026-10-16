@@ -89,8 +89,13 @@ export function mascotForDriver(driverKind: string | null | undefined): MascotKi
   if (!driverKind) return "workbuddy";
   const known = DRIVER_MASCOT[driverKind];
   if (known) return known;
-  if (/ollama|lmstudio|lm-studio|local|llama/i.test(driverKind)) return "local";
-  return "workbuddy";
+  if (/ollama|lmstudio|lm-studio|local|llama|openai-?compat/i.test(driverKind)) return "local";
+  // Instance ids usually carry the engine's name ("kimi", "claude-work",
+  // "box"), which is all there is to go on before the engine list loads.
+  const name = driverKind.toLowerCase().replace(/agent$|go$/, "");
+  if (name.startsWith("box")) return "pc";
+  const kind = MASCOT_KINDS.find((k) => k !== "local" && k !== "pc" && name.startsWith(k));
+  return kind ?? "workbuddy";
 }
 
 /** Status words used across the app, mapped to the pose that shows them. */

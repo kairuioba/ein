@@ -1,27 +1,53 @@
-// Conference call mode — one microphone, several room members.
+// Conference call mode — one microphone, several room members (U17).
 //
 // Capture stays half-duplex for the same reason as one-to-one calls: the
 // native recognizer has no acoustic echo cancellation. Bot replies are
 // explicitly queued so a fast second member never cuts off the first.
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2, PhoneOff, X } from "lucide-react";
+//
+// The screen is a full-window overlay: each member stands in a tile (its
+// engine's full-body mascot), the host wears the crown chip, whoever is
+// talking gets the ring and the waveform, the next reply in the queue is
+// marked "下一位". Live captions and the minutes they produce sit on the right.
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { currentCall, deferCallCleanup, endCall, useOnCall } from "@/lib/call";
+import { callStartedAt, currentCall, deferCallCleanup, endCall, useOnCall } from "@/lib/call";
 import { routeSpokenGroupMessage } from "@/lib/group-call";
+import { callActions, callPoints, captionLines } from "@/lib/group-call-notes";
+import { meetingChair, parseAgenda } from "@/lib/group-meeting";
+import { effectiveDefaultResponder } from "@/lib/group-routing";
 import { track } from "@/lib/analytics";
-import { normalizeState } from "@/lib/mascot";
 import { speaker } from "@/lib/tts";
 import { useSpeech } from "@/lib/tts/useSpeech";
 import { usePushToTalk } from "@/lib/push-to-talk";
-import { useStore, type Bot, type Group, type Message } from "@/state/store";
-import { cn } from "@/lib/cn";
-import { MausAvatar } from "./Avatar";
+import { formatTime, useStore, type Bot, type Group, type Message } from "@/state/store";
 import { CallTargetButton } from "./CallView";
 import { isRoutineApproval, isSkillApproval, pendingApprovals, spokenApprovalPrompt } from "./PendingApproval";
+import {
+  CallBotTile,
+  CallDock,
+  CallShell,
+  CallStage,
+  CallYouTile,
+  CaptionsPanel,
+  callMascotScale,
+  useSecondClock,
+  type LiveCaption,
+  type TileStatus,
+  type YouStatus,
+} from "./group/CallChrome";
+import { callOccurrence, estimateSpeechMs, useCallContext } from "./group/useCallContext";
 import { t } from "@/lib/i18n";
 import { spokenNo, spokenYes } from "@/lib/spoken-answer";
 
 const CALL_ENDPOINT_MS = 850;
+
+/** "09:15" — the calendar's own clock form. */
+function clockText(at: number): string {
+  const date = new Date(at);
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+/** With the speaker off a reply is read as a caption; pause briefly so turns stay legible. */
+const CAPTION_ONLY_PAUSE_MS = 600;
 
 type Phase = "listening" | "sending" | "working" | "speaking";
 
@@ -57,13 +83,29 @@ function questionIn(messages: Message[]): Message | undefined {
 }
 
 function GroupCall({ group, members }: { group: Group; members: Bot[] }) {
-  const { dispatch } = useStore();
+  const { state, dispatch } = useStore();
   const speech = useSpeech();
+  const context = useCallContext();
+  const now = useSecondClock();
+  const [startedAt] = useState(() => callStartedAt() ?? Date.now());
   const initialPhase: Phase = group.busyBotId ? "working" : "listening";
   const [phase, setPhase] = useState<Phase>(initialPhase);
   const [heard, setHeard] = useState("");
   const [note, setNote] = useState<string | null>(null);
   const [speakingMemberId, setSpeakingMemberId] = useState<string | null>(null);
+  // what the screen shows about the turn-taking
+  const [live, setLive] = useState<LiveCaption | null>(null);
+  const [upNext, setUpNext] = useState<string[]>([]);
+  const [spokenMs, setSpokenMs] = useState<Record<string, number>>({});
+  const [panelOpen, setPanelOpen] = useState(true);
+  // your controls
+  const [muted, setMuted] = useState(false);
+  const [speakerOn, setSpeakerOn] = useState(true);
+  const [voiceMuted, setVoiceMuted] = useState<Set<string>>(() => new Set());
+  const mutedRef = useRef(false);
+  const speakerOnRef = useRef(true);
+  const voiceMutedRef = useRef<Set<string>>(new Set());
+  const hearingSince = useRef<number>(Date.now());
   const pushToTalk = usePushToTalk(group.id, phase === "listening", () => {
     setNote(t("Push to talk couldn't start. Check Microphone and Speech Recognition access."));
   });
@@ -99,10 +141,16 @@ function GroupCall({ group, members }: { group: Group; members: Bot[] }) {
   const queueGeneration = useRef(0);
   const queue = useRef<Promise<void>>(Promise.resolve());
   const queuedJobs = useRef(new Set<number>());
+  /** who each queued job belongs to, in order — the head is "下一位" */
+  const queuedSpeakers = useRef<Array<{ jobId: number; memberId: string }>>([]);
   const nextJobId = useRef(0);
   const listenWhenDrained = useRef(false);
   const listenTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const allowBargeIn = useRef(false);
+
+  const syncUpNext = useCallback(() => {
+    if (alive.current) setUpNext(queuedSpeakers.current.map((entry) => entry.memberId).filter(Boolean));
+  }, []);
 
   const move = useCallback((next: Phase) => {
     phaseRef.current = next;
@@ -117,8 +165,12 @@ function GroupCall({ group, members }: { group: Group; members: Bot[] }) {
     if (!alive.current || currentCall() !== group.id) return;
     move("listening");
     setSpeakingMemberId(null);
+    setLive(null);
     setHeard("");
     setNote(null);
+    hearingSince.current = Date.now();
+    // muted: it is your turn, but the microphone stays closed until you unmute
+    if (mutedRef.current) return;
     void window.ogb?.speechStart({ endpointMs: CALL_ENDPOINT_MS }).catch(() => {
       if (alive.current && currentCall() === group.id) {
         setNote(t("The microphone couldn't start. Check Microphone and Speech Recognition access."));
@@ -139,41 +191,64 @@ function GroupCall({ group, members }: { group: Group; members: Bot[] }) {
   );
 
   const say = useCallback(
-    async (text: string, member?: Bot) => {
+    async (text: string, member?: Bot, lineId?: string) => {
       if (!alive.current || currentCall() !== group.id) return false;
       const mine = ++sayGeneration.current;
       move("speaking");
       setSpeakingMemberId(member?.id ?? null);
+      const begin = Date.now();
+      setLive({
+        lineId,
+        speakerId: member?.id,
+        name: member?.name ?? t("Channel member"),
+        text: lineId ? undefined : text,
+        startedAt: begin,
+      });
       hush();
-      await speaker.speak(text, { botId: member?.id, voiceId: member?.voice });
+      const audible = speakerOnRef.current && !(member && voiceMutedRef.current.has(member.id));
+      if (audible) await speaker.speak(text, { botId: member?.id, voiceId: member?.voice });
+      else await new Promise((resolve) => setTimeout(resolve, CAPTION_ONLY_PAUSE_MS));
+      if (member && alive.current) {
+        const spent = Date.now() - begin;
+        setSpokenMs((current) => ({ ...current, [member.id]: (current[member.id] ?? 0) + spent }));
+      }
       return alive.current && currentCall() === group.id && sayGeneration.current === mine;
     },
     [group.id, hush, move],
   );
 
   const enqueueSpeech = useCallback(
-    (text: string, member?: Bot, answerAfter = false) => {
+    (text: string, member?: Bot, answerAfter = false, lineId?: string) => {
       const generation = queueGeneration.current;
       const jobId = ++nextJobId.current;
       queuedJobs.current.add(jobId);
+      queuedSpeakers.current.push({ jobId, memberId: member?.id ?? "" });
+      syncUpNext();
       if (answerAfter) listenWhenDrained.current = true;
+      const dropFromQueue = () => {
+        queuedSpeakers.current = queuedSpeakers.current.filter((entry) => entry.jobId !== jobId);
+        syncUpNext();
+      };
       queue.current = queue.current
         .catch(() => {})
         .then(async () => {
           if (generation !== queueGeneration.current) return;
-          await say(text, member);
+          dropFromQueue();
+          await say(text, member, lineId);
         })
         .finally(() => {
           if (generation !== queueGeneration.current) return;
+          dropFromQueue();
           queuedJobs.current.delete(jobId);
           if (queuedJobs.current.size) return;
           setSpeakingMemberId(null);
+          if (alive.current) setLive(null);
           const force = listenWhenDrained.current;
           listenWhenDrained.current = false;
           scheduleListen(force);
         });
     },
-    [say, scheduleListen],
+    [say, scheduleListen, syncUpNext],
   );
 
   const interruptSpeech = useCallback(() => {
@@ -181,6 +256,8 @@ function GroupCall({ group, members }: { group: Group; members: Bot[] }) {
     queueGeneration.current += 1;
     queue.current = Promise.resolve();
     queuedJobs.current.clear();
+    queuedSpeakers.current = [];
+    syncUpNext();
     listenWhenDrained.current = false;
     sayGeneration.current += 1;
     speaker.stop();
@@ -188,7 +265,7 @@ function GroupCall({ group, members }: { group: Group; members: Bot[] }) {
     allowBargeIn.current = true;
     if (wasBusy) dispatch({ type: "interruptGroup", groupId: group.id });
     listen();
-  }, [dispatch, group.id, listen]);
+  }, [dispatch, group.id, listen, syncUpNext]);
 
   useEffect(() => {
     alive.current = true;
@@ -389,7 +466,7 @@ function GroupCall({ group, members }: { group: Group; members: Bot[] }) {
     );
     for (const reply of replies) {
       const member = members.find((candidate) => candidate.id === reply.from?.botId);
-      enqueueSpeech(reply.text!, member);
+      enqueueSpeech(reply.text!, member, false, reply.id);
     }
     if (!replies.length) {
       const chip = [...fresh].reverse().find((message) => message.kind === "activity" && message.tool?.spoken);
@@ -439,127 +516,192 @@ function GroupCall({ group, members }: { group: Group; members: Bot[] }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [group.id, interruptSpeech]);
 
-  const speakingMember = members.find((member) => member.id === speakingMemberId);
+  // ── your controls ─────────────────────────────────────────────────────
+  const toggleMute = () => {
+    const next = !mutedRef.current;
+    mutedRef.current = next;
+    setMuted(next);
+    if (next) {
+      setHeard("");
+      if (phaseRef.current === "listening") hush();
+    } else if (phaseRef.current === "listening") {
+      listen();
+    }
+  };
+  const toggleSpeaker = () => {
+    const next = !speakerOnRef.current;
+    speakerOnRef.current = next;
+    setSpeakerOn(next);
+    if (!next && speaker.isSpeaking()) speaker.stop();
+  };
+  const toggleVoice = (member: Bot) => {
+    const next = new Set(voiceMutedRef.current);
+    if (next.has(member.id)) next.delete(member.id);
+    else {
+      next.add(member.id);
+      if (speakingMemberId === member.id && speaker.isSpeaking()) speaker.stop();
+    }
+    voiceMutedRef.current = next;
+    setVoiceMuted(next);
+  };
+
+  // ── what the screen shows ─────────────────────────────────────────────
+  const lines = useMemo(() => captionLines(messages, startedAt), [messages, startedAt]);
+  const actions = useMemo(() => callActions(lines), [lines]);
+  const agenda = useMemo(() => parseAgenda(group.bulletin), [group.bulletin]);
+  const points = useMemo(
+    () => callPoints(lines, agenda ? t("Goal: {goal}", { goal: agenda.topic ?? agenda.raw }) : undefined),
+    [lines, agenda],
+  );
+  const responder = effectiveDefaultResponder(group, members);
+  const host = meetingChair(members, agenda, responder.kind === "member" ? responder.botId : undefined, context.chiefId);
+  const calendarCall = context.calls.find((call) => call.roomId === group.id);
+  const occurrence = calendarCall ? callOccurrence(calendarCall, startedAt) : null;
+  const title = calendarCall
+    ? [
+        calendarCall.name,
+        // a daily call is titled by the time it was set for ("09:00")
+        calendarCall.schedule.type === "daily" ? calendarCall.schedule.time : occurrence ? formatTime(occurrence) : null,
+        host ? t("{name} hosting", { name: host.name }) : null,
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : group.name;
+  const linkLabel = calendarCall && calendarCall.name !== group.name ? group.name : agenda?.raw;
+
+  const spokenFor = (member: Bot) => {
+    const estimated = lines
+      .filter((line) => line.speaker.kind === "bot" && line.speaker.botId === member.id)
+      .reduce((sum, line) => sum + estimateSpeechMs(line.text), 0);
+    return Math.max(spokenMs[member.id] ?? 0, estimated);
+  };
+  const speakingMember = phase === "speaking" ? members.find((member) => member.id === speakingMemberId) : undefined;
+  const nextId = upNext.find((id) => id && id !== speakingMember?.id);
+  const statusOf = (member: Bot): { status: TileStatus; ms?: number } => {
+    if (speakingMember?.id === member.id) return { status: "speaking", ms: now - (live?.startedAt ?? now) };
+    if (group.busyBotId === member.id) return { status: "working" };
+    if (nextId === member.id) return { status: "next" };
+    const spoke = spokenFor(member);
+    return spoke > 0 ? { status: "spoke", ms: spoke } : { status: "listening" };
+  };
+  const youStatus: YouStatus = muted ? "muted" : phase === "listening" ? (heard || pushToTalk ? "talking" : "open") : "listening";
+  const notSpoken = members.filter((member) => member.id !== host?.id && spokenFor(member) === 0 && speakingMember?.id !== member.id).length;
+  const expectedEnd = occurrence && calendarCall ? occurrence + calendarCall.durationMinutes * 60_000 : null;
   const workingMember = members.find((member) => member.id === group.busyBotId);
-  const focusId = speakingMember?.id ?? workingMember?.id;
-  const status =
-    phase === "listening"
+
+  const leftHint = muted
+    ? { title: t("You're muted"), detail: t("Click the mic to talk · Space interrupts") }
+    : phase === "listening"
       ? pushToTalk
-        ? t("Push to talk")
-        : t("Listening")
-      : phase === "sending"
-        ? t("Bringing the channel in")
-        : phase === "speaking"
-          ? t("{name} is speaking", { name: speakingMember?.name ?? t("Channel member") })
-          : workingMember
-            ? t("{name} is working", { name: workingMember.name })
-            : t("Working");
+        ? { title: t("Listening to you"), detail: t("Release Control + Option to send…") }
+        : { title: t("Your turn"), detail: t("Just talk, or hold Control + Option") }
+      : phase === "speaking"
+        ? { title: t("You're listening"), detail: t("Space interrupts · Esc hangs up") }
+        : { title: workingMember ? t("{name} is working", { name: workingMember.name }) : t("Bringing the channel in"), detail: t("You’ll hear each response in turn.") };
+  const rightHint =
+    notSpoken > 0 || expectedEnd
+      ? {
+          title: notSpoken > 0 ? t("{count} still to speak", { count: notSpoken }) : t("Everyone has spoken"),
+          // same "09:15" form as the calendar's "09:00" in the title
+          detail: expectedEnd ? t("Expected to end {time}", { time: clockText(expectedEnd) }) : undefined,
+        }
+      : undefined;
 
-  return (
-    <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-6 bg-app/95 px-8 backdrop-blur-sm">
-      <button
-        onClick={() => endCall(group.id)}
-        aria-label={t("Hang up")}
-        className="absolute right-5 top-5 rounded-md p-2 text-ink-secondary hover:bg-raised hover:text-ink"
-      >
-        <X size={18} />
-      </button>
+  const liveCaption: LiveCaption | null =
+    phase === "speaking" && live
+      ? { ...live, caption: speech.caption }
+      : phase === "listening" && heard
+        ? { you: true, name: t("You"), text: heard, startedAt: hearingSince.current }
+        : null;
+  const floor = speakingMember ?? workingMember;
+  const pending = floor
+    ? speakingMember
+      ? t("{name} is speaking · capturing action items", { name: floor.name })
+      : t("{name} is preparing a reply", { name: floor.name })
+    : undefined;
 
-      <div className="max-w-full overflow-x-auto px-4 py-3">
-        <div className="flex min-w-max items-end justify-center gap-3">
-          {members.map((member) => {
-            const focused = member.id === focusId;
-            const state =
-              speakingMember?.id === member.id
-                ? "sending"
-                : workingMember?.id === member.id
-                  ? "working"
-                  : phase === "listening"
-                    ? "listening"
-                    : normalizeState(member.mascotExpression) ?? "happy";
-            return (
-              <div
-                key={member.id}
-                className={cn(
-                  "flex w-[124px] flex-col items-center gap-2 rounded-3xl px-2 py-3 transition-all duration-200",
-                  focused ? "scale-105 bg-raised/70 shadow-lg" : "opacity-75",
-                )}
-              >
-                <MausAvatar
-                  color={member.color}
-                  state={state}
-                  size={94}
-                  animated
-                  motion={workingMember?.id === member.id ? "working" : "none"}
-                  motionKey={workingMember?.id === member.id ? 1 : 0}
-                />
-                <span className={cn("text-[13px] font-medium", focused ? "text-ink" : "text-ink-secondary")}>
-                  {member.name}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      <div className="flex flex-col items-center gap-1.5 text-center">
-        <div className="text-[20px] font-medium text-ink">{group.name}</div>
-        <div className="flex items-center gap-2 text-[13.5px] text-ink-secondary">
-          {(phase === "working" || phase === "sending") && <Loader2 size={13} className="animate-spin" />}
-          {status}
-        </div>
-      </div>
-
-      <div className="min-h-[3.5rem] max-w-[620px] text-center text-[15px] leading-relaxed text-ink">
-        {phase === "listening" ? (
-          heard || (
-            <span className="text-ink-secondary">
-              {pushToTalk
-                ? t("Release Control + Option to send…")
-                : t("Say a name, say “everyone,” or just talk to the channel…")}
-            </span>
-          )
-        ) : phase === "speaking" ? (
-          speech.caption
-        ) : (
-          <span className="text-ink-secondary">{workingMember ? t("You’ll hear each response in turn.") : ""}</span>
-        )}
-      </div>
-
-      {note && (
-        <div className="flex max-w-[520px] flex-col items-center gap-2 text-center text-[12.5px] text-warning">
-          <span>{note}</span>
-          <button
-            onClick={listen}
-            className="rounded-full border border-warning/40 px-3 py-1.5 text-[12px] hover:bg-warning/10"
-          >
+  const notice =
+    note || speech.error ? (
+      <div className="flex max-w-[560px] items-center gap-2 rounded-xl bg-raised px-3 py-2 text-[12.5px] text-warning shadow-[0_8px_24px_-14px_rgb(16_24_40/0.4)]">
+        <span className="min-w-0 flex-1">{note ?? speech.error}</span>
+        {note && (
+          <button onClick={listen} className="shrink-0 rounded-full px-2.5 py-1 font-semibold hover:bg-warning/10">
             {t("Try microphone again")}
           </button>
-        </div>
-      )}
-      {speech.error && <div className="max-w-[460px] text-center text-[12.5px] text-danger">{speech.error}</div>}
-
-      <div className="flex items-center gap-3">
-        {speaker.isSpeaking() && (
-          <button
-            onClick={interruptSpeech}
-            className="rounded-full border border-hairline/50 px-4 py-2 text-[13.5px] text-ink hover:bg-raised"
-          >
-            {t("Interrupt")}
-          </button>
         )}
-        <button
-          onClick={() => endCall(group.id)}
-          className="flex items-center gap-2 rounded-full bg-danger px-5 py-2.5 text-[14px] font-medium text-white hover:brightness-110"
-        >
-          <PhoneOff size={16} />{" "}
-          {t("Hang up")}
-        </button>
       </div>
+    ) : null;
 
-      <div className="text-[11.5px] text-ink-secondary/70">
-        {t("Hold Control + Option to talk · Say a member’s name to direct the turn · Space interrupts · Esc hangs up")}
-      </div>
-    </div>
+  const scale = callMascotScale(members.length + 1);
+  return (
+    <CallShell
+      label={t("Call with {name}", { name: group.name })}
+      title={title}
+      startedAt={startedAt}
+      now={now}
+      linkLabel={linkLabel}
+      people={members}
+      count={members.length + 1}
+      panelOpen={panelOpen}
+      onTogglePanel={() => setPanelOpen((open) => !open)}
+      stage={
+        <CallStage
+          count={members.length + 1}
+          tiles={
+            <>
+              {members.map((member) => {
+                const { status, ms } = statusOf(member);
+                return (
+                  <CallBotTile
+                    key={member.id}
+                    scale={scale}
+                    onToggleVoice={() => toggleVoice(member)}
+                    tile={{
+                      bot: member,
+                      status,
+                      ms,
+                      host: host?.id === member.id,
+                      color: context.colors.get(member.id),
+                      engine: context.engineOf(member),
+                      voiceMuted: voiceMuted.has(member.id),
+                    }}
+                  />
+                );
+              })}
+              <CallYouTile status={youStatus} onToggleMute={toggleMute} scale={scale} name={state.config?.profile?.name?.trim() || t("Owner")} />
+            </>
+          }
+          dock={
+            <CallDock
+              muted={muted}
+              onToggleMute={toggleMute}
+              speakerOn={speakerOn}
+              onToggleSpeaker={toggleSpeaker}
+              canRaiseHand={phase === "speaking" || phase === "working" || upNext.length > 0}
+              onRaiseHand={interruptSpeech}
+              onHangUp={() => endCall(group.id)}
+            />
+          }
+          leftHint={leftHint}
+          rightHint={rightHint}
+          notice={notice}
+        />
+      }
+      panel={
+        <CaptionsPanel
+          lines={lines}
+          live={liveCaption}
+          startedAt={startedAt}
+          bots={state.bots}
+          points={points}
+          actions={actions}
+          keeper={host?.name ?? t("The chief")}
+          updatedAt={lines.length ? Math.max(...lines.map((line) => line.at)) : null}
+          pending={pending}
+          footer={t("Everything said stays in the “{name}” group chat", { name: group.name })}
+          onCollapse={() => setPanelOpen(false)}
+        />
+      }
+    />
   );
 }

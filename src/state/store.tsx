@@ -706,6 +706,16 @@ function patchCard(state: AppState, botId: string, messageId: string, patch: Par
   }));
 }
 
+/** C3 (group chat): a live ask raised inside a room — the room's thread and
+ * the request id answerCard/dismissCard should respond to. */
+function roomCard(groups: Group[], messageId: string): { threadId: string; requestId: string } | undefined {
+  for (const group of groups) {
+    const requestId = group.messages.find((message) => message.id === messageId)?.card?.requestId;
+    if (requestId) return { threadId: group.threadId, requestId };
+  }
+  return undefined;
+}
+
 /** First-run quiz still sitting on this bot's thread. */
 function openOnboardingCard(bot: Bot): Message | undefined {
   return bot.messages.find(
@@ -1575,6 +1585,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         case "answerCard": {
           const bot = stateRef.current.bots.find((b) => b.id === action.botId);
           const card = bot?.messages.find((m) => m.id === action.messageId)?.card;
+          // C3 (group chat): a question a member raises inside a room lives in
+          // the room's transcript, not the bot's — answer it on the room's
+          // thread like the call view does, never as a new 1:1 message.
+          const roomAsk = card ? undefined : roomCard(stateRef.current.groups, action.messageId);
+          if (roomAsk) {
+            api(`/api/threads/${roomAsk.threadId}/respond`, {
+              method: "POST",
+              body: JSON.stringify({ requestId: roomAsk.requestId, behavior: "answer", message: action.answer }),
+            }).catch(showError);
+            break;
+          }
           if (card?.requestId) {
             const normalizedAnswer = action.answer.trim().toLowerCase();
             const behavior = card.skillRequest
@@ -1603,6 +1624,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         case "dismissCard": {
           const bot = stateRef.current.bots.find((b) => b.id === action.botId);
           const card = bot?.messages.find((m) => m.id === action.messageId)?.card;
+          // C3 (group chat): see answerCard — a room's question is declined on the room's thread
+          const roomAsk = card ? undefined : roomCard(stateRef.current.groups, action.messageId);
+          if (roomAsk) {
+            api(`/api/threads/${roomAsk.threadId}/respond`, {
+              method: "POST",
+              body: JSON.stringify({ requestId: roomAsk.requestId, behavior: "deny", message: "Dismissed by user." }),
+            }).catch(() => {});
+            break;
+          }
           if (card?.requestId) {
             api(`/api/bots/${action.botId}/respond`, {
               method: "POST",

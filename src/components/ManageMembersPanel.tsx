@@ -124,7 +124,7 @@ export function ManageMembersPanel({
         <div className="mt-3 flex gap-2">
           <button
             onClick={onClose}
-            className="flex-1 rounded-lg bg-raised py-2 text-[14px] font-medium text-ink hover:brightness-110"
+            className="flex-1 rounded-lg bg-control/70 py-2 text-[14px] font-medium text-ink hover:bg-control"
           >
             {t("Cancel")}
           </button>

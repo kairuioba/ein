@@ -49,9 +49,6 @@ function Shell() {
   const calendarOriginRef = useRef<Exclude<AppView, "routines">>("chat");
   const group = state.groups.find((g) => g.id === state.selectedId);
   const bot = group ? undefined : (state.bots.find((b) => b.id === state.selectedId) ?? state.bots[0]);
-  // C6 (U14): the calendar now keeps the app sidebar, so it no longer takes
-  // over the window. Was: state.activeView === "routines".
-  const calendarFocus = false;
 
   // Nothing on this machine can run a bot. A missing cloud login does not
   // count — that CLI can still host a local model. Wait for the first
@@ -72,6 +69,14 @@ function Shell() {
       if (e.key === "n" && !e.shiftKey) {
         e.preventDefault();
         dispatch({ type: "newBot" });
+      } else if (e.shiftKey && !e.altKey && e.key.toLowerCase() === "b") {
+        // C1: ⇧⌘B workbench and ⌘, settings, as listed in ⌘K. The desktop
+        // menu owns both accelerators natively; this covers the browser build.
+        e.preventDefault();
+        dispatch({ type: "showTeamMap" });
+      } else if (e.key === "," && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        dispatch({ type: "toggleAppSettings", open: true });
       } else if (/^[1-9]$/.test(e.key)) {
         const target = bots[Number(e.key) - 1];
         if (target) {
@@ -229,42 +234,43 @@ function Shell() {
     });
   }, [dispatch]);
 
+  // C1 shell: one ground (bg-panel) under the sidebar and around the stage
+  // card, so the sidebar needs no edge of its own; the sidebar now stays on
+  // the calendar too (U14), so there is no calendar focus mode any more.
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col bg-panel">
       {/* fixed-position popup, bottom-left — outside the layout flow */}
       <UpdateBanner />
       <div className="relative flex min-h-0 flex-1">
-      {!calendarFocus && <button
+      <button
         type="button"
         ref={menuButtonRef}
         aria-label={t("Open bot list")}
         aria-expanded={drawerOpen}
         onClick={() => setDrawerOpen(true)}
-        className="absolute left-3 top-3 z-30 rounded-md p-1.5 text-ink-secondary hover:bg-raised hover:text-ink md:hidden"
+        className="absolute left-3.5 top-3.5 z-30 grid size-8 place-items-center rounded-[9px] text-ink-secondary hover:bg-raised-hover hover:text-ink md:hidden"
       >
         <Menu size={18} />
-      </button>}
-      {drawerOpen && !calendarFocus && (
+      </button>
+      {drawerOpen && (
         <div
           aria-hidden
           onMouseDown={(e) => e.target === e.currentTarget && setDrawerOpen(false)}
-          className="absolute inset-0 z-30 bg-black/50 md:hidden"
+          className="absolute inset-0 z-30 bg-black/40 md:hidden"
         />
       )}
-      {!calendarFocus && <Sidebar
+      <Sidebar
         open={drawerOpen}
         onClose={() => {
           setDrawerOpen(false);
           menuButtonRef.current?.focus();
         }}
-      />}
+      />
       {/* The stage: the main view and its side panels share one surface. Fog
           draws it as an inset card (the --stage-* tokens); the other skins
-          keep it edge to edge. */}
-      <div
-        className="flex min-h-0 min-w-0 flex-1"
-        style={{ padding: "var(--stage-gap) var(--stage-gap) var(--stage-gap) 0" }}
-      >
+          keep it edge to edge. Below md the sidebar is a drawer, so the card
+          keeps its gap on the left too. */}
+      <div className="flex min-h-0 min-w-0 flex-1 md:pl-0!" style={{ padding: "var(--stage-gap)" }}>
       <div
         className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-stage"
         style={{ borderRadius: "var(--stage-radius)", outline: "1px solid var(--stage-border)", outlineOffset: -1 }}

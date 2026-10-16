@@ -42,7 +42,8 @@ export function userSectionName(id: SidebarSectionId): string | null {
  * translated, user section names are shown as typed. */
 export function sidebarSectionLabel(id: SidebarSectionId): string {
   if (id === PINNED_SECTION_ID) return t("Pinned");
-  if (id === CHANNELS_SECTION_ID) return t("Channels");
+  // rooms are "group chats" in the round-8 copy (群聊)
+  if (id === CHANNELS_SECTION_ID) return t("Group chats");
   if (id === BOT_CHATS_SECTION_ID) return t("Bot Chats");
   if (id === BOTS_SECTION_ID) return t("Bots");
   return userSectionName(id) ?? id;

@@ -23,6 +23,8 @@
   "scripts": {
     "clean": "node scripts/clean.mjs",
     "lint": "oxlint .",
+    "i18n:check": "node scripts/i18n-check.mjs",
+    "i18n:merge": "node scripts/i18n-merge.mjs",
     "check:contrast": "node scripts/check-skin-contrast.mjs",
     "dev": "vite",
     "docs:dev": "pnpm --filter @openmausbot/docs dev",

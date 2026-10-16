@@ -43,6 +43,8 @@ files:
   - "!electron/resources/recorder-helper-Info.plist"
   - "!electron/resources/OpenMausBot Recorder.app/**"
   - "!**/node_modules/**"
+  # The desktop shell reads the same dictionary as the UI and the harness.
+  - shared/i18n/zh-CN.json
   - package.json
 
 asar: true

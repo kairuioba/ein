@@ -1,0 +1,2 @@
+# Translation fragments are merged into zh-CN.json by scripts/i18n-merge.mjs.
+*.json

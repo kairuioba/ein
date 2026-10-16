@@ -61,6 +61,7 @@
   --color-select: #1084fe;
   /* the surface the main view sits on (chat, workbench, pages) */
   --color-stage: #070707;
+  --color-track: #191919;  /* segmented-control track: below the selected (raised) segment */
   --color-success: #38d591;
   --color-danger: #ff5667;
   --color-warning: #ff9800;
@@ -112,6 +113,7 @@
   --color-primary-ink: #ffffff;
   --color-select: #1084fe;
   --color-stage: #070707;
+  --color-track: #191919;
   /* the main view as an inset card (Fog) or edge to edge (the rest) */
   --stage-gap: 0px;
   --stage-radius: 0px;
@@ -166,6 +168,7 @@
   --color-primary-ink: #ffffff;
   --color-select: #a05f25;
   --color-stage: #f5f1eb;
+  --color-track: #ece4d6;
   /* the main view as an inset card (Fog) or edge to edge (the rest) */
   --stage-gap: 0px;
   --stage-radius: 0px;
@@ -227,6 +230,7 @@
   --color-primary-ink: #1c150c;
   --color-select: #d99a3e;
   --color-stage: #100e0b;
+  --color-track: #0b0a08;
   /* the main view as an inset card (Fog) or edge to edge (the rest) */
   --stage-gap: 0px;
   --stage-radius: 0px;
@@ -294,6 +298,7 @@
   --color-primary-ink: #ffffff;
   --color-select: #11736d;
   --color-stage: #dfeceb;
+  --color-track: #c3dcd9;
   /* the main view as an inset card (Fog) or edge to edge (the rest) */
   --stage-gap: 0px;
   --stage-radius: 0px;
@@ -343,6 +348,7 @@
   --color-primary-ink: #ffffff;
   --color-select: #3b5bff;
   --color-stage: #ffffff;
+  --color-track: #e3e6ec;
   /* the main view as an inset card (Fog) or edge to edge (the rest) */
   --stage-gap: 8px;
   --stage-radius: 14px;

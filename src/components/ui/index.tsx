@@ -106,7 +106,7 @@ export function Segmented<T extends string>({
   label?: string;
 }) {
   return (
-    <div role="radiogroup" aria-label={label} className={cn("inline-flex shrink-0 items-center gap-0.5 rounded-[10px] bg-control p-0.5", className)}>
+    <div role="radiogroup" aria-label={label} className={cn("inline-flex shrink-0 items-center gap-0.5 rounded-[10px] bg-track p-0.5", className)}>
       {options.map((option) => {
         const on = option.value === value;
         return (

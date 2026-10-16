@@ -329,6 +329,27 @@ export class OrgLayer {
     }
   }
 
+  /** The connected apps a bot's department allows: undefined = every
+   * connected app (no list set, or no department), [] = none. */
+  appsAllowed(bot: { section?: string }): string[] | undefined {
+    try {
+      const own = sectionOf(bot.section);
+      if (!own) return undefined;
+      const department = this.org().departments.find((dep) => dep.section === own);
+      return department?.allowedApps ? [...department.allowedApps] : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** The line that keeps a bot to its department's apps, when the department
+   * names some (the connector gateway cannot filter by app, so the bot is told). */
+  appsPrompt(bot: { section?: string }): string {
+    const allowed = this.appsAllowed(bot);
+    if (!allowed?.length) return "";
+    return ` Your department (${sectionOf(bot.section)}) may use only these connected apps: ${allowed.join(", ")}. Do not use any other connected app, even if the tools offer it; if the work needs one, ask the user.`;
+  }
+
   // ── library (the app calls as the owner) ──
 
   /** A doc as the app sees it: subscribers and readers that still exist. */

@@ -291,6 +291,18 @@ describe("OrgLayer", () => {
       expect(layer.libraryPrompt({ id: "auditor", section: "财务法务" })).toContain("明细");
     });
 
+    it("keeps a department to the connected apps it allows", () => {
+      expect(layer.appsAllowed({ section: "内容部" })).toBeUndefined();
+      expect(layer.appsAllowed({})).toBeUndefined();
+      expect(layer.appsPrompt({ section: "内容部" })).toBe("");
+      layer.patchOrg({ departments: [{ section: "内容部", allowedApps: ["notion", "gmail"] }, { section: "财务法务", allowedApps: [] }] });
+      expect(layer.appsAllowed({ section: "内容部" })).toEqual(["notion", "gmail"]);
+      expect(layer.appsPrompt({ section: "内容部" })).toContain("notion, gmail");
+      // none allowed: nothing is mounted, so there is nothing to say
+      expect(layer.appsAllowed({ section: "财务法务" })).toEqual([]);
+      expect(layer.appsPrompt({ section: "财务法务" })).toBe("");
+    });
+
     it("rejects subscriptions for unknown bots or documents", () => {
       const doc = layer.publishDoc({ title: "x", section: null, text: "y" });
       expect(() => layer.subscribeDoc(doc.id, { botId: "nobody", on: true })).toThrow(LibraryError);

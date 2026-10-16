@@ -2532,7 +2532,9 @@ async function startTurn(
       // them — a key in the config says the connections exist, not that
       // this engine can reach them — and only to a bot the user has not
       // switched off: the key is workspace-wide, the grant is per bot.
-      if (bot.composio !== false && composio.configured(cfg) && instance.adapter.capabilities.composioMcp === true) {
+      // company layer: a department that allows no apps gets none mounted
+      const departmentApps = orgLayer.appsAllowed(bot);
+      if (bot.composio !== false && departmentApps?.length !== 0 && composio.configured(cfg) && instance.adapter.capabilities.composioMcp === true) {
         const connection = await connectedAppsIntegration(bot.id, threadId);
         if (connection) integrations.composio = connection;
       }
@@ -2863,7 +2865,8 @@ async function startTurn(
           // gated on the integration, not the key: the hint only goes to a
           // bot whose driver actually mounted the tools
           (integrations.composio
-            ? " The user's connected apps (Gmail, Calendar, Slack, Notion, and the rest) are reachable through the composio tools — find the right one with COMPOSIO_SEARCH_TOOLS, read its arguments with COMPOSIO_GET_TOOL_SCHEMAS, then run it with COMPOSIO_MULTI_EXECUTE_TOOL. Reach for them before telling the user you have no access to a service."
+            ? " The user's connected apps (Gmail, Calendar, Slack, Notion, and the rest) are reachable through the composio tools — find the right one with COMPOSIO_SEARCH_TOOLS, read its arguments with COMPOSIO_GET_TOOL_SCHEMAS, then run it with COMPOSIO_MULTI_EXECUTE_TOOL. Reach for them before telling the user you have no access to a service." +
+              orgLayer.appsPrompt(bot)
             : "") +
           (integrations.browser ? BUILT_IN_BROWSER_SYSTEM_PROMPT : "") +
           (coordinationPrompt ? ` ${coordinationPrompt}` : "") +
@@ -3396,7 +3399,8 @@ async function runGroupMemberTurn(
     integrations.phone = phoneIntegration();
   }
   try {
-    if (bot.composio !== false && composio.configured(cfg) && instance.adapter.capabilities.composioMcp === true) {
+    // company layer: a department that allows no apps gets none mounted
+    if (bot.composio !== false && orgLayer.appsAllowed(bot)?.length !== 0 && composio.configured(cfg) && instance.adapter.capabilities.composioMcp === true) {
       const connection = await connectedAppsIntegration(bot.id, threadId);
       if (connection) integrations.composio = connection;
     }
@@ -3523,6 +3527,7 @@ async function runGroupMemberTurn(
     sectionContextSystemPrompt(bot.section) +
     // company layer: latest versions of the library docs this bot subscribes to (capped)
     orgLayer.libraryPrompt(bot) +
+    (integrations.composio ? orgLayer.appsPrompt(bot) : "") +
     (workspace ? `\n${memorySystemPrompt(bot.id).trim()}${skillsSystemPrompt(bot.id)}` : "") +
     renderSkillInstructions(selectedSkills, { includeRoot: Boolean(workspace) }) +
     installedPlaybookInstructions(text, bot.playbooks);

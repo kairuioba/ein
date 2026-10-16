@@ -10,7 +10,6 @@ import { SettingsPanel } from "@/components/SettingsPanel";
 import { PluginsPanel, preloadConnectedApps } from "@/components/PluginsPanel";
 import { ComputerPanel } from "@/components/ComputerPanel";
 import { InspectorPanel } from "@/components/InspectorPanel";
-import { SettingsModal } from "@/components/SettingsModal";
 import { UpdateBanner } from "@/components/UpdateBanner";
 import { DesktopCapabilitiesProvider } from "@/components/DesktopCapabilities";
 import { RoutinesPage } from "@/components/RoutinesPage";
@@ -323,7 +322,7 @@ function Shell() {
       {state.inspectorOpen && bot && <InspectorPanel bot={bot} />}
       </div>
       </div>
-      {state.appSettingsOpen && <SettingsModal />}
+      {/* C5: app settings are the "settings" page above; the modal is retired */}
       {state.pluginsOpen && <PluginsPanel />}
       {/* mounted after the modals: same z-50 tier, so DOM order keeps the
           palette on top when one of them is open underneath */}

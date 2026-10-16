@@ -76,7 +76,7 @@ export function SkinPicker() {
   return (
     // One row, so the whole set is visible without scrolling the modal —
     // 2x2 pushed the second row below the fold of its 560px frame.
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+    <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3">
       {SKINS.map((skin) => {
         const selected = skin.id === active;
         return (

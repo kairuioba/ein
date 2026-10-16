@@ -1,53 +1,25 @@
-// App settings, as a real modal with sections rather than one long panel.
-// Per-bot settings (persona, model, computer) stay in SettingsPanel — this
-// is the stuff shared by every bot: who you are, your keys, and the
-// machine your bots can borrow.
-import { useEffect, useRef, useState } from "react";
-import { Coins, FlaskConical, Globe, KeyRound, Monitor, Search, Smartphone, Terminal, Trash2, User, X } from "lucide-react";
-import { api, useStore, type AppSettingsSection, type ConfigStatus } from "@/state/store";
+// The settings sections that came over from the old Settings modal: General,
+// Appearance, Connections, Mobile, Computer, Experimental and Updates. Their
+// rows keep the modal's behaviour; only the frame around them is new.
+import { useEffect, useState } from "react";
+import { Globe, Trash2 } from "lucide-react";
+import { api, useStore, type ConfigStatus } from "@/state/store";
 import { analyticsEnabled, setAnalyticsEnabled } from "@/lib/analytics";
 import { builtInBrowserEnabled, showToolCallsEnabled, skillRecorderEnabled } from "@/lib/feature-flags";
-import { ApiKeyRow, VpsConnection } from "./ApiKeys";
 import { useUpdaterState } from "@/lib/updater";
-import { EnginesSettings } from "./EnginesSettings";
-import { LocalComputerSection } from "./LocalComputerSection";
-import { CompanionSection } from "./CompanionSection";
-import { Card, Switch } from "./SettingsPrimitives";
-import { UsageSection } from "./UsageSection";
-import { SkinPicker } from "./SkinPicker";
-import { RoomTurnTimeoutSettings } from "./RoomTurnTimeoutSettings";
-import { TranscriptionSettings } from "./TranscriptionSettings";
-import { LanguageSettings } from "./LanguageSettings";
-import { DispatchSettingsCard } from "./DispatchSettingsCard";
-import { WorkBuddySettings } from "./WorkBuddySettings";
-import { cn } from "@/lib/cn";
-import { msg, t, tn } from "@/lib/i18n";
-import {
-  browserProfileDeletionBlockReason,
-  browserProfilesForPatch,
-} from "@/lib/browser-profiles";
-
-const SECTIONS: Array<{
-  id: AppSettingsSection;
-  label: string;
-  icon: typeof User;
-  keywords: string[];
-}> = [
-  // the Chinese keywords let a search typed in Chinese find these sections too
-  { id: "general", label: msg("General"), icon: User, keywords: ["profile", "name", "email", "skin", "theme", "appearance", "analytics", "updates", "tools", "tool calls", "language", "dispatch", "chief", "语言", "中文", "英文", "派发", "调度", "总控", "模型推荐"] },
-  { id: "experimental", label: msg("Experimental"), icon: FlaskConical, keywords: ["early", "preview", "teach", "skill", "browser", "profiles"] },
-  { id: "connections", label: msg("Connections"), icon: KeyRound, keywords: ["keys", "api", "composio", "box", "xai", "vps"] },
-  { id: "engines", label: msg("Engines"), icon: Terminal, keywords: ["models", "claude", "grok", "providers", "cli", "workbuddy", "codebuddy", "tencent", "腾讯", "模型", "引擎"] },
-  { id: "companion", label: msg("Phone"), icon: Smartphone, keywords: ["companion", "phone", "pair", "mobile"] },
-  { id: "computer", label: msg("Local VM"), icon: Monitor, keywords: ["vm", "virtual", "desktop"] },
-  { id: "usage", label: msg("Usage"), icon: Coins, keywords: ["tokens", "cost", "billing"] },
-];
-
-function sectionMatches(section: (typeof SECTIONS)[number], query: string): boolean {
-  if (!query) return true;
-  // the shown (translated) label is searchable too
-  return [section.label, t(section.label), ...section.keywords].some((part) => part.toLowerCase().includes(query));
-}
+import { browserProfileDeletionBlockReason, browserProfilesForPatch } from "@/lib/browser-profiles";
+import { t, tn } from "@/lib/i18n";
+import { ApiKeyRow, VpsConnection } from "@/components/ApiKeys";
+import { LocalComputerSection } from "@/components/LocalComputerSection";
+import { CompanionSection } from "@/components/CompanionSection";
+import { Card, Switch } from "@/components/SettingsPrimitives";
+import { SkinPicker } from "@/components/SkinPicker";
+import { RoomTurnTimeoutSettings } from "@/components/RoomTurnTimeoutSettings";
+import { TranscriptionSettings } from "@/components/TranscriptionSettings";
+import { LanguageSettings } from "@/components/LanguageSettings";
+import { DispatchSettingsCard } from "@/components/DispatchSettingsCard";
+import { SKINS, readSkin } from "@/lib/skins";
+import { SectionHeader } from "./parts";
 
 /** Name + email, persisted to /api/config {profile} on blur. */
 function ProfileFields() {
@@ -71,16 +43,17 @@ function ProfileFields() {
   };
 
   const inputClass =
-    "w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[14px] text-ink placeholder:text-ink-secondary focus:border-hairline focus:outline-none";
+    "w-full rounded-[10px] bg-raised px-3 py-2 text-[13.5px] text-ink shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_60%,transparent)] placeholder:text-ink-secondary/70 focus:shadow-[inset_0_0_0_1.5px_var(--color-select)] focus:outline-none";
   return (
-    <div className="flex flex-col gap-3">
-      <input value={name} onChange={(e) => setName(e.target.value)} onBlur={save} placeholder={t("Your name")} className={inputClass} />
+    <div className="grid gap-3 sm:grid-cols-2">
+      <input value={name} onChange={(e) => setName(e.target.value)} onBlur={save} placeholder={t("Your name")} aria-label={t("Your name")} className={inputClass} />
       <input
         type="email"
         value={email}
         onChange={(e) => setEmail(e.target.value)}
         onBlur={save}
         placeholder="you@example.com"
+        aria-label={t("Email")}
         className={inputClass}
       />
     </div>
@@ -89,7 +62,9 @@ function ProfileFields() {
 
 function UpdatesRow() {
   const s = useUpdaterState();
-  if (!window.ogb?.updater) return null;
+  if (!window.ogb?.updater) {
+    return <Card title={t("Updates")} subtitle={t("Updates are handled by the desktop app. This window is not running inside it.")} />;
+  }
   const updater = window.ogb.updater;
   if (s?.unavailable) {
     return (
@@ -120,7 +95,7 @@ function UpdatesRow() {
           void updater.check();
         }}
         disabled={s?.status === "checking" || s?.status === "downloading"}
-        className="rounded-lg border border-hairline/40 px-3 py-1.5 text-[13px] text-ink hover:bg-control disabled:opacity-40"
+        className="h-8 rounded-[9px] bg-raised px-3 text-[13px] font-semibold text-ink shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_75%,transparent)] hover:bg-raised-hover disabled:opacity-40"
       >
         {s?.status === "available"
           ? t("Download")
@@ -186,7 +161,7 @@ function ToolCallsRow() {
     >
       <div className="flex items-center justify-between gap-4">
         <div className="min-w-0">
-          <div className="text-[14px] font-medium text-ink">{t("Show tool calls")}</div>
+          <div className="text-[13.5px] font-medium text-ink">{t("Show tool calls")}</div>
           <div className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">
             {t("Named chips for Bash, search, and other tools. Errors and bot-to-bot messages still appear.")}
           </div>
@@ -237,7 +212,7 @@ function ExperimentalFeaturesRow() {
     >
       <div className="flex items-center justify-between gap-4">
         <div className="min-w-0">
-          <div className="text-[14px] font-medium text-ink">{t("Teach a skill")}</div>
+          <div className="text-[13.5px] font-medium text-ink">{t("Teach a skill")}</div>
           <div className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">
             {t("Show the workflow recorder and let supported bots stage skills with /learn.")}
           </div>
@@ -252,7 +227,7 @@ function ExperimentalFeaturesRow() {
       </div>
       <div className="mt-4 flex items-center justify-between gap-4 border-t border-hairline/30 pt-4">
         <div className="min-w-0">
-          <div className="text-[14px] font-medium text-ink">{t("Built-in browser")}</div>
+          <div className="text-[13.5px] font-medium text-ink">{t("Built-in browser")}</div>
           <div className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">
             {desktopBrowser
               ? browser
@@ -404,7 +379,7 @@ function BrowserProfilesRow() {
                     <button
                       type="button"
                       onClick={() => setRenaming({ id: profile.id, name: profile.name })}
-                      className="truncate text-left text-[14px] font-medium text-ink hover:underline"
+                      className="truncate text-left text-[13.5px] font-medium text-ink hover:underline"
                       title={t("Rename")}
                     >
                       {profile.name}
@@ -440,6 +415,7 @@ function BrowserProfilesRow() {
 function DiagnosticsRow() {
   const [exporting, setExporting] = useState(false);
   const [result, setResult] = useState<{ kind: "success" | "error"; message: string } | null>(null);
+  const available = Boolean(window.ogb?.exportDiagnostics);
 
   const exportDiagnostics = async () => {
     if (!window.ogb?.exportDiagnostics || exporting) return;
@@ -460,20 +436,18 @@ function DiagnosticsRow() {
       title={t("Diagnostics")}
       subtitle={t("Versions, configuration on/off state and a redacted server log tail. Review the file before sharing it.")}
     >
-      <div className="flex min-w-0 flex-col items-end gap-2">
+      <div className="flex min-w-0 flex-col items-start gap-2">
         <button
           onClick={() => void exportDiagnostics()}
-          disabled={exporting}
+          disabled={exporting || !available}
+          title={available ? undefined : t("Needs the OpenMausBot desktop app.")}
           aria-label={t("Export diagnostics to a text file")}
-          className="rounded-lg border border-hairline/40 px-3 py-1.5 text-[13px] text-ink hover:bg-control disabled:opacity-40"
+          className="h-8 rounded-[9px] bg-raised px-3 text-[13px] font-semibold text-ink shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_75%,transparent)] hover:bg-raised-hover disabled:opacity-40"
         >
           {exporting ? t("Exporting…") : t("Export Diagnostics…")}
         </button>
         {result ? (
-          <span
-            role={result.kind === "error" ? "alert" : "status"}
-            className={`max-w-64 break-all text-right text-[12px] ${result.kind === "error" ? "text-danger" : "text-success"}`}
-          >
+          <span role={result.kind === "error" ? "alert" : "status"} className={`break-all text-[12px] ${result.kind === "error" ? "text-danger" : "text-success"}`}>
             {result.message}
           </span>
         ) : null}
@@ -482,203 +456,131 @@ function DiagnosticsRow() {
   );
 }
 
-export function SettingsModal() {
-  const { state, dispatch } = useStore();
-  const section = state.appSettingsSection;
-  const dialogRef = useRef<HTMLDivElement>(null);
-  const [query, setQuery] = useState("");
-  const q = query.trim().toLowerCase();
-  const visibleSections = SECTIONS.filter((entry) => sectionMatches(entry, q));
-
-  useEffect(() => {
-    const visible = SECTIONS.filter((entry) => sectionMatches(entry, q));
-    if (visible.some((entry) => entry.id === section)) return;
-    const first = visible[0];
-    if (first) dispatch({ type: "toggleAppSettings", open: true, section: first.id });
-  }, [dispatch, q, section]);
-
-  useEffect(() => {
-    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const dialog = dialogRef.current;
-    dialog?.focus();
-
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        dispatch({ type: "toggleAppSettings", open: false });
-        return;
-      }
-      if (event.key !== "Tab" || !dialog) return;
-
-      const focusable = Array.from(
-        dialog.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), a[href], input:not([disabled]), [tabindex]:not([tabindex="-1"])',
-        ),
-      );
-      if (focusable.length === 0) {
-        event.preventDefault();
-        dialog.focus();
-        return;
-      }
-
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      const active = document.activeElement;
-      if (event.shiftKey && (active === first || !dialog.contains(active))) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && active === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      previousFocus?.focus();
-    };
-  }, [dispatch]);
-
+export function GeneralSection() {
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-6"
-      onMouseDown={(e) => e.target === e.currentTarget && dispatch({ type: "toggleAppSettings", open: false })}
-    >
-      <div
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="app-settings-title"
-        tabIndex={-1}
-        className="flex h-[560px] w-full max-w-[860px] overflow-hidden rounded-2xl border border-hairline/50 bg-panel shadow-2xl outline-none"
-      >
-        {/* section nav */}
-        <nav className="flex w-[190px] shrink-0 flex-col gap-0.5 border-r border-hairline/40 p-3">
-          <div id="app-settings-title" className="px-2 pb-2 pt-1 text-[15px] font-semibold text-ink">
-            {t("Settings")}
-          </div>
-          <div className="mb-1.5 flex items-center gap-2 rounded-lg bg-control/70 px-2.5 py-1.5">
-            <Search size={14} className="shrink-0 text-ink-secondary" />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key !== "Escape") return;
-                e.stopPropagation();
-                if (query) setQuery("");
-                else dispatch({ type: "toggleAppSettings", open: false });
-              }}
-              placeholder={t("Search")}
-              aria-label={t("Search settings")}
-              className="w-full bg-transparent text-[13px] text-ink placeholder:text-ink-secondary focus:outline-none"
-            />
-          </div>
-          {visibleSections.length === 0 && (
-            <div className="px-2.5 py-4 text-[12.5px] leading-relaxed text-ink-secondary">
-              {t("Nothing matches “{query}”", { query: query.trim() })}
-            </div>
-          )}
-          {visibleSections.map(({ id, label, icon: Icon }) => (
-            <button
-              key={id}
-              onClick={() => dispatch({ type: "toggleAppSettings", open: true, section: id })}
-              aria-current={section === id ? "page" : undefined}
-              className={cn(
-                "flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[14px]",
-                section === id ? "bg-control text-ink" : "text-ink-secondary hover:bg-control/50 hover:text-ink",
-              )}
-            >
-              <Icon size={15} />
-              {t(label)}
-            </button>
-          ))}
-        </nav>
-
-        <div className="flex min-w-0 flex-1 flex-col">
-          <div className="flex items-center justify-between px-5 py-3">
-            <span className="text-[15px] font-semibold text-ink">
-              {t(SECTIONS.find((s) => s.id === section)?.label ?? "")}
-            </span>
-            <button
-              onClick={() => dispatch({ type: "toggleAppSettings", open: false })}
-              aria-label={t("Close settings")}
-              className="rounded-md p-1 text-ink-secondary hover:bg-control hover:text-ink"
-            >
-              <X size={18} />
-            </button>
-          </div>
-
-          <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-5 pb-5">
-            {section === "general" && (
-              <>
-                <LanguageSettings />
-                <Card title={t("Profile")} subtitle={t("Shown in the sidebar. Saved as you go.")}>
-                  <ProfileFields />
-                </Card>
-                <Card title={t("Skin")} subtitle={t("Applies instantly and is remembered on this machine.")}>
-                  <SkinPicker />
-                </Card>
-                <Card title={t("Channel turns")} subtitle={t("Set one maximum duration for every bot turn in a channel.")}>
-                  <RoomTurnTimeoutSettings />
-                </Card>
-                <DispatchSettingsCard />
-                <ToolCallsRow />
-                <UpdatesRow />
-                <DiagnosticsRow />
-                <AnalyticsRow />
-              </>
-            )}
-
-            {section === "experimental" && (
-              <>
-                <ExperimentalFeaturesRow />
-                <BrowserProfilesRow />
-              </>
-            )}
-
-            {section === "connections" && (
-              <Card
-                title={t("Connections")}
-                subtitle={t("Connected apps work automatically in the installed app. Other optional service keys stay on this computer.")}
-              >
-                <div className="flex flex-col gap-4">
-                  {state.config?.composio.mode === "managed" ? (
-                    <div className="rounded-lg border border-success/25 bg-success/10 px-3 py-2 text-[13px] text-success">
-                      {t("Connected apps service is ready")}
-                    </div>
-                  ) : null}
-                  <TranscriptionSettings />
-                  <ApiKeyRow section="box" />
-                  <VpsConnection />
-                  <ApiKeyRow section="opencodeGo" />
-                  <details className="rounded-lg border border-hairline/40 bg-inset px-3 py-2">
-                    <summary className="cursor-pointer text-[13px] text-ink-secondary">{t("Self-host connected apps")}</summary>
-                    <div className="mt-3">
-                      <ApiKeyRow section="composio" />
-                    </div>
-                  </details>
-                </div>
-              </Card>
-            )}
-
-            {section === "engines" && (
-              <>
-                <WorkBuddySettings />
-                <Card title={t("Engine CLIs")} subtitle={t("Which binary each engine runs. Saved as you go.")}>
-                  <EnginesSettings />
-                </Card>
-              </>
-            )}
-
-            {section === "companion" && <CompanionSection profileEmail={state.config?.profile?.email} />}
-
-            {section === "computer" && <LocalComputerSection />}
-
-            {section === "usage" && <UsageSection />}
-          </div>
-        </div>
+    <>
+      <SectionHeader title={t("General")} description={t("Who you are, how the Chief hands out work, and what the app records.")} />
+      <div className="flex flex-col gap-3.5">
+        <Card title={t("Profile")} subtitle={t("Shown in the sidebar. Saved as you go.")}>
+          <ProfileFields />
+        </Card>
+        <DispatchSettingsCard />
+        <Card title={t("Channel turns")} subtitle={t("Set one maximum duration for every bot turn in a channel.")}>
+          <RoomTurnTimeoutSettings />
+        </Card>
+        <ToolCallsRow />
+        <AnalyticsRow />
       </div>
-    </div>
+    </>
   );
+}
+
+export function AppearanceSection() {
+  return (
+    <>
+      <SectionHeader title={t("Appearance")} description={t("The skin and the language the app speaks. Both apply to this computer only.")} />
+      <div className="flex flex-col gap-3.5">
+        <Card title={t("Skin")} subtitle={t("Applies instantly and is remembered on this machine.")}>
+          <SkinPicker />
+        </Card>
+        <LanguageSettings />
+      </div>
+    </>
+  );
+}
+
+/** The skin's display name, for the nav meta. */
+export function currentSkinName(): string {
+  const id = (typeof document !== "undefined" && document.documentElement.dataset.skin) || readSkin();
+  return SKINS.find((skin) => skin.id === id)?.name ?? "";
+}
+
+export function ConnectionsSection() {
+  const { state } = useStore();
+  return (
+    <>
+      <SectionHeader title={t("Connections")} description={t("Service keys and remote computers your bots can use. Everything stays on this computer.")} />
+      <Card
+        title={t("Connections")}
+        subtitle={t("Connected apps work automatically in the installed app. Other optional service keys stay on this computer.")}
+      >
+        <div className="flex flex-col gap-4">
+          {state.config?.composio.mode === "managed" ? (
+            <div className="rounded-lg border border-success/25 bg-success/10 px-3 py-2 text-[13px] text-success">
+              {t("Connected apps service is ready")}
+            </div>
+          ) : null}
+          <TranscriptionSettings />
+          <ApiKeyRow section="box" />
+          <VpsConnection />
+          <ApiKeyRow section="opencodeGo" />
+          <details className="rounded-lg border border-hairline/40 bg-inset px-3 py-2">
+            <summary className="cursor-pointer text-[13px] text-ink-secondary">{t("Self-host connected apps")}</summary>
+            <div className="mt-3">
+              <ApiKeyRow section="composio" />
+            </div>
+          </details>
+        </div>
+      </Card>
+    </>
+  );
+}
+
+export function PhoneSection() {
+  const { state } = useStore();
+  return (
+    <>
+      <SectionHeader title={t("Mobile")} description={t("Pair your phone to talk to your bots and answer approvals away from the desk.")} />
+      <div className="flex flex-col gap-3.5">
+        <CompanionSection profileEmail={state.config?.profile?.email} />
+      </div>
+    </>
+  );
+}
+
+export function ComputerSection() {
+  return (
+    <>
+      <SectionHeader title={t("Computer")} description={t("The computer your bots borrow when a task needs a screen: a cloud box, a local VM, or this machine.")} />
+      <div className="flex flex-col gap-3.5">
+        <LocalComputerSection />
+      </div>
+    </>
+  );
+}
+
+export function ExperimentalSection() {
+  return (
+    <>
+      <SectionHeader title={t("Experimental")} description={t("Early features may change while we test them. They stay off unless you enable them.")} />
+      <div className="flex flex-col gap-3.5">
+        <ExperimentalFeaturesRow />
+        <BrowserProfilesRow />
+      </div>
+    </>
+  );
+}
+
+export function UpdatesSection() {
+  return (
+    <>
+      <SectionHeader title={t("Updates")} description={t("Which version you run, and a redacted report to send when something breaks.")} />
+      <div className="flex flex-col gap-3.5">
+        <UpdatesRow />
+        <DiagnosticsRow />
+      </div>
+    </>
+  );
+}
+
+/** For the nav: true when a downloaded or available update is waiting. */
+export function useUpdateWaiting(): boolean {
+  const s = useUpdaterState();
+  return s?.status === "available" || s?.status === "downloaded";
+}
+
+/** For the nav: how many experimental features are on. */
+export function useExperimentalCount(): number {
+  const { state } = useStore();
+  return [skillRecorderEnabled(state.config), builtInBrowserEnabled(state.config)].filter(Boolean).length;
 }

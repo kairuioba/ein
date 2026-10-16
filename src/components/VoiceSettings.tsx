@@ -94,8 +94,8 @@ export function VoiceSettings({
   const ready = configured && Boolean(selectedVoice || tts.voice);
 
   return (
-    <div className="rounded-xl bg-card p-4">
-      <div className="text-[15px] font-medium text-ink">{t("Voice")}</div>
+    <div className="rounded-xl p-3.5 shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_55%,transparent)]">
+      <div className="text-[13.5px] font-semibold text-ink">{t("Voice")}</div>
       <div className="mt-0.5 text-[13px] text-ink-secondary">
         {provider === "system"
           ? systemVoicesAvailable

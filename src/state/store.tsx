@@ -389,14 +389,20 @@ export interface InstanceInfo {
   cliCandidates?: string[];
 }
 
+// C5: the settings page's sections, in nav order (settings/settings-sections.ts).
 export type AppSettingsSection =
   | "general"
-  | "experimental"
-  | "connections"
+  | "appearance"
+  | "org"
   | "engines"
-  | "companion"
+  | "review"
+  | "cadence"
   | "computer"
-  | "usage";
+  | "connections"
+  | "companion"
+  | "usage"
+  | "experimental"
+  | "updates";
 
 /** Full-width pages the main column can show. "chat" covers a bot or a group. */
 export type AppView = "chat" | "team-map" | "routines" | "skill-recorder" | "brief" | "library" | "settings" | "apps";
@@ -423,6 +429,8 @@ export interface AppState {
   inspectorOpen: boolean;
   appSettingsOpen: boolean;
   appSettingsSection: AppSettingsSection;
+  /** C5: the view the settings page was opened from; closing it returns there */
+  settingsReturnView: AppView;
   /** latest live frame of a bot's computer, per botId */
   screens: Record<string, { png: string; mime: string }>;
   /** bots whose cloud computer is being provisioned */
@@ -1094,16 +1102,25 @@ export function reducer(state: AppState, action: Action): AppState {
         appSettingsOpen: open ? false : state.appSettingsOpen,
       };
     }
+    // App settings are one full page (activeView "settings"), not a modal.
+    // Opening remembers the view it came from; closing goes back there.
     case "toggleAppSettings": {
-      const open = action.open ?? !state.appSettingsOpen;
+      const onPage = state.activeView === "settings";
+      const open = action.open ?? !onPage;
+      if (!open) {
+        if (!onPage) return state;
+        return { ...state, activeView: state.settingsReturnView, appSettingsOpen: false };
+      }
       return {
         ...state,
-        appSettingsOpen: open,
+        activeView: "settings",
+        settingsReturnView: onPage ? state.settingsReturnView : state.activeView,
+        appSettingsOpen: false,
         appSettingsSection: action.section ?? state.appSettingsSection,
-        settingsOpen: open ? false : state.settingsOpen,
-        computerOpen: open ? false : state.computerOpen,
-        inspectorOpen: open ? false : state.inspectorOpen,
-        pluginsOpen: open ? false : state.pluginsOpen,
+        settingsOpen: false,
+        computerOpen: false,
+        inspectorOpen: false,
+        pluginsOpen: false,
       };
     }
     case "updateBot": {
@@ -1275,6 +1292,7 @@ export const initialState: AppState = {
   inspectorOpen: false,
   appSettingsOpen: false,
   appSettingsSection: "general",
+  settingsReturnView: "chat",
   screens: {},
   provisioning: {},
   computerControl: {},

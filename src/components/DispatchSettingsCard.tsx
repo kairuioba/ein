@@ -13,13 +13,15 @@ import { Card, Switch } from "./SettingsPrimitives";
 
 type StatusWithDispatch = ConfigStatus & { dispatch?: Partial<DispatchSettings> };
 
-function policyHint(policy: RecommendationPolicy): string {
+export function policyHint(policy: RecommendationPolicy): string {
   if (policy === "quality") return t("New specialists get the strongest model available for their task.");
   if (policy === "economy") return t("New specialists get the cheapest model that can still do the task.");
   return t("Hard tasks get strong models, routine tasks get fast and inexpensive ones.");
 }
 
-export function DispatchSettingsCard() {
+/** The dispatch settings in /api/config, loaded once per mount and saved as a
+ * whole (the strategy card on Settings › Engines shares this). */
+export function useDispatchSettings() {
   const { dispatch } = useStore();
   const [settings, setSettings] = useState<DispatchSettings>(DEFAULT_DISPATCH_SETTINGS);
   const [loaded, setLoaded] = useState(false);
@@ -57,6 +59,12 @@ export function DispatchSettingsCard() {
       })
       .finally(() => setSaving(false));
   };
+
+  return { settings, loaded, saving, error, save };
+}
+
+export function DispatchSettingsCard() {
+  const { settings, loaded, saving, error, save } = useDispatchSettings();
 
   const disabled = !loaded || saving;
 

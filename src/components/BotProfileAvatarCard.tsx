@@ -1,44 +1,39 @@
+// A bot's face. By default it is its engine's mascot (the pixel figure that
+// follows the engine — see lib/engine-mascots); a custom image, uploaded or
+// generated, can replace it in a circle, rounded or square crop.
 import { useRef, useState } from "react";
-import { Check, ImagePlus, Loader2, Sparkles, Trash2 } from "lucide-react";
+import { Check, ImagePlus, Loader2, RotateCcw, Sparkles, Trash2 } from "lucide-react";
 
 import { api, useStore, type Bot, type ConfigStatus } from "@/state/store";
 import { imageAttachmentFromFile } from "@/lib/composer-attachments";
 import { cn } from "@/lib/cn";
 import { msg, t } from "@/lib/i18n";
-import {
-  PICKABLE_STATES,
-  MAUS_COLORS,
-  MAUS_COLOR_NAMES,
-  type MausMotion,
-  type MausState,
-} from "@/lib/mascot";
-import {
-  BOT_AVATAR_CROPS,
-  botAvatarUrlFromStoredPath,
-  type BotAvatarCrop,
-} from "../../shared/bot-avatar";
-import { BotAvatar, MausAvatar } from "./Avatar";
+import { MAUS_COLORS, MAUS_COLOR_NAMES, type MausMotion, type MausState } from "@/lib/mascot";
+import { MASCOT_BODY, mascotForBot } from "@/lib/engine-mascots";
+import { BOT_AVATAR_CROPS, botAvatarUrlFromStoredPath, type BotAvatarCrop } from "../../shared/bot-avatar";
+import { BotAvatar } from "./Avatar";
+import { Mascot } from "./mascot/Mascot";
 
-type AvatarPatch = Partial<
-  Pick<Bot, "avatarCrop" | "avatarUrl" | "color" | "mascotExpression">
->;
+type AvatarPatch = Partial<Pick<Bot, "avatarCrop" | "avatarUrl" | "color" | "mascotExpression">>;
 
 const CROP_LABEL = {
-  mascot: msg("Mascot"),
+  mascot: msg("Engine look"),
   circle: msg("Circle"),
   rounded: msg("Rounded"),
   square: msg("Square"),
 } satisfies Record<BotAvatarCrop, string>;
 
+const fieldCls =
+  "min-w-0 flex-1 rounded-lg bg-raised px-3 py-2 text-[12.5px] text-ink shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_60%,transparent)] placeholder:text-ink-secondary/70 focus:shadow-[inset_0_0_0_1.5px_var(--color-select)] focus:outline-none";
+
 export function BotProfileAvatarCard({
   bot,
-  activeState,
-  mascotMotion,
   onPatch,
 }: {
   bot: Bot;
-  activeState: MausState;
-  mascotMotion: { kind: Exclude<MausMotion, "none">; nonce: number } | null;
+  /** kept for callers that animate the old face; the engine mascot needs neither */
+  activeState?: MausState;
+  mascotMotion?: { kind: Exclude<MausMotion, "none">; nonce: number } | null;
   onPatch: (patch: AvatarPatch) => void;
 }) {
   const { state, dispatch, flushBotPatches } = useStore();
@@ -53,6 +48,8 @@ export function BotProfileAvatarCard({
   const cropRef = useRef(crop);
   cropRef.current = crop;
   const imageConfigured = state.config?.imageGen?.configured === true;
+  const kind = mascotForBot(bot, state.instances);
+  const usingMascot = crop === "mascot" || !bot.avatarUrl;
 
   const upload = async (file: File | undefined) => {
     if (!file) return;
@@ -115,10 +112,7 @@ export function BotProfileAvatarCard({
       const latestCrop = cropRef.current;
       onPatch({
         avatarUrl: result.avatarUrl,
-        avatarCrop:
-          latestCrop === cropAtStart
-            ? (result.bot.avatarCrop ?? "circle")
-            : latestCrop,
+        avatarCrop: latestCrop === cropAtStart ? (result.bot.avatarCrop ?? "circle") : latestCrop,
       });
     } catch (generateError) {
       setError(generateError instanceof Error ? generateError.message : String(generateError));
@@ -128,213 +122,186 @@ export function BotProfileAvatarCard({
   };
 
   return (
-    <div className="overflow-hidden rounded-xl border border-hairline/40 bg-card">
-      <div className="flex items-center justify-between border-b border-hairline/40 px-3 py-2.5">
-        <span className="rounded-lg bg-control px-3 py-1.5 text-[14px] font-medium text-ink">{t("Avatar")}</span>
-        <button
-          onClick={() => onPatch({ avatarCrop: "mascot", color: "green", mascotExpression: null })}
-          className="rounded-md px-2 py-1.5 text-[13px] text-ink-secondary hover:bg-control hover:text-ink"
-        >
-          {t("Reset mascot")}
-        </button>
+    <div className="rounded-xl p-3.5 shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_55%,transparent)]">
+      <div className="flex items-center justify-between">
+        <span className="text-[13.5px] font-semibold text-ink">{t("Avatar")}</span>
+        {!usingMascot && (
+          <button
+            onClick={() => onPatch({ avatarCrop: "mascot" })}
+            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[12px] text-ink-secondary hover:bg-control hover:text-ink"
+          >
+            <RotateCcw size={12} />
+            {t("Use the engine look")}
+          </button>
+        )}
       </div>
 
-      <div className="p-3">
-        <div className="flex justify-center py-3">
-          <BotAvatar
-            bot={bot}
-            state={activeState}
-            size={112}
-            motion={mascotMotion?.kind ?? "none"}
-            motionKey={mascotMotion?.nonce ?? 0}
-          />
+      <div className="mt-3 flex items-center gap-4">
+        <span className="grid size-[88px] shrink-0 place-items-center rounded-2xl bg-inset">
+          {usingMascot ? <Mascot kind={kind} scale={1} /> : <BotAvatar bot={bot} size={72} />}
+        </span>
+        <div className="min-w-0 text-[12px] leading-relaxed text-ink-secondary">
+          {usingMascot
+            ? t("Its face follows its engine: {body}. Change the engine and the look changes with it; or use your own picture.", { body: t(MASCOT_BODY[kind]) })
+            : t("Your own picture, shown wherever this bot appears.")}
         </div>
+      </div>
 
-        <div className="mt-2 flex gap-2">
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/png,image/jpeg,image/gif,image/webp"
-            className="sr-only"
-            onChange={(event) => void upload(event.target.files?.[0])}
-          />
+      <div className="mt-3 flex gap-2">
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/png,image/jpeg,image/gif,image/webp"
+          className="sr-only"
+          onChange={(event) => void upload(event.target.files?.[0])}
+        />
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
+          disabled={uploading || generating}
+          className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-control px-3 py-2 text-[12.5px] text-ink hover:bg-raised-hover disabled:opacity-50"
+        >
+          {uploading ? <Loader2 size={14} className="animate-spin" /> : <ImagePlus size={14} />}
+          {t("Upload image")}
+        </button>
+        {bot.avatarUrl && (
           <button
             type="button"
-            onClick={() => fileRef.current?.click()}
+            onClick={removeImage}
             disabled={uploading || generating}
-            className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50"
+            aria-label={t("Remove custom avatar image")}
+            title={t("Remove custom image")}
+            className="flex size-9 items-center justify-center rounded-lg text-ink-secondary hover:bg-control hover:text-danger disabled:opacity-50"
           >
-            {uploading ? <Loader2 size={14} className="animate-spin" /> : <ImagePlus size={14} />}
-            {t("Upload image")}
+            <Trash2 size={14} />
           </button>
-          {bot.avatarUrl && (
-            <button
-              type="button"
-              onClick={removeImage}
-              disabled={uploading || generating}
-              aria-label={t("Remove custom avatar image")}
-              title={t("Remove custom image")}
-              className="flex size-10 items-center justify-center rounded-lg text-ink-secondary hover:bg-control hover:text-danger disabled:opacity-50"
-            >
-              <Trash2 size={14} />
-            </button>
-          )}
-        </div>
-        <div className="mt-1.5 text-[11.5px] text-ink-secondary">{t("PNG, JPEG, GIF, or WebP · up to 10 MB")}</div>
-
-        <div className="mb-2 mt-4 text-[12px] font-medium uppercase tracking-[0.08em] text-ink-secondary">
-          {t("Shape")}
-        </div>
-        <div className="grid grid-cols-4 overflow-hidden rounded-lg border border-hairline/40">
-          {BOT_AVATAR_CROPS.map((candidate, index) => (
-            <button
-              key={candidate}
-              type="button"
-              aria-pressed={crop === candidate}
-              onClick={() => onPatch({ avatarCrop: candidate })}
-              className={cn(
-                "py-1.5 text-[12.5px]",
-                index > 0 && "border-l border-hairline/40",
-                crop === candidate ? "bg-control text-ink" : "text-ink-secondary hover:bg-control/60 hover:text-ink",
-              )}
-            >
-              {t(CROP_LABEL[candidate])}
-            </button>
-          ))}
-        </div>
-
-        {crop === "mascot" && (
-          <>
-            <div className="mb-2 mt-4 text-[12px] font-medium uppercase tracking-[0.08em] text-ink-secondary">
-              {t("Expression")}
-            </div>
-            <div className="grid grid-cols-5 gap-2">
-              {PICKABLE_STATES.map((expression) => (
-                <button
-                  key={expression}
-                  type="button"
-                  aria-pressed={activeState === expression}
-                  onClick={() => onPatch({ mascotExpression: expression })}
-                  className={cn(
-                    "flex h-[58px] items-center justify-center rounded-xl bg-inset transition-colors hover:bg-control",
-                    activeState === expression && "ring-2 ring-accent-border",
-                  )}
-                  title={t(expression)}
-                  aria-label={t("Use {expression} expression", { expression: t(expression) })}
-                >
-                  <MausAvatar color={bot.color} state={expression} size={42} animated={false} />
-                </button>
-              ))}
-            </div>
-
-            <div className="mb-2 mt-4 text-[12px] font-medium uppercase tracking-[0.08em] text-ink-secondary">
-              {t("Color")}
-            </div>
-            <div className="flex flex-wrap gap-2.5">
-              {MAUS_COLOR_NAMES.map((color) => (
-                <button
-                  key={color}
-                  type="button"
-                  aria-pressed={bot.color === color}
-                  onClick={() => onPatch({ color })}
-                  className={cn(
-                    "size-10 rounded-full border-2 border-transparent transition-transform hover:scale-110",
-                    bot.color === color && "ring-2 ring-accent-border ring-offset-2 ring-offset-card",
-                  )}
-                  style={{ backgroundColor: MAUS_COLORS[color] }}
-                  title={t(color)}
-                  aria-label={t("Use {color} mascot color", { color: t(color) })}
-                />
-              ))}
-            </div>
-          </>
         )}
+      </div>
+      <div className="mt-1.5 text-[11.5px] text-ink-secondary">{t("PNG, JPEG, GIF, or WebP · up to 10 MB")}</div>
 
-        <div className="mt-5 border-t border-hairline/40 pt-4">
-          <div className="flex items-center gap-2 text-[13px] font-medium text-ink">
-            <Sparkles size={14} className="text-accent" /> {t("Generate with GPT Image 2")}
+      {bot.avatarUrl && (
+        <>
+          <div className="mt-3.5 mb-1.5 text-[12px] font-semibold text-ink-secondary">{t("Shape")}</div>
+          <div className="grid grid-cols-4 overflow-hidden rounded-lg border border-hairline/40">
+            {BOT_AVATAR_CROPS.map((candidate, index) => (
+              <button
+                key={candidate}
+                type="button"
+                aria-pressed={crop === candidate}
+                onClick={() => onPatch({ avatarCrop: candidate })}
+                className={cn(
+                  "py-1.5 text-[12px]",
+                  index > 0 && "border-l border-hairline/40",
+                  crop === candidate ? "bg-control text-ink" : "text-ink-secondary hover:bg-control/60 hover:text-ink",
+                )}
+              >
+                {t(CROP_LABEL[candidate])}
+              </button>
+            ))}
           </div>
-          <div className="mt-1 text-[11.5px] leading-relaxed text-ink-secondary">
-            {t("Uses a low-quality square draft to keep cost down. OpenAI bills your API account.")}
-          </div>
+        </>
+      )}
 
-          {!imageConfigured ? (
-            <div className="mt-3">
-              <div className="flex gap-2">
+      <div className="mt-3.5 mb-1.5 text-[12px] font-semibold text-ink-secondary">{t("Colour in the calendar")}</div>
+      <div className="flex flex-wrap gap-2">
+        {MAUS_COLOR_NAMES.map((color) => (
+          <button
+            key={color}
+            type="button"
+            aria-pressed={bot.color === color}
+            onClick={() => onPatch({ color })}
+            className={cn("size-6 rounded-full transition-transform hover:scale-110", bot.color === color && "ring-2 ring-accent-border ring-offset-2 ring-offset-raised")}
+            style={{ backgroundColor: MAUS_COLORS[color] }}
+            title={t(color)}
+            aria-label={t("Use {color} for this bot", { color: t(color) })}
+          />
+        ))}
+      </div>
+
+      <div className="mt-4 border-t border-hairline/40 pt-3.5">
+        <div className="flex items-center gap-2 text-[12.5px] font-medium text-ink">
+          <Sparkles size={14} className="text-accent-text" /> {t("Generate with GPT Image 2")}
+        </div>
+        <div className="mt-1 text-[11.5px] leading-relaxed text-ink-secondary">
+          {t("Uses a low-quality square draft to keep cost down. OpenAI bills your API account.")}
+        </div>
+
+        {!imageConfigured ? (
+          <div className="mt-3">
+            <div className="flex gap-2">
+              <input
+                type="password"
+                value={imageKey}
+                onChange={(event) => setImageKey(event.target.value)}
+                onKeyDown={(event) => event.key === "Enter" && void saveImageKey()}
+                placeholder={t("Paste OpenAI image API key")}
+                aria-label={t("OpenAI image API key")}
+                autoComplete="off"
+                className={fieldCls}
+              />
+              <button
+                type="button"
+                onClick={() => void saveImageKey()}
+                disabled={savingKey || !imageKey.trim()}
+                className="flex w-[72px] items-center justify-center gap-1.5 rounded-lg bg-control text-[12.5px] text-ink hover:bg-raised-hover disabled:opacity-50"
+              >
+                {savingKey ? <Loader2 size={13} className="animate-spin" /> : <><Check size={13} />
+                  {" "}{t("Save")}</>}
+              </button>
+            </div>
+            <div className="mt-1.5 text-[11px] text-ink-secondary">{t("Stored in the operating system's encrypted credential store in the installed app.")}</div>
+          </div>
+        ) : (
+          <div className="mt-3">
+            <textarea
+              value={direction}
+              onChange={(event) => setDirection(event.target.value.slice(0, 400))}
+              maxLength={400}
+              placeholder={t("Optional direction, e.g. “a calm navigator inspired by {name}”", { name: bot.title || bot.name })}
+              aria-label={t("Avatar generation direction")}
+              className={cn(fieldCls, "min-h-[72px] w-full resize-none")}
+            />
+            <div className="mt-2 flex items-center justify-between gap-3">
+              <span className="text-[11px] tabular-nums text-ink-secondary">{direction.length}/400</span>
+              <button
+                type="button"
+                onClick={() => void generate()}
+                disabled={generating || uploading}
+                className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-[12.5px] font-medium text-primary-ink hover:brightness-110 disabled:opacity-50"
+              >
+                {generating ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                {generating ? t("Generating…") : t("Generate avatar")}
+              </button>
+            </div>
+            <details className="mt-3 rounded-lg border border-hairline/40 bg-inset px-3 py-2">
+              <summary className="cursor-pointer text-[11.5px] text-ink-secondary">{t("Replace OpenAI image key")}</summary>
+              <div className="mt-2 flex gap-2">
                 <input
                   type="password"
                   value={imageKey}
                   onChange={(event) => setImageKey(event.target.value)}
                   onKeyDown={(event) => event.key === "Enter" && void saveImageKey()}
-                  placeholder={t("Paste OpenAI image API key")}
-                  aria-label={t("OpenAI image API key")}
+                  placeholder={t("Paste replacement key")}
+                  aria-label={t("Replacement OpenAI image API key")}
                   autoComplete="off"
-                  className="min-w-0 flex-1 rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[12.5px] text-ink placeholder:text-ink-secondary focus:border-hairline focus:outline-none"
+                  className={fieldCls}
                 />
                 <button
                   type="button"
                   onClick={() => void saveImageKey()}
                   disabled={savingKey || !imageKey.trim()}
-                  className="flex w-[72px] items-center justify-center gap-1.5 rounded-lg bg-control text-[12.5px] text-ink hover:bg-raised-hover disabled:opacity-50"
+                  className="flex w-[72px] items-center justify-center gap-1.5 rounded-lg bg-control text-[12px] text-ink hover:bg-raised-hover disabled:opacity-50"
                 >
                   {savingKey ? <Loader2 size={13} className="animate-spin" /> : <><Check size={13} />
                     {" "}{t("Save")}</>}
                 </button>
               </div>
-              <div className="mt-1.5 text-[11px] text-ink-secondary">{t("Stored in the operating system's encrypted credential store in the installed app.")}</div>
-            </div>
-          ) : (
-            <div className="mt-3">
-              <textarea
-                value={direction}
-                onChange={(event) => setDirection(event.target.value.slice(0, 400))}
-                maxLength={400}
-                placeholder={t("Optional direction, e.g. “a calm navigator inspired by {name}”", { name: bot.title || bot.name })}
-                aria-label={t("Avatar generation direction")}
-                className="min-h-[72px] w-full resize-none rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[12.5px] text-ink placeholder:text-ink-secondary focus:border-hairline focus:outline-none"
-              />
-              <div className="mt-2 flex items-center justify-between gap-3">
-                <span className="text-[11px] tabular-nums text-ink-secondary">{direction.length}/400</span>
-                <button
-                  type="button"
-                  onClick={() => void generate()}
-                  disabled={generating || uploading}
-                  className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-[12.5px] font-medium text-primary-ink hover:brightness-110 disabled:opacity-50"
-                >
-                  {generating ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
-                  {generating ? t("Generating…") : t("Generate avatar")}
-                </button>
-              </div>
-              <details className="mt-3 rounded-lg border border-hairline/40 bg-inset px-3 py-2">
-                <summary className="cursor-pointer text-[11.5px] text-ink-secondary">{t("Replace OpenAI image key")}</summary>
-                <div className="mt-2 flex gap-2">
-                  <input
-                    type="password"
-                    value={imageKey}
-                    onChange={(event) => setImageKey(event.target.value)}
-                    onKeyDown={(event) => event.key === "Enter" && void saveImageKey()}
-                    placeholder={t("Paste replacement key")}
-                    aria-label={t("Replacement OpenAI image API key")}
-                    autoComplete="off"
-                    className="min-w-0 flex-1 rounded-lg border border-hairline/40 bg-card px-3 py-2 text-[12px] text-ink placeholder:text-ink-secondary focus:border-hairline focus:outline-none"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => void saveImageKey()}
-                    disabled={savingKey || !imageKey.trim()}
-                    className="flex w-[72px] items-center justify-center gap-1.5 rounded-lg bg-control text-[12px] text-ink hover:bg-raised-hover disabled:opacity-50"
-                  >
-                    {savingKey ? <Loader2 size={13} className="animate-spin" /> : <><Check size={13} />
-                      {" "}{t("Save")}</>}
-                  </button>
-                </div>
-              </details>
-            </div>
-          )}
-        </div>
-
-        {error && <div role="alert" className="mt-3 text-[12px] text-danger">{error}</div>}
+            </details>
+          </div>
+        )}
       </div>
+
+      {error && <div role="alert" className="mt-3 text-[12px] text-danger">{error}</div>}
     </div>
   );
 }

@@ -414,6 +414,21 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       dispatch({ type: "botAdded", bot: full });
       // best effort: name it the main bot in the org config as well
       void saveOrg({ chiefBotId: bot.id }).catch(() => {});
+      // the starter bot the app made on first launch steps aside (archived,
+      // so it can come back) — but only if nobody has talked to it yet
+      const others = state.bots.filter((other) => other.id !== bot.id && !other.hidden);
+      const starter = others.length === 1 ? others[0]! : undefined;
+      if (
+        starter &&
+        !starter.section?.trim() &&
+        !starter.chiefOfStaff &&
+        !starter.pinned &&
+        (starter.tasks?.length ?? 0) <= 1 &&
+        starter.messages.length > 0 &&
+        starter.messages.every((message) => message.role !== "user")
+      ) {
+        dispatch({ type: "updateBot", botId: starter.id, patch: { hidden: true } });
+      }
       track("onboarding_bot_created", { engine: instance?.driverKind ?? "default" });
       setCreated(full);
       setStep("chief");

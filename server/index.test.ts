@@ -2641,6 +2641,50 @@ describe("harness HTTP API", () => {
     expect(nothing.status).toBe(400);
   });
 
+  it("saves the Claude API key write-only and never echoes it back", async () => {
+    const secret = "sk-ant-api03-test-secret-value";
+    // point the API-key engine at the fixture CLI so its snapshot can answer
+    expect((await api("PATCH", "/api/instances/claudeApi", { cli: FAKE_CLAUDE_CLI })).status).toBe(200);
+    const beforeConfig = await api("GET", "/api/config");
+    expect(beforeConfig.body.claudeApi).toEqual({ configured: false });
+
+    const put = await api("PUT", "/api/config", { claudeApi: { key: secret } });
+    expect(put.status).toBe(200);
+    expect(put.body.claudeApi).toEqual({ configured: true });
+    expect(JSON.stringify(put.body)).not.toContain(secret);
+
+    const afterConfig = await api("GET", "/api/config");
+    expect(afterConfig.body.claudeApi).toEqual({ configured: true });
+    expect(JSON.stringify(afterConfig.body)).not.toContain(secret);
+
+    // The API-key instance is the same Claude driver, marked pay-as-you-go,
+    // and its picker/setup payload carries the write-only credential target —
+    // never the key.
+    const instances = (await api("GET", "/api/instances")).body.instances;
+    const row = instances.find((instance: { instanceId: string }) => instance.instanceId === "claudeApi");
+    expect(row).toMatchObject({
+      driverKind: "claudeAgent",
+      displayName: "Claude API",
+      access: "subscription",
+      snapshot: { state: "available", authenticated: true, billing: "metered" },
+      models: { options: expect.arrayContaining([expect.objectContaining({ id: "claude-sonnet-5-5" })]) },
+    });
+    expect(row.snapshot.credential).toEqual({ target: "claudeApiKey", configured: true });
+    expect(JSON.stringify(instances)).not.toContain(secret);
+
+    // Clearing flips the engine back to "needs a key" without spawning turns.
+    await api("PUT", "/api/config", { claudeApi: { key: "" } });
+    const cleared = (await api("GET", "/api/instances")).body.instances.find(
+      (instance: { instanceId: string }) => instance.instanceId === "claudeApi",
+    );
+    expect(cleared.snapshot).toMatchObject({
+      state: "available",
+      authenticated: false,
+      credential: { target: "claudeApiKey", configured: false },
+    });
+    await api("PATCH", "/api/instances/claudeApi", { cli: "" });
+  });
+
   it("validates and persists the global room turn timeout", async () => {
     const before = await api("GET", "/api/config");
     expect(before.status).toBe(200);

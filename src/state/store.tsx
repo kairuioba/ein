@@ -305,6 +305,8 @@ export function messageVersions(bot: Bot, message: Message): Message[] {
 /** GET /api/config — configured flags only; secrets are never echoed. */
 export interface ConfigStatus {
   xai?: { configured: boolean };
+  /** Write-only Anthropic key for the Claude API engine. */
+  claudeApi?: { configured: boolean };
   composio: { configured: boolean; mode?: "managed" | "self-hosted" | "unavailable" };
   box: { configured: boolean };
   vps: { configured: boolean; sshAlias: string };
@@ -338,12 +340,13 @@ export interface BrowserProfile {
 
 export type ConfigStatusFrame = Pick<
   ConfigStatus,
-  "xai" | "composio" | "box" | "vps" | "rooms" | "localVm" | "opencodeGo" | "tts" | "imageGen" | "profile" | "features" | "browserProfiles" | "dispatch"
+  "xai" | "claudeApi" | "composio" | "box" | "vps" | "rooms" | "localVm" | "opencodeGo" | "tts" | "imageGen" | "profile" | "features" | "browserProfiles" | "dispatch"
 >;
 
 export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
   return {
     xai: frame.xai,
+    claudeApi: frame.claudeApi,
     composio: frame.composio,
     box: frame.box,
     vps: frame.vps,
@@ -381,6 +384,9 @@ export interface InstanceInfo {
     version?: string | null;
     /** a reported cost on a subscription is notional; the UI says so */
     billing?: "metered" | "subscription";
+    /** An engine that authenticates with a saved, write-only key (the Claude
+     * API engine): the setup card renders a key form for this target. */
+    credential?: { target: import("../../shared/credential-request").CredentialTargetId; configured: boolean };
   };
   models: { default: string; options: Array<{ id: string; label: string; custom?: boolean; loaded?: boolean }> };
   capabilities?: {

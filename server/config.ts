@@ -8,6 +8,12 @@ import { z } from "zod";
 
 import { writeFileAtomic } from "./atomic.ts";
 import type { InstanceConfigMap } from "./contracts.ts";
+import {
+  CLAUDE_API_AUTH,
+  CLAUDE_API_DISPLAY_NAME,
+  CLAUDE_API_INSTANCE_ID,
+  CLAUDE_API_KEY_ENV,
+} from "./drivers/claude-api.ts";
 import { t } from "../shared/i18n.ts";
 import { parseJson, schemaIssue, type JsonObject, type JsonValue } from "./schema.ts";
 
@@ -234,6 +240,9 @@ const instanceConfigSchema = z.object({
 const instanceConfigMapSchema = z.record(z.string(), instanceConfigSchema);
 const appConfigSchema = z.object({
   xai: z.object({ key: optionalText, url: optionalText }).optional(),
+  /** Anthropic API key for the separate "Claude API" engine (auth: "apiKey").
+   * Write-only: reported back as configured-or-not, never as a value. */
+  claudeApi: z.object({ key: optionalText }).optional(),
   /** `model` seeds the default selection; `provider` pins an OpenRouter
    * upstream (e.g. "fireworks"). Both are non-secret and optional. */
   openaiCompat: z
@@ -297,6 +306,8 @@ const jsonObjectSchema = z.record(z.string(), z.json());
 
 export interface AppConfig {
   xai?: { key?: string; url?: string };
+  /** Anthropic API key for the Claude API (pay-as-you-go) engine. */
+  claudeApi?: { key?: string };
   openaiCompat?: { key?: string; url?: string; model?: string; provider?: string };
   composio?: { apiKey?: string; userId?: string; sessionId?: string };
   box?: { token?: string };
@@ -497,6 +508,10 @@ export function loadConfig(): AppConfig {
   // shadow the save until the next launch.
   cfg.xai = { ...cfg.xai };
   if (process.env.XAI_API_KEY !== undefined) cfg.xai.key = process.env.XAI_API_KEY;
+  cfg.claudeApi = { ...cfg.claudeApi };
+  // Ein's own variable on purpose: an inherited ANTHROPIC_API_KEY from the
+  // user's shell is never read as this engine's key (nothing auto-detected).
+  if (process.env[CLAUDE_API_KEY_ENV] !== undefined) cfg.claudeApi.key = process.env[CLAUDE_API_KEY_ENV];
   cfg.openaiCompat = { ...cfg.openaiCompat };
   if (process.env.OPENAI_COMPAT_API_KEY !== undefined) cfg.openaiCompat.key = process.env.OPENAI_COMPAT_API_KEY;
   if (process.env.OPENAI_COMPAT_URL !== undefined) cfg.openaiCompat.url = process.env.OPENAI_COMPAT_URL;
@@ -529,6 +544,7 @@ export function loadConfig(): AppConfig {
 export function syncCredentialEnv(patch: Partial<AppConfig>): void {
   const secrets: Array<[value: string | undefined, name: string]> = [
     [patch.xai?.key, "XAI_API_KEY"],
+    [patch.claudeApi?.key, CLAUDE_API_KEY_ENV],
     [patch.openaiCompat?.key, "OPENAI_COMPAT_API_KEY"],
     [patch.composio?.apiKey, "COMPOSIO_API_KEY"],
     [patch.box?.token, "BOX_TOKEN"],
@@ -563,6 +579,8 @@ export function syncCredentialEnv(patch: Partial<AppConfig>): void {
  * child these are someone else's keys riding along in `...process.env`. */
 export const WORKSPACE_CREDENTIAL_ENV = [
   "XAI_API_KEY",
+  // the Claude API engine's saved Anthropic key (drivers/claude-api.ts)
+  "EIN_CLAUDE_API_KEY",
   "OPENAI_COMPAT_API_KEY",
   "OPENAI_COMPAT_URL",
   "BOX_TOKEN",
@@ -621,7 +639,7 @@ export function saveConfig(patch: Partial<AppConfig>): void {
   // back after we have successfully recognized the legacy list.
   const storedProfiles = storedBrowserProfilesSchema.safeParse(disk.browserProfiles);
   if (storedProfiles.success) disk.browserProfiles = storedProfiles.data;
-  for (const key of ["xai", "openaiCompat", "composio", "box", "opencodeGo", "tts", "imageGen", "profile", "rooms", "localVm", "features", "dispatch", "workbuddy", "usage", "maintenance"] as const) {
+  for (const key of ["xai", "claudeApi", "openaiCompat", "composio", "box", "opencodeGo", "tts", "imageGen", "profile", "rooms", "localVm", "features", "dispatch", "workbuddy", "usage", "maintenance"] as const) {
     const section = checkedPatch[key];
     if (!section) continue;
     const current = jsonObjectSchema.safeParse(disk[key]);
@@ -701,7 +719,7 @@ export function withInstanceCli(
   }
   for (const e of Object.values(map)) {
     if (!e.environment) continue;
-    const injected = injectedEnvironment(next, e.driver);
+    const injected = injectedEnvironment(next, e.driver, e.config);
     for (const [k, v] of Object.entries(e.environment)) {
       if (injected.get(k) === v) delete e.environment[k];
     }
@@ -716,16 +734,24 @@ interface InstanceCliUpdate {
   config: AppConfig;
 }
 
-/** The credential env instanceConfigs() injects for one driver — shared with
- * withInstanceCli() so the inject rule and the strip rule cannot drift apart.
- * Each secret goes only to the driver that actually reads it: the API-key
- * Grok driver reads XAI_API_KEY, the Computer driver reads BOX_TOKEN, and
- * OpenCode reads OPENCODE_API_KEY. Every other engine brings its own
- * login, so handing it a key it never uses would only put that key in the
- * environment of an unrelated child process. */
-function injectedEnvironment(cfg: AppConfig, driver: string): Map<string, string> {
+/** The credential env instanceConfigs() injects for one driver + instance
+ * config — shared with withInstanceCli() so the inject rule and the strip
+ * rule cannot drift apart. Each secret goes only to the driver that actually
+ * reads it: the API-key Grok driver reads XAI_API_KEY, the Computer driver
+ * reads BOX_TOKEN, OpenCode reads OPENCODE_API_KEY, and only the Claude
+ * instance whose config says auth:"apiKey" reads the saved Anthropic key.
+ * Every other engine brings its own login, so handing it a key it never uses
+ * would only put that key in the environment of an unrelated child process. */
+function injectedEnvironment(cfg: AppConfig, driver: string, config?: unknown): Map<string, string> {
   const environment = new Map<string, string>();
   if (driver === "grok" && cfg.xai?.key) environment.set("XAI_API_KEY", cfg.xai.key);
+  if (
+    driver === "claudeAgent" &&
+    cfg.claudeApi?.key &&
+    (config as { auth?: unknown } | undefined)?.auth === CLAUDE_API_AUTH
+  ) {
+    environment.set(CLAUDE_API_KEY_ENV, cfg.claudeApi.key);
+  }
   if (driver === "openai-compat" && cfg.openaiCompat?.key)
     environment.set("OPENAI_COMPAT_API_KEY", cfg.openaiCompat.key);
   if (driver === "openai-compat" && cfg.openaiCompat?.url)
@@ -767,6 +793,9 @@ export function instanceConfigs(cfg: AppConfig): InstanceConfigMap {
     droid: { driver: "droidAgent" },
     cursor: { driver: "cursorAgent" },
     claude: { driver: "claudeAgent" },
+    // the same Claude driver, paid per use: the user saves an Anthropic API
+    // key for it in settings (see drivers/claude-api.ts)
+    [CLAUDE_API_INSTANCE_ID]: { driver: "claudeAgent", displayName: CLAUDE_API_DISPLAY_NAME, config: { auth: CLAUDE_API_AUTH } },
     codex: { driver: "codex" },
     antigravity: { driver: "antigravityAgent" },
     opencodeGo: { driver: "opencodeGo" },
@@ -789,6 +818,7 @@ export function instanceConfigs(cfg: AppConfig): InstanceConfigMap {
     cursor: { driver: "cursorAgent" },
     openaiCompat: { driver: "openai-compat" },
     workbuddy: { driver: "workbuddyAgent" },
+    [CLAUDE_API_INSTANCE_ID]: { driver: "claudeAgent", displayName: CLAUDE_API_DISPLAY_NAME, config: { auth: CLAUDE_API_AUTH } },
     ...CUSTOM_ONLY,
   } as const;
   const configured = cfg.instances && Object.keys(cfg.instances).length ? cfg.instances : null;
@@ -810,7 +840,7 @@ export function instanceConfigs(cfg: AppConfig): InstanceConfigMap {
     const entry = { ...sourceEntry };
     map[id] = entry;
     const environment = { ...entry.environment };
-    for (const [key, value] of injectedEnvironment(cfg, entry.driver)) environment[key] = value;
+    for (const [key, value] of injectedEnvironment(cfg, entry.driver, entry.config)) environment[key] = value;
     entry.environment = environment;
     // The driver URL is configuration, not a credential. Environment is
     // intentionally not consulted by ProviderRegistry when it decodes a

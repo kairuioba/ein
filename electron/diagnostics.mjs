@@ -11,6 +11,8 @@
 // asserts the two lists never drift apart.
 export const CREDENTIAL_ENV_NAMES = [
   "XAI_API_KEY",
+  // the Claude API engine's saved Anthropic key
+  "EIN_CLAUDE_API_KEY",
   "OPENAI_COMPAT_API_KEY",
   "OPENAI_COMPAT_URL",
   "BOX_TOKEN",

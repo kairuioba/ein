@@ -4672,6 +4672,9 @@ const dispatchApiDeps = {
 function configStatus() {
   return {
     xai: { configured: Boolean(cfg.xai?.key) },
+    // the Claude API engine's Anthropic key — write-only like every other
+    // credential: the status says configured or not, never the value
+    claudeApi: { configured: Boolean(cfg.claudeApi?.key) },
     composio: {
       configured: composio.configured(cfg),
       mode: composio.connectionMode(cfg),
@@ -8108,6 +8111,7 @@ const server = createServer(async (req, res) => {
           // never survive the merge in config.json.
           const persisted = structuredClone(patch);
           if (persisted.xai?.key !== undefined) persisted.xai.key = "";
+          if (persisted.claudeApi?.key !== undefined) persisted.claudeApi.key = "";
           if (persisted.composio?.apiKey !== undefined) persisted.composio.apiKey = "";
           if (persisted.box?.token !== undefined) persisted.box.token = "";
           if (persisted.opencodeGo?.apiKey !== undefined) persisted.opencodeGo.apiKey = "";

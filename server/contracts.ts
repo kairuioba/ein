@@ -5,6 +5,8 @@
 // Stream. The shapes and names are kept so the two codebases stay mutually
 // readable.
 
+import type { CredentialTargetId } from "../shared/credential-request.ts";
+
 export type DriverKind = string;
 export type InstanceId = string;
 export type ThreadId = string;
@@ -287,6 +289,10 @@ export interface ProviderSnapshot {
   /** How this instance is paid for, when the driver can tell: a reported
    * cost on a subscription is notional and the UI labels it as such. */
   billing?: "metered" | "subscription";
+  /** A write-only credential this instance needs the user to save (API-key
+   * engines). The card saves through `target`; `configured` is the only thing
+   * ever reported back — never the value. */
+  credential?: { target: CredentialTargetId; configured: boolean };
 }
 
 // ── engine install descriptor ───────────────────────────────────────────

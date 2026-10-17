@@ -1,6 +1,8 @@
-# OpenMausBot 中文版
+# 一念 Ein
 
-在聊天应用里拥有一支自己的 AI 机器人团队。这个中文版在开源项目 [OpenMausBot](https://github.com/CuriosityOS/OpenMausBot)（Apache-2.0）的基础上做了二次开发，主要有四项改动：
+> 一念起，万 Bot 动
+
+在聊天应用里拥有一支自己的 AI 机器人团队。一念基于开源项目 [OpenMausBot](https://github.com/CuriosityOS/OpenMausBot)（Apache-2.0）二次开发，中文界面叫“一念”，英文界面叫“Ein”。主要有四项改动：
 
 1. **完全汉化**：界面、菜单栏、右键菜单、系统权限弹窗、服务端提示和错误、机器人的回复语言，全部默认使用简体中文，也可以在设置里切回英文。
 2. **接入腾讯 WorkBuddy**：新增“WorkBuddy”引擎（底层是 CodeBuddy Code CLI），自动读取你的账号能用的模型，支持国际版、国内版和 iOA 版。
@@ -15,21 +17,21 @@
 
 | 你的 Mac | 安装包 |
 |---|---|
-| Apple 芯片（M1 及以后） | `OpenMausBot-zh-<版本>-apple-silicon.dmg` |
-| Intel 芯片 | `OpenMausBot-zh-<版本>-intel.dmg` |
+| Apple 芯片（M1 及以后） | `Ein-zh-<版本>-apple-silicon.dmg` |
+| Intel 芯片 | `Ein-zh-<版本>-intel.dmg` |
 
-打开 dmg，把 OpenMausBot 拖进“应用程序”文件夹即可。
+打开 dmg，把一念拖进“应用程序”文件夹即可。应用包的文件名仍是 `OpenMausBot.app`（数据目录和系统授权都跟着这个名字走，升级后原有设置和数据都在），访达、程序坞和菜单栏里则显示为“一念”（英文系统显示为“Ein”）。
 
 **首次打开提示“无法验证开发者”怎么办？** 没有配置 Apple 开发者证书时，构建出来的应用是临时签名（ad-hoc），macOS 会拦下来。处理方法：
 
 1. 先双击打开一次，出现提示后点“完成”。
-2. 打开“系统设置 → 隐私与安全性”，在页面下方找到 OpenMausBot，点“仍要打开”，然后输入密码确认。
+2. 打开“系统设置 → 隐私与安全性”，在页面下方找到一念（OpenMausBot）的提示，点“仍要打开”，然后输入密码确认。
 
 熟悉终端的话，也可以执行 `xattr -dr com.apple.quarantine /Applications/OpenMausBot.app`。如果在构建时配置了 Developer ID 证书并完成公证（见下文），就不会出现这个提示。
 
 > 临时签名的应用每次更新后签名都会变，macOS 可能会再次请求麦克风、辅助功能等权限，这是正常现象。
 
-**关于自动更新**：中文版默认**不会**自动更新。原因是上游的更新源发布的是英文版，如果沿用，中文版会被覆盖成英文版。新版本请从你们团队的发布页下载安装；如果想开启自动更新，请看文末的“团队自建更新源”。
+**关于自动更新**：一念默认**不会**自动更新。原因是上游的更新源发布的是英文版 OpenMausBot，如果沿用，一念会被覆盖成上游的英文版。新版本请从你们团队的发布页下载安装；如果想开启自动更新，请看文末的“团队自建更新源”。
 
 ## 从源码构建 Mac 版
 
@@ -41,11 +43,11 @@ Mac 安装包只能在 macOS 上构建，因为要用到 Swift、codesign 和 hd
 
 1. 把代码推送到你们自己的 GitHub 仓库。
 2. 打开仓库的 **Actions → Package macOS (zh-CN) → Run workflow**。
-3. 等构建完成（通常需要半小时以上），在运行结果的 **Artifacts** 里下载 `OpenMausBot-zh-mac-<版本>`，里面就是两个 dmg。
+3. 等构建完成（通常需要半小时以上），在运行结果的 **Artifacts** 里下载 `Ein-zh-mac-<版本>`，里面就是两个 dmg。
    - 勾选 “release” 会顺便创建一个 GitHub 预发布版本，并把 dmg 挂上去。
    - 推送 `zh-v*` 格式的标签（例如 `zh-v0.1.43`）也会自动触发构建和发布。
 
-工作流里有两个并行的任务：一个在 Linux 上跑类型检查、单元测试和汉化覆盖检查；另一个在 macOS 上分别打 Apple 芯片和 Intel 两个包，并检查签名、启动打包后的服务端、确认中文词典已打进安装包。勾选 “release” 时，只有两个任务都通过才会发布。
+工作流里有两个并行的任务：一个在 Linux 上跑类型检查、单元测试和汉化覆盖检查；另一个在 macOS 上分别打 Apple 芯片和 Intel 两个包，并检查签名、启动打包后的服务端、确认中文词典和应用名称（一念 / Ein）都已打进安装包。勾选 “release” 时，只有两个任务都通过才会发布。
 
 **可选：正式签名与公证。** 在仓库的 Settings → Secrets 里加入以下密钥，工作流会自动改用 Developer ID 签名；再配上 App Store Connect API 密钥，就会自动公证。
 
@@ -69,7 +71,7 @@ CSC_IDENTITY_AUTO_DISCOVERY=false pnpm package:mac -c.mac.identity=- -c.dmg.sign
 pnpm package:mac
 ```
 
-产物在 `release/` 目录：`OpenMausBot-<版本>-arm64.dmg`（Apple 芯片）和 `OpenMausBot-<版本>-x64.dmg`（Intel）。
+产物在 `release/` 目录：`Ein-<版本>-arm64.dmg`（Apple 芯片）和 `Ein-<版本>-x64.dmg`（Intel）。
 
 ### 开发调试
 
@@ -83,7 +85,7 @@ pnpm dev:desktop   # Electron 外壳；上面两个命令要保持运行
 
 ## 接入 WorkBuddy
 
-[WorkBuddy](https://www.workbuddy.ai) 是腾讯的 AI 工作台，它的命令行引擎是 CodeBuddy Code（命令名 `codebuddy`）。OpenMausBot 通过 ACP 协议驱动它，所以每个机器人都可以选择 WorkBuddy 作为“大脑”。
+[WorkBuddy](https://www.workbuddy.ai) 是腾讯的 AI 工作台，它的命令行引擎是 CodeBuddy Code（命令名 `codebuddy`）。一念通过 ACP 协议驱动它，所以每个机器人都可以选择 WorkBuddy 作为“大脑”。
 
 1. **安装引擎**（二选一）：
    ```sh
@@ -96,9 +98,9 @@ pnpm dev:desktop   # Electron 外壳；上面两个命令要保持运行
 
 不知道登录状态时，应用会按“已登录”处理。如果一轮对话因为未登录而失败，会直接提示登录步骤。
 
-### 反过来：在 WorkBuddy 里调度 OpenMausBot 团队
+### 反过来：在 WorkBuddy 里调度一念团队
 
-OpenMausBot 自带一个 MCP 服务，可以在 WorkBuddy / CodeBuddy 里查看机器人、派活、等结果。应用运行时执行：
+一念自带一个 MCP 服务，可以在 WorkBuddy / CodeBuddy 里查看机器人、派活、等结果。应用运行时执行：
 
 ```sh
 codebuddy mcp add-json --scope user openmausbot '{"type":"stdio","command":"/Applications/OpenMausBot.app/Contents/MacOS/OpenMausBot","args":["/Applications/OpenMausBot.app/Contents/Resources/server/mcp-server.js"],"env":{"ELECTRON_RUN_AS_NODE":"1"}}'
@@ -145,7 +147,7 @@ codebuddy mcp add-json --scope user openmausbot '{"type":"stdio","command":"/App
 
 ## 隐私
 
-- 上游项目默认会把匿名使用统计发送到上游开发者设在美国的 PostHog。中文版**默认关闭**，需要的话可以在 设置 → 通用 → 使用情况分析 里手动开启。
+- 上游项目默认会把匿名使用统计发送到上游开发者设在美国的 PostHog。一念**默认关闭**，需要的话可以在 设置 → 通用 → 使用情况分析 里手动开启。
 - 首次启动时填写的名字和邮箱都是可选的，只显示在侧边栏，并且只保存在这台电脑上。
 - 安装版会把 API 密钥加密保存在本机（由系统钥匙串保护），每个密钥只交给需要它的那个引擎。
 
@@ -162,7 +164,7 @@ codebuddy mcp add-json --scope user openmausbot '{"type":"stdio","command":"/App
 
 ## 团队自建更新源（可选）
 
-如果想让团队成员的中文版自动更新，需要两步：
+如果想让团队成员的一念自动更新，需要两步：
 
 1. 在 `electron-builder.yml` 里把 `publish: null` 改成你们自己的发布仓库：
    ```yaml

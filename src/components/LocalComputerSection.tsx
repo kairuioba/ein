@@ -313,7 +313,7 @@ export function LocalComputerSection() {
         {policyPending && <div className="mt-2 flex items-center gap-1.5 text-[12px] text-ink-secondary"><Loader2 size={12} className="animate-spin" /> {t("Saving…")}</div>}
       </Card>
 
-      <Card title={t("Setup")} subtitle={t("Once a container runtime is open, OpenMausBot prepares Cua and the VM for you.")}>
+      <Card title={t("Setup")} subtitle={t("Once a container runtime is open, Ein prepares Cua and the VM for you.")}>
         <div className="flex flex-col gap-4">
           <Step n={1} title={t("Install a container runtime")} done={Boolean(status?.runtime)}>
             <div className="text-[13px] leading-relaxed text-ink-secondary">
@@ -355,9 +355,9 @@ export function LocalComputerSection() {
             {perBot ? (
               <div className="text-[13px] leading-relaxed text-ink-secondary">
                 {perBotRuntimeUnsupported
-                  ? t("Apple container requires an explicit host port, so OpenMausBot will not guess or expose one. Install or start Docker or Podman for safe per-bot dynamic loopback ports.")
+                  ? t("Apple container requires an explicit host port, so Ein will not guess or expose one. Install or start Docker or Podman for safe per-bot dynamic loopback ports.")
                   : tRich(
-                      "Choose <b>Local VM</b> for a bot, open that bot's Computer panel, then create its desktop there. OpenMausBot assigns a private workspace and an available loopback viewer port automatically.",
+                      "Choose <b>Local VM</b> for a bot, open that bot's Computer panel, then create its desktop there. Ein assigns a private workspace and an available loopback viewer port automatically.",
                       { b: (chunk) => <b className="text-ink">{chunk}</b> },
                     )}
               </div>
@@ -391,7 +391,7 @@ export function LocalComputerSection() {
         <Card>
           <div className="flex gap-2 text-[13px] text-ink-secondary">
             <AlertTriangle size={15} className="mt-0.5 shrink-0 text-warning" />
-            <span>{t("OpenMausBot could not inspect the container runtime. Re-check, or review the app logs.")}</span>
+            <span>{t("Ein could not inspect the container runtime. Re-check, or review the app logs.")}</span>
           </div>
         </Card>
       )}

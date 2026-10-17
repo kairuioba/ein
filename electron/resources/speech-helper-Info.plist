@@ -3,7 +3,7 @@
 <plist version="1.0">
   <dict>
     <key>CFBundleDisplayName</key>
-    <string>OpenMausBot</string>
+    <string>Ein</string>
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleLocalizations</key>
@@ -18,14 +18,14 @@
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>OpenMausBot Speech</string>
+    <string>Ein Speech</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>LSBackgroundOnly</key>
     <true/>
     <key>NSMicrophoneUsageDescription</key>
-    <string>OpenMausBot listens while you dictate messages or talk to a bot.</string>
+    <string>Ein listens while you dictate messages or talk to a bot.</string>
     <key>NSSpeechRecognitionUsageDescription</key>
-    <string>OpenMausBot converts your speech into text during dictation and calls.</string>
+    <string>Ein converts your speech into text during dictation and calls.</string>
   </dict>
 </plist>

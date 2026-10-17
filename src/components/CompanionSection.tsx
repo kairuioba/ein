@@ -71,8 +71,8 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
   if (!companionBridge()) {
     return (
       <Card
-        title={t("Use OpenMausBot from your phone")}
-        subtitle={t("Open Settings in the OpenMausBot desktop app to set up a phone.")}
+        title={t("Use Ein from your phone")}
+        subtitle={t("Open Settings in the Ein desktop app to set up a phone.")}
       />
     );
   }
@@ -127,7 +127,7 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
 
       <Card
         title={t("Paired phones")}
-        subtitle={pairedCount ? t("Manage the phones that can use this OpenMausBot.") : t("No phones are paired yet.")}
+        subtitle={pairedCount ? t("Manage the phones that can use Ein on this computer.") : t("No phones are paired yet.")}
       >
         {pairedCount > 0 && (
           <ul className="flex flex-col gap-2">

@@ -440,7 +440,7 @@ try {
   requireFile(scalableIcon);
   const desktop = readFileSync(desktopFile, "utf8");
   for (const expected of [
-    "Name=OpenMausBot",
+    "Name=一念 Ein",
     "Exec=/opt/OpenMausBot/openmausbot %U",
     "Icon=openmausbot",
     "StartupWMClass=com.openmausbot.app",

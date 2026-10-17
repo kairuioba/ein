@@ -1,9 +1,13 @@
+# The product is called 一念 Ein. appId, productName (the .app bundle and the
+# data folders), the executable and the URL scheme keep their OpenMausBot
+# identity so existing installs, settings and keychain entries carry over;
+# only what people read and download says Ein.
 appId: com.openmausbot.app
 productName: OpenMausBot
-artifactName: OpenMausBot-${version}-${arch}.${ext}
+artifactName: Ein-${version}-${arch}.${ext}
 
 protocols:
-  - name: OpenMausBot package install
+  - name: 一念 Ein package install
     schemes: [openmausbot]
 
 # In-app auto-update reads latest-mac.yml + the .zip (macOS) or latest.yml +
@@ -112,19 +116,27 @@ mac:
       to: cua-sdk
     - from: dist-native/cloudflared/darwin-${arch}/cloudflared
       to: cloudflared/cloudflared
-    # Chinese permission prompts (microphone, speech, accessibility, screen)
+    # The app's name (一念 / Ein) and its permission prompts, per language
+    # (microphone, speech, accessibility, screen)
     - from: build/zh_CN.lproj/InfoPlist.strings
       to: zh_CN.lproj/InfoPlist.strings
+    - from: build/en.lproj/InfoPlist.strings
+      to: en.lproj/InfoPlist.strings
   extendInfo:
-    # The Info.plist strings below are the English base; zh_CN.lproj carries
-    # the Chinese ones, and macOS picks by the user's language order.
+    # The Info.plist strings below are the English base; zh_CN.lproj and
+    # en.lproj carry the localized ones, and macOS picks by the user's
+    # language order. CFBundleName stays OpenMausBot in the base plist (the
+    # bundle's identity); Finder and the Dock show the localized
+    # CFBundleDisplayName, the menu bar the localized CFBundleName.
     CFBundleDevelopmentRegion: en
     CFBundleLocalizations: [zh_CN, en]
     CFBundleAllowMixedLocalizations: true
-    NSMicrophoneUsageDescription: OpenMausBot uses the microphone for voice dictation into the composer.
-    NSSpeechRecognitionUsageDescription: OpenMausBot transcribes your voice on-device to type messages for you.
-    NSAccessibilityUsageDescription: OpenMausBot uses Accessibility when you let a bot control this Mac.
-    NSScreenCaptureUsageDescription: OpenMausBot uses Screen Recording so bots can see this Mac before acting.
+    CFBundleDisplayName: Ein
+    LSHasLocalizedDisplayName: true
+    NSMicrophoneUsageDescription: Ein uses the microphone for voice dictation into the composer.
+    NSSpeechRecognitionUsageDescription: Ein transcribes your voice on-device to type messages for you.
+    NSAccessibilityUsageDescription: Ein uses Accessibility when you let a bot control this Mac.
+    NSScreenCaptureUsageDescription: Ein uses Screen Recording so bots can see this Mac before acting.
   # Notarization runs manually after the build (notarytool + staple),
   # mirroring the BlueyLite ship_release.sh flow.
   notarize: false
@@ -134,7 +146,9 @@ dmg:
   # ${arch} is load-bearing: without it the x64 dmg silently overwrites
   # the arm64 one when both arches build (this section overrides both the
   # top-level and mac-level artifactName, so it must carry the arch itself)
-  artifactName: OpenMausBot-${version}-${arch}.dmg
+  artifactName: Ein-${version}-${arch}.dmg
+  # the mounted volume's name
+  title: "一念 Ein ${version}"
 
 win:
   target:
@@ -159,11 +173,11 @@ win:
 nsis:
   oneClick: true
   perMachine: false
-  shortcutName: OpenMausBot
-  # Versioned, like the .dmg. The README's /latest/download/ button needs a
-  # STABLE filename, so ship a second copy named OpenMausBot-setup.exe on the
-  # release — the same trick as OpenMausBot.dmg beside OpenMausBot-${version}.dmg.
-  artifactName: OpenMausBot-${version}-setup.${ext}
+  shortcutName: 一念 Ein
+  # Versioned, like the .dmg. A /latest/download/ link needs a STABLE
+  # filename, so the release workflow ships a second copy named Ein-setup.exe
+  # — the same trick as Ein.dmg beside Ein-${version}-arm64.dmg.
+  artifactName: Ein-${version}-setup.${ext}
 
 linux:
   target:
@@ -179,7 +193,7 @@ linux:
   synopsis: Your own team of AI bots, in a chat app
   description: A local-first chat app for running a team of AI agents.
   maintainer: Milind Soni <46266943+milind-soni@users.noreply.github.com>
-  vendor: OpenMausBot
+  vendor: kairuioba
   syncDesktopName: true
   # The reviewed x64 CLI runtime is staged before packaging and remains
   # outside ASAR so executable modes and adjacent sidecars are preserved.
@@ -190,7 +204,7 @@ linux:
       to: cloudflared/cloudflared
   desktop:
     entry:
-      Name: OpenMausBot
+      Name: 一念 Ein
       Comment: Your own team of AI bots, in a chat app
       Keywords: AI;Agents;Chat;Productivity;
 

@@ -417,7 +417,8 @@ export type AppSettingsSection =
   | "companion"
   | "usage"
   | "experimental"
-  | "updates";
+  | "updates"
+  | "about";
 
 /** Full-width pages the main column can show. "chat" covers a bot or a group. */
 export type AppView = "chat" | "team-map" | "routines" | "skill-recorder" | "brief" | "library" | "settings" | "apps";

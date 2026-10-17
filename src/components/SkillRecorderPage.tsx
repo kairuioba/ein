@@ -270,7 +270,7 @@ export function SkillRecorderPage() {
   const start = async () => {
     setError("");
     if (!bridge || !window.ogb?.beginScreenPreviewIntent || !navigator.mediaDevices?.getDisplayMedia) {
-      setError(t("Skill recording requires the OpenMausBot desktop app on macOS."));
+      setError(t("Skill recording requires the Ein desktop app on macOS."));
       return;
     }
     if (!transcriptionConfigured || !window.ogb.transcription) {
@@ -586,7 +586,7 @@ export function SkillRecorderPage() {
               <div>
                 <h2 className="text-[24px] font-bold tracking-[-0.02em]">{t("Record yourself doing the task")}</h2>
                 <p className="mt-2 text-[14px] leading-6 text-ink-secondary">
-                  {t("Speak naturally while you work. OpenMausBot lines up your clicks, app changes, screenshots, and narration, then turns the reviewed demonstration into a reusable local skill.")}
+                  {t("Speak naturally while you work. Ein lines up your clicks, app changes, screenshots, and narration, then turns the reviewed demonstration into a reusable local skill.")}
                 </p>
               </div>
               <div className="grid gap-2.5 sm:grid-cols-3">
@@ -822,7 +822,7 @@ export function SkillRecorderPage() {
           </button>
         </form>
       </aside>
-      {!bridge && phase === "idle" && <span className="sr-only">{t("Skill recording requires the OpenMausBot desktop app on macOS.")}</span>}
+      {!bridge && phase === "idle" && <span className="sr-only">{t("Skill recording requires the Ein desktop app on macOS.")}</span>}
     </main>
   );
 }

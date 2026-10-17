@@ -74,7 +74,7 @@ export function NoEngines() {
           <Mascot kind="workbuddy" pose="think" scale={1.5} shadow />
           <h1 className="mt-3 text-[22px] leading-[1.3] font-bold tracking-[-0.2px] text-ink">{t("Install an AI engine to get started")}</h1>
           <p className="mt-1.5 max-w-[60ch] text-[13.5px] leading-relaxed text-ink-secondary">
-            {t("OpenMausBot doesn’t ship a model of its own — your bots run on an AI CLI installed on this computer, using your existing login. Set up any one of these and your bots come alive.")}
+            {t("Ein doesn’t ship a model of its own — your bots run on an AI CLI installed on this computer, using your existing login. Set up any one of these and your bots come alive.")}
           </p>
         </div>
 

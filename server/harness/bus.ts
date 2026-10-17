@@ -13,7 +13,7 @@ import { newId, type ProviderInstance, type RuntimeEvent, type RuntimeEventListe
 import { msg, t } from "../../shared/i18n.ts";
 
 const INCOMPLETE_LOG_MESSAGE = msg(
-  "Canonical event history is incomplete: OpenMausBot could not write one or more events to disk. Live updates will continue.",
+  "Canonical event history is incomplete: Ein could not write one or more events to disk. Live updates will continue.",
 );
 
 export class EventBus {

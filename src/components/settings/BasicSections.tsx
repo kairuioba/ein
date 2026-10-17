@@ -235,7 +235,7 @@ function ExperimentalFeaturesRow() {
                 : t("Off by default. Enable it to let supported bots use a browser tab you can watch and take over.")
               : browserBlockedOnWindows
                 ? t("Temporarily unavailable on Windows while Electron's production sandbox support is being verified.")
-                : t("Needs the OpenMausBot desktop app.")}
+                : t("Needs the Ein desktop app.")}
           </div>
         </div>
         <Switch
@@ -318,7 +318,7 @@ function BrowserProfilesRow() {
       try {
         await window.ogb?.browser?.forgetProfile?.(profile.partitionId ?? profile.id);
       } catch {
-        setError(t("The profile was removed, but its local browser data could not be erased. Restart OpenMausBot before reusing that profile name."));
+        setError(t("The profile was removed, but its local browser data could not be erased. Restart Ein before reusing that profile name."));
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t("Could not delete the browser profile."));
@@ -440,7 +440,7 @@ function DiagnosticsRow() {
         <button
           onClick={() => void exportDiagnostics()}
           disabled={exporting || !available}
-          title={available ? undefined : t("Needs the OpenMausBot desktop app.")}
+          title={available ? undefined : t("Needs the Ein desktop app.")}
           aria-label={t("Export diagnostics to a text file")}
           className="h-8 rounded-[9px] bg-raised px-3 text-[13px] font-semibold text-ink shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_75%,transparent)] hover:bg-raised-hover disabled:opacity-40"
         >

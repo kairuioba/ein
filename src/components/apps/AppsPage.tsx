@@ -175,7 +175,7 @@ export function AppsPage() {
 
       {!authoritative && (
         <div className="mx-7 mb-2 rounded-lg bg-warning/10 px-3 py-2 text-[12.5px] text-warning">
-          {t("Showing what was connected last time — this Mac's credential store could not be opened just now, so these could not be re-checked. Your apps are still connected; restarting OpenMausBot usually clears this.")}
+          {t("Showing what was connected last time — this Mac's credential store could not be opened just now, so these could not be re-checked. Your apps are still connected; restarting Ein usually clears this.")}
         </div>
       )}
       {error && <div role="alert" className="mx-7 mb-2 rounded-lg bg-danger/10 px-3 py-2 text-[12px] text-danger">{error}</div>}

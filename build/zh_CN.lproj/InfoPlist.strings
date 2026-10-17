@@ -1,6 +1,7 @@
 /* macOS 权限弹窗与应用名称的中文文案（中文版）。 */
-"CFBundleDisplayName" = "OpenMausBot";
-"NSMicrophoneUsageDescription" = "OpenMausBot 需要使用麦克风，把你的语音输入到消息框里。";
-"NSSpeechRecognitionUsageDescription" = "OpenMausBot 会在本机把你的语音转成文字，帮你输入消息。";
-"NSAccessibilityUsageDescription" = "当你允许机器人操控这台 Mac 时，OpenMausBot 需要使用“辅助功能”权限。";
-"NSScreenCaptureUsageDescription" = "OpenMausBot 需要“屏幕录制”权限，让机器人在操作前先看到这台 Mac 的屏幕。";
+"CFBundleDisplayName" = "一念";
+"CFBundleName" = "一念";
+"NSMicrophoneUsageDescription" = "一念需要使用麦克风，把你的语音输入到消息框里。";
+"NSSpeechRecognitionUsageDescription" = "一念会在本机把你的语音转成文字，帮你输入消息。";
+"NSAccessibilityUsageDescription" = "当你允许机器人操控这台 Mac 时，一念需要使用“辅助功能”权限。";
+"NSScreenCaptureUsageDescription" = "一念需要“屏幕录制”权限，让机器人在操作前先看到这台 Mac 的屏幕。";

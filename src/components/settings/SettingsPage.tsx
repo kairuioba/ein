@@ -8,6 +8,7 @@ import {
   Cpu,
   Download,
   FlaskConical,
+  Info,
   KeyRound,
   Laptop,
   Palette,
@@ -37,6 +38,7 @@ import {
   useExperimentalCount,
   useUpdateWaiting,
 } from "./BasicSections";
+import { AboutSection, APP_VERSION } from "./AboutSection";
 import { OrgSection } from "./OrgSection";
 import { EnginesSection } from "./EnginesSection";
 import { CadenceSection, ReviewSection, UsageBillingSection } from "./PolicySections";
@@ -57,6 +59,7 @@ const ICONS: Record<AppSettingsSection, LucideIcon> = {
   usage: ChartColumn,
   experimental: FlaskConical,
   updates: Download,
+  about: Info,
 };
 
 /** The grey status after each nav item ("5 个部门", "日报 18:00" …). */
@@ -83,6 +86,7 @@ function useNavMeta(): Partial<Record<AppSettingsSection, ReactNode>> {
       usage: usage.weekPercent !== null ? `${Math.round(usage.weekPercent)}%` : undefined,
       experimental: experimental ? t("{count} on", { count: experimental }) : undefined,
       updates: updateWaiting ? <span className="size-[7px] rounded-full bg-select" aria-label={t("An update is ready")} /> : undefined,
+      about: `v${APP_VERSION}`,
     };
   }, [state.bots, state.instances, state.config, org, usage.weekPercent, experimental, updateWaiting]);
 }
@@ -171,6 +175,8 @@ function SectionBody({ section }: { section: AppSettingsSection }) {
       return <ExperimentalSection />;
     case "updates":
       return <UpdatesSection />;
+    case "about":
+      return <AboutSection />;
   }
 }
 

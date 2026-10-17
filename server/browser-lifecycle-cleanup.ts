@@ -116,7 +116,7 @@ export function requireBrowserCleanupAcknowledged(ok: boolean, target: string): 
   if (ok) return;
   const error = Object.assign(new Error(
     t(
-      "{target} was removed, but OpenMausBot could not confirm its local browser data was erased. Restart the desktop app before reusing it; cleanup will retry automatically.",
+      "{target} was removed, but Ein could not confirm its local browser data was erased. Restart the desktop app before reusing it; cleanup will retry automatically.",
       { target },
     ),
   ), { status: 503 });

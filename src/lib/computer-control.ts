@@ -62,14 +62,14 @@ export async function transitionComputerControlLease<
   const { action, syncNativeBrowser, requestControl, setNativeBrowserControl } = input;
   if (action === "dismiss-help") return requestControl(action);
   if (action === "take" && syncNativeBrowser && !(await setNativeBrowserControl(true))) {
-    throw new Error(t("OpenMausBot could not pause this bot's browser safely"));
+    throw new Error(t("Ein could not pause this bot's browser safely"));
   }
   const snap = await requestControl(action);
   if (snap.held !== (action === "take")) {
     throw new Error(
       action === "take"
-        ? t("OpenMausBot could not confirm computer control")
-        : t("OpenMausBot could not release computer control"),
+        ? t("Ein could not confirm computer control")
+        : t("Ein could not release computer control"),
     );
   }
   if (action === "release" && syncNativeBrowser && !(await setNativeBrowserControl(false))) {

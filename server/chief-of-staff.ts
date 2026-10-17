@@ -93,7 +93,7 @@ export function chiefOfStaffSystemPrompt(
           ? "You plan across departments: give each department's part of the work to its lead by setting assignee to the lead's name (or the department's name). The lead plans that part with its own team and its result comes back to you; do not assign a department's members directly."
           : "",
         dispatch.autoCreate
-          ? "OpenMausBot assigns each subtask to the best-fitting teammate and creates a specialist with a recommended model when nobody fits, so describe roles precisely instead of creating bots yourself."
+          ? "Ein assigns each subtask to the best-fitting teammate and creates a specialist with a recommended model when nobody fits, so describe roles precisely instead of creating bots yourself."
           : "Creating specialists is turned off: name an assignee from list_bots for any subtask your current team cannot obviously cover.",
         `Keep a plan to at most ${dispatch.maxSubtasks} subtasks. Handle a small, single-step request yourself without a plan.`,
         "After submit_plan succeeds, summarize the plan for the user in a few lines and end your turn. The subtasks run in the background; when they finish you will receive their results and must reply with one consolidated deliverable.",

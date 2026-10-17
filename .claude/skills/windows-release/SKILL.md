@@ -5,7 +5,7 @@ description: Build, verify, and publish the Windows desktop build (NSIS installe
 
 # Windows release
 
-Ships `OpenMausBot-<version>-setup.exe` and its update feed to
+Ships `Ein-<version>-setup.exe` and its update feed to
 [milind-soni/openmausbot-releases](https://github.com/milind-soni/openmausbot-releases).
 
 **Scope: Windows only.** The macOS build is a separate flow (dmg + notarytool +
@@ -41,10 +41,10 @@ Output in `release/`:
 
 | File | Purpose |
 |---|---|
-| `OpenMausBot-<version>-setup.exe` | the installer |
+| `Ein-<version>-setup.exe` | the installer |
 | `latest.yml` | **the update feed** — see step 4 |
-| `OpenMausBot-<version>-setup.exe.blockmap` | differential updates |
-| `OpenMausBot-<version>-x64.zip` | portable, not used by the updater |
+| `Ein-<version>-setup.exe.blockmap` | differential updates |
+| `Ein-<version>-x64.zip` | portable, not used by the updater |
 
 ## 3. Verify before uploading
 
@@ -79,21 +79,21 @@ Upload to the **same tag** as the macOS release for that version, so one release
 carries both platforms.
 
 ```powershell
-Copy-Item release/OpenMausBot-<version>-setup.exe release/OpenMausBot-setup.exe
+Copy-Item release/Ein-<version>-setup.exe release/Ein-setup.exe
 gh release upload v<version> --repo milind-soni/openmausbot-releases `
-  release/OpenMausBot-<version>-setup.exe `
-  release/OpenMausBot-setup.exe `
-  release/OpenMausBot-<version>-setup.exe.blockmap `
+  release/Ein-<version>-setup.exe `
+  release/Ein-setup.exe `
+  release/Ein-<version>-setup.exe.blockmap `
   release/latest.yml
 ```
 
 Both names are required, for different consumers:
 
-- **`OpenMausBot-<version>-setup.exe`** is what `latest.yml` references by name and
+- **`Ein-<version>-setup.exe`** is what `latest.yml` references by name and
   sha512. The auto-updater downloads exactly this.
-- **`OpenMausBot-setup.exe`** is a byte-identical copy that gives the README's
-  `/releases/latest/download/OpenMausBot-setup.exe` button a stable URL. This
-  mirrors `OpenMausBot.dmg` sitting beside `OpenMausBot-<version>.dmg`.
+- **`Ein-setup.exe`** is a byte-identical copy that gives a
+  `/releases/latest/download/Ein-setup.exe` link a stable URL. This mirrors
+  `Ein.dmg` sitting beside `Ein-<version>-arm64.dmg`.
 
 ### latest.yml is not optional
 

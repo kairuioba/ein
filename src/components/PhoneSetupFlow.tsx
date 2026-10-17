@@ -916,7 +916,7 @@ export function PhoneSetupFlowView({
         <div className="flex size-14 items-center justify-center rounded-2xl bg-accent/12 text-accent">
           <Smartphone size={26} />
         </div>
-        <h2 className="mt-4 text-[19px] font-semibold text-ink">{t("Use OpenMausBot from your phone")}</h2>
+        <h2 className="mt-4 text-[19px] font-semibold text-ink">{t("Use Ein from your phone")}</h2>
         <p className="mt-1.5 max-w-[460px] text-[13.5px] leading-relaxed text-ink-secondary">
           {t("Check chats, answer approvals, and send new work without staying at your computer.")}
         </p>
@@ -1127,7 +1127,7 @@ export function PhoneSetupFlowView({
           }}
           className="mt-5 w-full max-w-[280px] rounded-lg bg-primary py-2.5 text-[14px] font-medium text-primary-ink"
         >
-          {variant === "onboarding" ? t("Start using OpenMausBot") : t("Done")}
+          {variant === "onboarding" ? t("Start using Ein") : t("Done")}
         </button>
       </div>
     );

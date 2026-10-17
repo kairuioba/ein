@@ -16,9 +16,10 @@ import {
 import type { CloudBackend, EffortLevel } from "../../server/contracts.ts";
 import type { MausColor, MausMotion } from "@/lib/mascot";
 import type { BotAvatarCrop } from "../../shared/bot-avatar";
-import type { DispatchSettings } from "../../shared/dispatch-types";
+import type { DispatchRun, DispatchSettings, InboxItem } from "../../shared/dispatch-types";
 import type { RoutineRequestCardData } from "../../shared/routine-request";
 import type { RoutineRunCardData } from "../../shared/routine-run";
+import type { TaskFolderView } from "../../shared/task-folders";
 import { reviewedSkillSha256, type SkillRequestCardData } from "../../shared/skill-request";
 import type { Routine, RoutineInput, RoutineRun } from "@/lib/routines";
 import type { WebhookAttempt, WebhookIngressStatus, WebhookTrigger } from "@/lib/webhooks";
@@ -26,6 +27,8 @@ import { currentCall } from "@/lib/call";
 import { showNotification, type NotificationTarget } from "@/lib/notify";
 import { speaker } from "@/lib/tts";
 import { createBotPatchQueue, type BotUpdatePatch } from "./bot-patch-queue";
+import type { EvolutionProposal } from "@/lib/evolution";
+import { refreshApi } from "./org-api";
 import { skillRecorderEnabled } from "@/lib/feature-flags";
 import { openLiveEvents } from "@/lib/live-events";
 import { intlLocale, t } from "@/lib/i18n";
@@ -543,6 +546,114 @@ function reconcileSnapshotQueues(
 
 export type BotAnnouncement = Omit<Bot, "messages"> & { messages?: Message[] };
 
+// ── server frames for polled data (task office / inbox / evolution / runs) ──
+// The server broadcasts these snapshots (server/index.ts). Their data does not
+// live in AppState today — the screens read them through polled query hooks —
+// so the fold does two minimal things: it patches the cache fields when the
+// store carries them (applyServerFrame, pure and order-safe), and otherwise
+// nudges the existing polled cache (sseRefreshTargets + refreshApi). The 5s
+// polls stay exactly as they are, as the fallback.
+export interface SseStoreCaches {
+  taskFolders?: readonly TaskFolderView[] | null;
+  inbox?: {
+    items: readonly InboxItem[];
+    counts: { needsYou: number; unseen: number; byTask: Record<string, number> };
+  } | null;
+  dispatchRuns?: readonly DispatchRun[] | null;
+  evolution?: readonly EvolutionProposal[] | null;
+}
+
+/** The subset of a broadcast frame this fold understands. */
+export interface ServerSseFrame {
+  kind?: string;
+  tasks?: readonly TaskFolderView[];
+  items?: readonly InboxItem[];
+  counts?: { needsYou: number; unseen: number; byTask: Record<string, number> };
+  run?: DispatchRun;
+  proposal?: EvolutionProposal;
+}
+
+const sameJson = (a: unknown, b: unknown): boolean => {
+  try {
+    return JSON.stringify(a) === JSON.stringify(b);
+  } catch {
+    return false;
+  }
+};
+
+/** A run frame is stale when its updatedAt is not newer: the server bumps it
+ * on every change, so duplicates and out-of-order replays keep the current
+ * object (idempotent) instead of rewinding the run. */
+function mergeDispatchRun(
+  runs: readonly DispatchRun[],
+  run: DispatchRun,
+): readonly DispatchRun[] {
+  const at = runs.findIndex((candidate) => candidate.id === run.id);
+  if (at < 0) return [...runs, run];
+  const current = runs[at]!;
+  if ((Number(run.updatedAt) || 0) <= (Number(current.updatedAt) || 0)) return runs;
+  const next = runs.slice();
+  next[at] = run;
+  return next;
+}
+
+/** Apply one SSE frame to the optional polled caches. Unknown kinds, frames
+ * whose payload is missing, and snapshots identical to what is already there
+ * return the same state object — no re-render and no duplicated data.
+ * Generic over the caller's state so it works for AppState today (which owns
+ * none of these caches yet) and for a store that lifts one of them later. */
+export function applyServerFrame<S extends object>(state: S, frame: ServerSseFrame): S {
+  const cache = state as SseStoreCaches;
+  switch (frame?.kind) {
+    case "task-folders": {
+      if (!("taskFolders" in cache) || !Array.isArray(frame.tasks)) return state;
+      if (sameJson(cache.taskFolders, frame.tasks)) return state;
+      return { ...state, taskFolders: frame.tasks } as S;
+    }
+    case "inbox": {
+      if (!("inbox" in cache) || !Array.isArray(frame.items) || !frame.counts) return state;
+      const next = { items: frame.items, counts: frame.counts };
+      if (sameJson(cache.inbox, next)) return state;
+      return { ...state, inbox: next } as S;
+    }
+    case "evolution": {
+      if (!("evolution" in cache) || !frame.proposal) return state;
+      const proposal = frame.proposal;
+      const list = cache.evolution ?? [];
+      const at = list.findIndex((item) => item.id === proposal.id);
+      if (at < 0) return { ...state, evolution: [...list, proposal] } as S;
+      if (sameJson(list[at], proposal)) return state;
+      const next = list.slice();
+      next[at] = proposal;
+      return { ...state, evolution: next } as S;
+    }
+    case "dispatch.run": {
+      if (!("dispatchRuns" in cache) || !frame.run) return state;
+      const dispatchRuns = mergeDispatchRun(cache.dispatchRuns ?? [], frame.run);
+      return dispatchRuns === cache.dispatchRuns ? state : ({ ...state, dispatchRuns } as S);
+    }
+    default:
+      return state;
+  }
+}
+
+/** Which existing polled caches a frame invalidates (refreshApi URLs), so a
+ * broadcast lands immediately without waiting for the fallback poll. Frames
+ * whose data only lives in a local hook (task-folders / inbox) have no cache
+ * to nudge and return []. */
+export function sseRefreshTargets(frame: ServerSseFrame): string[] {
+  switch (frame?.kind) {
+    case "dispatch.run":
+    case "dispatch.routes":
+      // one payload serves both: /api/dispatch/state carries runs + routes.
+      return ["/api/dispatch/state"];
+    case "evolution":
+      return ["/api/evolution"];
+    default:
+      return [];
+  }
+}
+
 export type Action =
   | {
       type: "hydrate";
@@ -550,6 +661,7 @@ export type Action =
       groups: Group[];
       computerControl: Record<string, { held: boolean; helpReason: string | null }>;
     }
+  | { type: "sseFrame"; frame: ServerSseFrame }
   | { type: "showRoutines" }
   | { type: "showPage"; page: AppPage }
   | { type: "showTeamMap" }
@@ -766,6 +878,11 @@ function dismissOnboardingCard(state: AppState, botId: string): AppState {
 
 export function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
+    // Broadcast frames for polled data: AppState has no copy of these yet, so
+    // this is an identity today; it becomes the patch point once a cache moves
+    // into the store (see applyServerFrame).
+    case "sseFrame":
+      return applyServerFrame(state, action.frame);
     case "hydrate": {
       const known = (id: string) => action.bots.some((b) => b.id === id) || action.groups.some((g) => g.id === id);
       // nothing chosen yet: open on the 主 Bot (the pinned, unsectioned chief
@@ -1957,6 +2074,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const bumpPeripheralVersion = (...keys: PeripheralKey[]) => {
       for (const key of keys) refreshState(key).version += 1;
     };
+    // A dispatch run broadcasts on every subtask transition; coalesce a burst
+    // into one refetch of the polled cache instead of one fetch per frame.
+    const pendingSseRefreshes = new Set<string>();
+    let sseRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleSseRefresh = (targets: readonly string[]) => {
+      if (!targets.length) return;
+      for (const target of targets) pendingSseRefreshes.add(target);
+      if (sseRefreshTimer) return;
+      sseRefreshTimer = setTimeout(() => {
+        sseRefreshTimer = null;
+        const batch = [...pendingSseRefreshes];
+        pendingSseRefreshes.clear();
+        if (!alive) return;
+        for (const target of batch) void refreshApi(target);
+      }, 250);
+    };
     const loadAll = async (): Promise<boolean> => {
       const chat = () =>
         api("/api/bots").then(({ bots, groups, computerControl }) => {
@@ -2177,6 +2310,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           botPatchQueue.cancel(frame.botId);
           rawDispatch({ type: "deleteBot", botId: frame.botId });
           break;
+        // Project office / inbox / evolution / dispatch: patch the caches if
+        // the store holds them, then nudge the polled query cache so the
+        // broadcast lands before the next 5s poll (which stays as fallback).
+        case "task-folders":
+        case "inbox":
+        case "evolution":
+        case "dispatch.run":
+        case "dispatch.routes":
+          rawDispatch({ type: "sseFrame", frame });
+          scheduleSseRefresh(sseRefreshTargets(frame));
+          break;
         // a key changed and the fleet hot-reloaded — refresh the picker so
         // newly available providers un-dim immediately
         case "config":
@@ -2213,6 +2357,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return () => {
       alive = false;
       clearTimeout(hydrationFallback);
+      if (sseRefreshTimer) clearTimeout(sseRefreshTimer);
       for (const refresh of peripheralRefresh.values()) {
         if (refresh.timer) clearTimeout(refresh.timer);
       }

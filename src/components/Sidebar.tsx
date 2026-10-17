@@ -122,6 +122,8 @@ import {
 } from "@/lib/sidebar-rows";
 import { phoneSettingsAction, SidebarPhoneButton } from "./SidebarPhoneButton";
 import { SidebarSectionHeader } from "./SidebarSectionHeader";
+import { InboxPanel } from "./InboxPanel";
+import { useInbox } from "@/lib/inbox";
 import { BOT_DRAG_TYPE } from "@/components/routines/calendar-model";
 
 // ── shared styles ─────────────────────────────────────────────────────────────
@@ -1480,6 +1482,8 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const runs = useMemo(() => dispatchState.runs ?? [], [dispatchState]);
   const runsByLead = useMemo(() => activeRunsByLead(runs), [runs]);
   const inbox = brief.needsYou;
+  const approvalInbox = useInbox();
+  const [inboxOpen, setInboxOpen] = useState(false);
   const inboxForBot = useMemo(() => inboxByBot(inbox), [inbox]);
   const meetingRoomIds = useMemo(
     () => new Set((calendarCalls.calls ?? []).map((call) => call.roomId).filter((id): id is string => Boolean(id))),
@@ -2050,6 +2054,22 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           iconOnly={iconOnly}
           onClick={() => dispatch({ type: "showPage", page: "brief" })}
         />
+        {approvalInbox.counts.needsYou > 0 && (
+          <NavRow
+            nav="approval-inbox"
+            icon={<BellDot size={18} />}
+            label={t("Needs you")}
+            meta={
+              <span className="inline-flex h-5 shrink-0 items-center rounded-full px-2 text-[11.5px] font-bold text-white" style={{ background: AMBER }}>
+                {t("Needs you {count}", { count: approvalInbox.counts.needsYou })}
+              </span>
+            }
+            badge={dot("bg-warning")}
+            selected={inboxOpen}
+            iconOnly={iconOnly}
+            onClick={() => setInboxOpen(true)}
+          />
+        )}
         <NavRow
           nav="workbench"
           icon={<WorkbenchIcon size={18} />}
@@ -2273,6 +2293,12 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           }}
         />
       )}
+      <InboxPanel
+        open={inboxOpen}
+        items={approvalInbox.items}
+        onClose={() => setInboxOpen(false)}
+        onChanged={() => void approvalInbox.refresh()}
+      />
       {teamFeedback &&
         createPortal(
           <div

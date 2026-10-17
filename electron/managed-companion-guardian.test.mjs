@@ -14,7 +14,7 @@ const TARGET =
         socketPath:
           "\\\\.\\pipe\\ein-companion-origin-31337-12345678-1234-1234-1234-123456789abc",
       }
-    : { pid: 31337, socketPath: "/tmp/omb-companion-origin-guardian/origin.sock" };
+    : { pid: 31337, socketPath: "/tmp/ein-companion-origin-guardian/origin.sock" };
 
 function owner() {
   const input = new EventEmitter();

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import type { Server } from "node:http";
 import path from "node:path";
 
-const RUNTIME_PREFIX = "omb-companion-origin-";
+const RUNTIME_PREFIX = "ein-companion-origin-";
 const SOCKET_NAME = "origin.sock";
 
 /** Accept only the private endpoint shape allocated by Electron. A malformed

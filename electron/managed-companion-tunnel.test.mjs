@@ -27,7 +27,7 @@ const ORIGIN_TARGET =
         socketPath:
           "\\\\.\\pipe\\ein-companion-origin-31337-12345678-1234-1234-1234-123456789abc",
       }
-    : { pid: 31337, socketPath: "/tmp/omb-companion-origin-test/origin.sock" };
+    : { pid: 31337, socketPath: "/tmp/ein-companion-origin-test/origin.sock" };
 const temporaryDirectories = [];
 
 function temporaryDirectory() {

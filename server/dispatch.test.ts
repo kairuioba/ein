@@ -554,6 +554,7 @@ describe("Dispatcher", () => {
     host.finish(dispatcher, synthesis.threadId, true, "已汇总");
     await settle();
     expect(host.inbox.filter((item) => item.kind === "signoff")).toHaveLength(1);
+    expect(host.inbox.find((item) => item.kind === "signoff")!.reason).toContain("still need your review");
   });
 
   it("a send-back runs the subtask again with the owner's sentence in the prompt", async () => {

@@ -2951,6 +2951,7 @@
   "The speech service is unavailable in this app build. Restart or update Ein.": "当前应用版本中的语音服务不可用。请重启或更新一念。",
   "The steps appear here while you record.": "录制时，步骤会出现在这里。",
   "The task is finished — confirm the final delivery.": "任务已完成，请确认最终交付。",
+  "The task is finished, but {count} subtask(s) still need your review.": "任务已完成，但有 {count} 个子任务还需要你确认。",
   "The task or message sent with each request becomes the bot's instruction.": "每个请求附带的任务或消息会成为 Bot 的指令。",
   "The team already covers what is left; more people would not finish sooner.": "现有人手已经够分剩下的活，加人也不会更快做完。",
   "The team could not be loaded": "无法加载团队",

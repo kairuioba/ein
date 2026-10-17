@@ -1712,7 +1712,15 @@ export class Dispatcher {
     this.touch(run);
     this.recordRetro(run);
     if (status === "done") {
-      this.host.needsYou?.({ kind: "signoff", runId: run.id, title: clip(run.goal, 60), reason: t("The task is finished — confirm the final delivery.") });
+      const unverified = run.subtasks.filter((subtask) => subtask.gate && subtask.gate.status !== "pass").length;
+      this.host.needsYou?.({
+        kind: "signoff",
+        runId: run.id,
+        title: clip(run.goal, 60),
+        reason: unverified
+          ? t("The task is finished, but {count} subtask(s) still need your review.", { count: unverified })
+          : t("The task is finished — confirm the final delivery."),
+      });
     }
     // the task is over: its employees go back to the department pool, but
     // their conversations (and the task window) stay with this task

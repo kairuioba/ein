@@ -5745,11 +5745,14 @@ const server = createServer(async (req, res) => {
       const chiefId = companyChiefId();
       if (!chiefId) return json(res, 400, { error: "no company chief yet" });
       const title = typeof body.title === "string" && body.title.trim() ? body.title.trim().slice(0, 120) : t("New task");
-      const leadBotId = typeof body.leadBotId === "string" && store.bot(body.leadBotId) ? body.leadBotId : chiefId;
+      // the company chief sits above tasks and is never a task lead; a fresh
+      // task has no lead until its dispatch run assigns one
+      const requestedLead = typeof body.leadBotId === "string" ? store.bot(body.leadBotId) : undefined;
+      const leadBotId = requestedLead && requestedLead.id !== chiefId ? requestedLead.id : undefined;
       // window + folder together: a new task is always a new conversation
       const window = store.createTask(chiefId, title, true);
       if (!window) return json(res, 500, { error: "could not open a task window" });
-      const folder = taskFolders.create({ title, leadBotId, conversationId: window.threadId });
+      const folder = taskFolders.create({ title, ...(leadBotId ? { leadBotId } : {}), conversationId: window.threadId });
       if ("error" in folder) return json(res, 400, folder);
       store.bindTaskFolder(window.threadId, folder.id);
       const tasks = taskFolderViews();
@@ -5778,7 +5781,6 @@ const server = createServer(async (req, res) => {
       if (!window) return json(res, 500, { error: "could not open a task window" });
       const folder = taskFolders.create({
         title,
-        leadBotId: chiefId,
         conversationId: window.threadId,
         forkedFromTaskId: source.id,
         ...(requestId ? { forkRequestId: requestId } : {}),

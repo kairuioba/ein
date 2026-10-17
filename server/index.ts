@@ -2,7 +2,7 @@
 // (upstream rule): the React app dispatches typed commands over HTTP and
 // folds one SSE event stream; every provider process runs here.
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
-import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { isIP } from "node:net";
 import { extname, join } from "node:path";
@@ -80,6 +80,7 @@ import type { DispatchRun } from "../shared/dispatch-types.ts";
 import { DEPARTMENT_COLORS } from "../shared/org-types.ts";
 import { UnattendedBots } from "./unattended-state.ts";
 import { handleDispatchApi } from "./dispatch-api.ts";
+import { workspaceDir } from "./workspace.ts";
 import type { TaskFolderDepartment, TaskFolderStatus, TaskFolderView } from "../shared/task-folders.ts";
 import { handleOrgApi, isOrgApiPath, type OrgApiDeps } from "./org/api.ts";
 import { OrgEventLog } from "./org/events.ts";
@@ -2279,7 +2280,15 @@ const dispatcher = new Dispatcher({
     // run in auto mode: they work unattended (overnight, long tasks) and a
     // read-only tool shouldn't park the whole plan on an approval card. Auto
     // mode still stops for destructive or publishing actions (autoVerdict).
-    return store.patchBot(created.id, { composio: false, autoApprove: true, approvePeerComms: false }) ?? created;
+    // Every worker also gets its own working folder, so relative artifact
+    // paths the gate checks have a real place to resolve against.
+    const cwd = workspaceDir(created.id);
+    try {
+      mkdirSync(cwd, { recursive: true });
+    } catch (error) {
+      console.error("dispatch: could not create the worker folder", error);
+    }
+    return store.patchBot(created.id, { composio: false, autoApprove: true, approvePeerComms: false, cwd }) ?? created;
   },
   createTask: (botId, title, meta) => {
     // bind the conversation to the task folder + attempt that created it; the
@@ -5646,7 +5655,28 @@ const server = createServer(async (req, res) => {
     // optional delegation labels, and timestamps.
     // ── 「需要你」收件箱 ─────────────────────────────────────────────
     if (path === "/api/inbox" && method === "GET") {
-      return json(res, 200, { items: inbox.list("open"), counts: inbox.counts() });
+      const items = inbox.list("open");
+      // one card per task: the underlying items stay atomic (audit/idempotency)
+      const groups = new Map<string, { taskId?: string; title: string; items: typeof items }>();
+      for (const item of items) {
+        const key = item.taskId ?? "__none__";
+        const folder = item.taskId && taskFolders ? taskFolders.byId(item.taskId) : undefined;
+        const group = groups.get(key) ?? {
+          taskId: item.taskId,
+          title: folder?.title ?? item.title,
+          items: [],
+        };
+        group.items.push(item);
+        groups.set(key, group);
+      }
+      const ordered = [...groups.values()]
+        .map((group) => ({
+          ...group,
+          counts: { open: group.items.filter((item) => !item.resolvedAt).length },
+          signoff: group.items.some((item) => item.kind === "signoff"),
+        }))
+        .sort((a, b) => Number(b.signoff) - Number(a.signoff));
+      return json(res, 200, { items, counts: inbox.counts(), groups: ordered });
     }
     const inboxMatch = path.match(/^\/api\/inbox\/([\w-]+)\/(seen|resolve)$/);
     if (inboxMatch && method === "POST") {

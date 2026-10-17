@@ -5,7 +5,7 @@ import { AlertTriangle, CheckCircle2, X } from "lucide-react";
 
 import { Button, Dialog } from "@/components/ui";
 import { t } from "@/lib/i18n";
-import { markInboxSeen, resolveInboxItem, type InboxItem } from "@/lib/inbox";
+import { markInboxSeen, resolveInboxItem, type InboxGroup, type InboxItem } from "@/lib/inbox";
 
 const KIND_LABEL: Record<InboxItem["kind"], string> = {
   gate_failed: t("Needs your review"),
@@ -17,11 +17,13 @@ const KIND_LABEL: Record<InboxItem["kind"], string> = {
 export function InboxPanel({
   open,
   items,
+  groups,
   onClose,
   onChanged,
 }: {
   open: boolean;
   items: InboxItem[];
+  groups?: InboxGroup[];
   onClose: () => void;
   onChanged: () => void;
 }) {
@@ -61,8 +63,19 @@ export function InboxPanel({
         {items.length === 0 ? (
           <p className="px-2 py-8 text-center text-[12.5px] text-ink-secondary">{t("Nothing needs you right now.")}</p>
         ) : (
-          items.map((item) => (
-            <div key={item.id} className="mb-1 rounded-xl px-3 py-2.5 hover:bg-raised-hover/50">
+          items.map((item, index) => {
+            const previous = items[index - 1];
+            const header = item.taskId !== previous?.taskId ? groups?.find((group) => group.taskId === item.taskId) : undefined;
+            const headerTitle = header?.title ?? (item.taskId ? undefined : t("Other items"));
+            return (
+            <div key={item.id}>
+            {headerTitle && (
+              <div className="mt-2 flex items-center gap-2 px-3 pb-1 text-[11.5px] font-semibold text-ink-secondary">
+                <span className="min-w-0 truncate">{headerTitle}</span>
+                {header && <span className="shrink-0 rounded-full bg-control px-1.5 text-[10.5px]">{t("{count} to handle", { count: header.counts.open })}</span>}
+              </div>
+            )}
+            <div className="mb-1 rounded-xl px-3 py-2.5 hover:bg-raised-hover/50">
               <div className="flex items-center gap-2">
                 <span className="inline-flex h-5 items-center rounded-full bg-warning/12 px-2 text-[10.5px] font-semibold text-warning">{KIND_LABEL[item.kind]}</span>
                 <b className="min-w-0 truncate text-[13.5px] text-ink">{item.title}</b>
@@ -113,7 +126,9 @@ export function InboxPanel({
                 </div>
               )}
             </div>
-          ))
+            </div>
+            );
+          })
         )}
       </div>
     </Dialog>

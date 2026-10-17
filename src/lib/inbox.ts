@@ -24,17 +24,26 @@ export interface InboxCounts {
   byTask: Record<string, number>;
 }
 
-const EMPTY: { items: InboxItem[]; counts: InboxCounts } = {
+export interface InboxGroup {
+  taskId?: string;
+  title: string;
+  items: InboxItem[];
+  counts: { open: number };
+  signoff: boolean;
+}
+
+const EMPTY: { items: InboxItem[]; counts: InboxCounts; groups: InboxGroup[] } = {
   items: [],
   counts: { needsYou: 0, unseen: 0, byTask: {} },
+  groups: [],
 };
 
 export function useInbox(intervalMs = 5000) {
   const [data, setData] = useState(EMPTY);
   const refresh = useCallback(async () => {
     try {
-      const next = (await api("/api/inbox")) as { items?: InboxItem[]; counts?: InboxCounts };
-      setData({ items: next.items ?? [], counts: next.counts ?? EMPTY.counts });
+      const next = (await api("/api/inbox")) as { items?: InboxItem[]; counts?: InboxCounts; groups?: InboxGroup[] };
+      setData({ items: next.items ?? [], counts: next.counts ?? EMPTY.counts, groups: next.groups ?? EMPTY.groups });
     } catch {
       // the inbox is an auxiliary surface: keep the last snapshot on failure
     }

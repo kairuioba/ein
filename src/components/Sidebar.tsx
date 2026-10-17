@@ -2306,6 +2306,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
       <InboxPanel
         open={inboxOpen}
         items={approvalInbox.items}
+        groups={approvalInbox.groups}
         onClose={() => setInboxOpen(false)}
         onChanged={() => void approvalInbox.refresh()}
       />

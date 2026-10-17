@@ -705,6 +705,42 @@ describe("Dispatcher", () => {
     expect(reloaded.approve(waiting.run.id)).toMatchObject({ status: "running" });
   });
 
+  it("waits for a fresh report when a subtask is retried while the chief writes one", async () => {
+    host.settingsValue = dispatchSettings({ maxAttempts: 1 });
+    host.add({ id: "w2", name: "设计", title: "视觉设计师", section: "市场部" });
+    const result = submit([
+      { id: "copy", title: "文案", brief: "写", role: "文案策划" },
+      { id: "poster", title: "海报", brief: "画", role: "视觉设计师" },
+    ]);
+    if ("error" in result) throw new Error(result.error);
+    await flush();
+    const [copy, poster] = host.workerTurns();
+    host.finish(dispatcher, copy!.threadId, true, "文案定稿");
+    host.finish(dispatcher, poster!.threadId, false, "");
+    await flush();
+    const run = dispatcher.get(result.run.id)!;
+    // the chief is writing its report on the copy alone
+    expect(run.status).toBe("synthesizing");
+    expect(host.turns.filter((turn) => turn.continuation)).toHaveLength(1);
+    // meanwhile the owner retries the poster, and it is done before that report
+    dispatcher.retry(run.id, "poster");
+    await flush();
+    const again = host.workerTurns().at(-1)!;
+    expect(again.botId).toBe("w2");
+    host.finish(dispatcher, again.threadId, true, "海报定稿");
+    await flush();
+    host.finish(dispatcher, "chief-thread", true, "只有文案的汇总");
+    await flush();
+    // the report written before the retry does not close the reopened run
+    expect(run.report).toBeUndefined();
+    expect(run.status).toBe("synthesizing");
+    const reports = host.turns.filter((turn) => turn.continuation);
+    expect(reports).toHaveLength(2);
+    expect(reports[1]!.text).toContain("海报定稿");
+    host.finish(dispatcher, "chief-thread", true, "文案和海报都好了");
+    expect(run).toMatchObject({ status: "done", report: "文案和海报都好了" });
+  });
+
   // ── turns that never report back, and the owner's Stop ──
 
   describe("settling every turn", () => {
@@ -1007,6 +1043,74 @@ describe("Dispatcher", () => {
       expect(dispatcher.get(child.run.id)!.status).toBe("failed");
       expect(dispatcher.get(top.run.id)!.subtasks[0]).toMatchObject({ status: "failed", error: "The team's plan finished without results" });
       expect(dispatcher.get(top.run.id)!.status).toBe("failed");
+    });
+
+    it("brings back the company subtasks that wait on a department whose plan is retried", async () => {
+      writeOrg({ chiefBotId: "boss" });
+      host.settingsValue = dispatchSettings({ maxAttempts: 1 });
+      const top = orgPlan([
+        { id: "page", title: "落地页", brief: "做发布会落地页", role: "前端工程师" },
+        { id: "en", title: "英文版", brief: "把落地页译成英文", role: "翻译", depends_on: ["page"] },
+        { id: "press", title: "新闻稿", brief: "翻译新闻稿", role: "翻译" },
+      ]);
+      if ("error" in top) throw new Error(top.error);
+      await flush();
+      const leadTurn = host.workerTurns().find((turn) => turn.botId === "tech")!;
+      const press = host.workerTurns().find((turn) => turn.botId === "helper")!;
+      const child = dispatcher.submitPlan("tech", leadTurn.threadId, { goal: "落地页", subtasks: [{ id: "build", title: "页面开发", brief: "写", role: "前端" }] });
+      if ("error" in child) throw new Error(child.error);
+      host.finish(dispatcher, leadTurn.threadId, true, "已派出");
+      await flush();
+      host.finish(dispatcher, host.workerTurns().find((turn) => turn.botId === "fe1")!.threadId, false, "");
+      await flush();
+      const sub = (id: string) => dispatcher.get(top.run.id)!.subtasks.find((entry) => entry.id === id)!;
+      expect(sub("page").status).toBe("failed");
+      expect(sub("en").status).toBe("skipped");
+      // the owner retries the department's failed step; the company plan is still going
+      dispatcher.retry(child.run.id, "build");
+      await flush();
+      expect(sub("page")).toMatchObject({ status: "running", childRunId: child.run.id });
+      host.finish(dispatcher, host.workerTurns().filter((turn) => turn.botId === "fe1").at(-1)!.threadId, true, "页面完成");
+      await flush();
+      host.finish(dispatcher, leadTurn.threadId, true, "落地页好了");
+      await flush();
+      expect(sub("page")).toMatchObject({ status: "done", result: "落地页好了" });
+      // the translation that waited on the page runs once the translator is free
+      expect(sub("en").status).toBe("pending");
+      host.finish(dispatcher, press.threadId, true, "新闻稿英文版");
+      await flush();
+      const en = host.workerTurns().filter((turn) => turn.botId === "helper").at(-1)!;
+      expect(en.text).toContain("英文版");
+      expect(en.text).toContain("落地页好了");
+      expect(sub("en").status).toBe("running");
+    });
+
+    it("reopens a company plan that failed for want of a department whose plan is retried", async () => {
+      writeOrg({ chiefBotId: "boss" });
+      host.settingsValue = dispatchSettings({ maxAttempts: 1 });
+      const top = orgPlan([{ id: "page", title: "落地页", brief: "做落地页", role: "前端工程师" }]);
+      if ("error" in top) throw new Error(top.error);
+      await flush();
+      const leadTurn = host.workerTurns()[0]!;
+      const child = dispatcher.submitPlan("tech", leadTurn.threadId, { goal: "落地页", subtasks: [{ id: "build", title: "页面开发", brief: "写", role: "前端" }] });
+      if ("error" in child) throw new Error(child.error);
+      host.finish(dispatcher, leadTurn.threadId, true, "已派出");
+      await flush();
+      host.finish(dispatcher, host.workerTurns().find((turn) => turn.botId === "fe1")!.threadId, false, "");
+      await flush();
+      expect(dispatcher.get(top.run.id)!.status).toBe("failed");
+      dispatcher.retry(child.run.id, "build");
+      await flush();
+      expect(dispatcher.get(top.run.id)).toMatchObject({ status: "running" });
+      expect(dispatcher.get(top.run.id)!.finishedAt).toBeUndefined();
+      expect(dispatcher.get(top.run.id)!.subtasks[0]).toMatchObject({ status: "running", childRunId: child.run.id });
+      host.finish(dispatcher, host.workerTurns().filter((turn) => turn.botId === "fe1").at(-1)!.threadId, true, "页面完成");
+      await flush();
+      host.finish(dispatcher, leadTurn.threadId, true, "落地页好了");
+      await flush();
+      expect(dispatcher.get(top.run.id)!.subtasks[0]).toMatchObject({ status: "done", result: "落地页好了" });
+      host.finish(dispatcher, "boss-thread", true, "落地页已上线");
+      expect(dispatcher.get(top.run.id)).toMatchObject({ status: "done", report: "落地页已上线" });
     });
 
     it("keeps a lead's subtask waiting on its team across a restart", async () => {

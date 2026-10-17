@@ -839,28 +839,39 @@ export class Dispatcher {
     delete subtask.error;
     delete subtask.finishedAt;
     delete subtask.childRunId;
+    this.reopen(run);
+    // a department's reopened plan: the subtask above waits for it again, and
+    // the company plan around it goes back to work (unless you canceled it)
+    const parent = run.parentRunId ? this.get(run.parentRunId) : undefined;
+    const parentSubtask = parent?.subtasks.find((entry) => entry.id === run.parentSubtaskId);
+    if (parent && parentSubtask && parent.status !== "canceled" && parentSubtask.status !== "running") {
+      parentSubtask.status = "running";
+      parentSubtask.childRunId = run.id;
+      delete parentSubtask.error;
+      delete parentSubtask.finishedAt;
+      this.reopen(parent);
+      this.touch(parent);
+      queueMicrotask(() => this.pump(parent.id));
+    }
+    this.touch(run);
+    queueMicrotask(() => this.pump(run.id));
+    return run;
+  }
+
+  /** A retried run goes back to work: what was skipped may run again, and a
+   * report written (or still being written) before the retry no longer
+   * closes it — the chief reports again once everything has settled. */
+  private reopen(run: DispatchRun): void {
     for (const other of run.subtasks) {
       if (other.status !== "skipped") continue;
       other.status = "pending";
       delete other.error;
       delete other.finishedAt;
     }
+    if (this.synthesisWatch.get(run.sourceThreadId) === run.id) this.synthesisWatch.delete(run.sourceThreadId);
     run.status = "running";
     run.synthesisStarted = false;
     delete run.finishedAt;
-    // a department's reopened plan: the subtask above waits for it again
-    const parent = run.parentRunId ? this.get(run.parentRunId) : undefined;
-    const parentSubtask = parent?.subtasks.find((entry) => entry.id === run.parentSubtaskId);
-    if (parent && parentSubtask && parent.status === "running" && parentSubtask.status !== "running") {
-      parentSubtask.status = "running";
-      parentSubtask.childRunId = run.id;
-      delete parentSubtask.error;
-      delete parentSubtask.finishedAt;
-      this.touch(parent);
-    }
-    this.touch(run);
-    queueMicrotask(() => this.pump(run.id));
-    return run;
   }
 
   /** A turn settled (turn.completed or a harness-side stop): a worker's, or

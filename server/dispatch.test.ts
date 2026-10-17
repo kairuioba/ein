@@ -1328,6 +1328,29 @@ describe("Dispatcher", () => {
       expect(host.events).toContainEqual(expect.objectContaining({ kind: "report", runId: run.id, severity: "info" }));
     });
 
+    it("dissolves the squad of a run a restart finishes", async () => {
+      const run = await busyRun();
+      const result = dispatcher.amend(run.id, 2, { by: "owner" });
+      if ("error" in result) throw new Error(result.error);
+      for (let round = 0; round < 10 && run.status === "running"; round += 1) {
+        for (const subtask of run.subtasks.filter((entry) => entry.status === "running")) host.finish(dispatcher, subtask.threadId!, true, "完成稿");
+        await flush();
+      }
+      // every page is in; the chief is writing the report when the app restarts
+      expect(run).toMatchObject({ status: "synthesizing", synthesisStarted: true });
+      for (const bot of host.bots_) bot.busy = false;
+      const reloaded = new Dispatcher(host, dir);
+      reloaded.load();
+      const after = reloaded.get(run.id)!;
+      expect(after.status).toBe("done");
+      expect(after.squads![0]!.endedAt).toEqual(expect.any(Number));
+      // a dissolved squad gets no speed review afterwards
+      const chips = host.chips.length;
+      reloaded.checkReviews(after.squads![0]!.reviewAt + 1);
+      expect(host.chips).toHaveLength(chips);
+      expect(after.squads![0]!.review).toBeUndefined();
+    });
+
     it("dissolves the squad when its run ends, without a review from too short a window", async () => {
       const run = await busyRun();
       const result = dispatcher.amend(run.id, 2, { by: "owner" });

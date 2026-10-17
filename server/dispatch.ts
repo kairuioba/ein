@@ -413,11 +413,13 @@ export class Dispatcher {
       this.routeList = [];
     }
     const now = Date.now();
-    // A report turn does not survive a restart: the run is done without it.
+    // A report turn does not survive a restart: the run is done without it,
+    // and its squads dissolve as at any other end.
     for (const run of this.runs) {
       if (run.status === "synthesizing" && run.synthesisStarted) {
         run.status = "done";
         run.finishedAt ??= now;
+        dissolveSquads(run, now);
       }
     }
     // No worker turn survives either: running work goes back to pending
@@ -1255,11 +1257,7 @@ export class Dispatcher {
     const now = Date.now();
     run.status = status;
     run.finishedAt = now;
-    for (const squad of run.squads ?? []) {
-      // the run ended before the review was due: review what there is, if it is enough to tell
-      if (!squad.review && now - squad.addedAt >= MIN_REVIEW_WINDOW_MS) squad.review = reviewSquad(run, squad, now);
-      squad.endedAt ??= now;
-    }
+    dissolveSquads(run, now);
     this.touch(run);
     if (!run.parentRunId) return;
     const parent = this.get(run.parentRunId);
@@ -1471,6 +1469,8 @@ export class Dispatcher {
   /** Review squads whose 30 minutes are up: did the run speed up? */
   checkReviews(now = Date.now()): void {
     for (const run of this.runs) {
+      // a finished run's squads dissolved with it
+      if (isFinished(run.status)) continue;
       let changed = false;
       for (const squad of run.squads ?? []) {
         // a dissolved squad was reviewed when its run ended (if there was enough to tell)
@@ -1625,6 +1625,15 @@ function skipBlocked(run: DispatchRun): void {
         changed = true;
       }
     }
+  }
+}
+
+/** The run ended: its squads dissolve. One that joined long enough ago is
+ * reviewed on what there is, when the review was not due yet. */
+function dissolveSquads(run: DispatchRun, now: number): void {
+  for (const squad of run.squads ?? []) {
+    if (!squad.review && now - squad.addedAt >= MIN_REVIEW_WINDOW_MS) squad.review = reviewSquad(run, squad, now);
+    squad.endedAt ??= now;
   }
 }
 

@@ -166,6 +166,8 @@ export interface DispatchHost {
   modelLabel?(selection: ModelSelection): string;
   /** Record a company event (people added, squad reviews). */
   event?(event: DispatchOrgEvent): void;
+  /** What the company, or one department (by section), has spent today, CNY. */
+  spentToday?(section?: string): number;
 }
 
 // ── plan validation ────────────────────────────────────────────────────
@@ -413,11 +415,13 @@ export class Dispatcher {
       this.routeList = [];
     }
     const now = Date.now();
-    // A report turn does not survive a restart: the run is done without it.
+    // A report turn does not survive a restart: the run is done without it,
+    // and its squads dissolve as at any other end.
     for (const run of this.runs) {
       if (run.status === "synthesizing" && run.synthesisStarted) {
         run.status = "done";
         run.finishedAt ??= now;
+        dissolveSquads(run, now);
       }
     }
     // No worker turn survives either: running work goes back to pending
@@ -441,9 +445,12 @@ export class Dispatcher {
 
   private saveRuns(): void {
     const now = Date.now();
-    this.runs = this.runs
-      .filter((run) => !isFinished(run.status) || now - run.updatedAt < FINISHED_RUN_MAX_AGE_MS)
-      .slice(0, MAX_RUNS);
+    // the cap trims finished runs only, oldest first: a run still in progress
+    // (waiting for approval, or a company plan whose departments still work)
+    // is never forgotten
+    const kept = this.runs.filter((run) => !isFinished(run.status) || now - run.updatedAt < FINISHED_RUN_MAX_AGE_MS);
+    let room = MAX_RUNS - kept.filter((run) => !isFinished(run.status)).length;
+    this.runs = kept.filter((run) => !isFinished(run.status) || room-- > 0);
     try {
       writeFileAtomic(this.runsFile, JSON.stringify(this.runs, null, 2), { mode: 0o600 });
     } catch (error) {
@@ -628,8 +635,9 @@ export class Dispatcher {
         if (!settings.autoCreate) {
           return { error: `Nobody on your team fits subtask "${item.id}" (${item.role}) and creating specialists is turned off. Name an assignee from list_bots.` };
         }
-        // the company's rules can keep the 主 Bot from hiring on its own
-        if (orgChief && !this.org().rules.chiefMay.newSpecialist) {
+        // the company's rules can keep the 主 Bot from hiring on its own, and
+        // a lead planning the 主 Bot's subtask works under the same rule
+        if ((orgChief || parent) && !this.org().rules.chiefMay.newSpecialist) {
           return {
             error: `Nobody on your team fits subtask "${item.id}" (${item.role}), and your company rules do not let you create specialists on your own. Name an assignee from list_bots, or ask the user to add one.`,
           };
@@ -836,28 +844,41 @@ export class Dispatcher {
     delete subtask.error;
     delete subtask.finishedAt;
     delete subtask.childRunId;
+    this.reopen(run);
+    // a department's reopened plan: the subtask above waits for it again, and
+    // the company plan around it goes back to work (unless you canceled it).
+    // Only the plan that subtask still answers to: once the subtask itself
+    // was retried, an older plan of its department no longer speaks for it.
+    const parent = run.parentRunId ? this.get(run.parentRunId) : undefined;
+    const parentSubtask = parent?.subtasks.find((entry) => entry.id === run.parentSubtaskId);
+    if (parent && parentSubtask && parent.status !== "canceled" && parentSubtask.status !== "running" && parentSubtask.childRunId === run.id) {
+      parentSubtask.status = "running";
+      parentSubtask.childRunId = run.id;
+      delete parentSubtask.error;
+      delete parentSubtask.finishedAt;
+      this.reopen(parent);
+      this.touch(parent);
+      queueMicrotask(() => this.pump(parent.id));
+    }
+    this.touch(run);
+    queueMicrotask(() => this.pump(run.id));
+    return run;
+  }
+
+  /** A retried run goes back to work: what was skipped may run again, and a
+   * report written (or still being written) before the retry no longer
+   * closes it — the chief reports again once everything has settled. */
+  private reopen(run: DispatchRun): void {
     for (const other of run.subtasks) {
       if (other.status !== "skipped") continue;
       other.status = "pending";
       delete other.error;
       delete other.finishedAt;
     }
+    if (this.synthesisWatch.get(run.sourceThreadId) === run.id) this.synthesisWatch.delete(run.sourceThreadId);
     run.status = "running";
     run.synthesisStarted = false;
     delete run.finishedAt;
-    // a department's reopened plan: the subtask above waits for it again
-    const parent = run.parentRunId ? this.get(run.parentRunId) : undefined;
-    const parentSubtask = parent?.subtasks.find((entry) => entry.id === run.parentSubtaskId);
-    if (parent && parentSubtask && parent.status === "running" && parentSubtask.status !== "running") {
-      parentSubtask.status = "running";
-      parentSubtask.childRunId = run.id;
-      delete parentSubtask.error;
-      delete parentSubtask.finishedAt;
-      this.touch(parent);
-    }
-    this.touch(run);
-    queueMicrotask(() => this.pump(run.id));
-    return run;
   }
 
   /** A turn settled (turn.completed or a harness-side stop): a worker's, or
@@ -1023,24 +1044,7 @@ export class Dispatcher {
     const run = this.get(runId);
     if (!run) return;
     if (run.status === "running") {
-      // dependents of a failed/canceled subtask can never run
-      let changed = true;
-      while (changed) {
-        changed = false;
-        for (const subtask of run.subtasks) {
-          if (subtask.status !== "pending") continue;
-          const blocked = subtask.dependsOn.some((dep) => {
-            const status = run.subtasks.find((entry) => entry.id === dep)?.status;
-            return status === "failed" || status === "canceled" || status === "skipped";
-          });
-          if (blocked) {
-            subtask.status = "skipped";
-            subtask.error = t("Skipped because a subtask it depends on did not finish");
-            subtask.finishedAt = Date.now();
-            changed = true;
-          }
-        }
-      }
+      skipBlocked(run);
       const settings = this.host.settings();
       const cap = Math.max(settings.maxConcurrent, run.maxConcurrent ?? 0);
       let running = run.subtasks.filter((subtask) => this.inTurn(subtask)).length;
@@ -1060,6 +1064,9 @@ export class Dispatcher {
         this.startSubtask(run, subtask, bot);
         running += 1;
       }
+      // one that could not even start just now (its bot is gone) fails its
+      // dependents in this pass too, or the run would wait on them forever
+      skipBlocked(run);
       if (run.subtasks.every((subtask) => isSettled(subtask.status))) {
         const anyDone = run.subtasks.some((subtask) => subtask.status === "done");
         if (anyDone && settings.autoSynthesize) {
@@ -1254,11 +1261,7 @@ export class Dispatcher {
     const now = Date.now();
     run.status = status;
     run.finishedAt = now;
-    for (const squad of run.squads ?? []) {
-      // the run ended before the review was due: review what there is, if it is enough to tell
-      if (!squad.review && now - squad.addedAt >= MIN_REVIEW_WINDOW_MS) squad.review = reviewSquad(run, squad, now);
-      squad.endedAt ??= now;
-    }
+    dissolveSquads(run, now);
     this.touch(run);
     if (!run.parentRunId) return;
     const parent = this.get(run.parentRunId);
@@ -1318,12 +1321,17 @@ export class Dispatcher {
       : ask.total !== undefined && Number.isFinite(ask.total) && ask.total - people > 0
         ? Math.trunc(ask.total - people)
         : undefined;
+    // the department's own line when it has one, else the company's — and
+    // what that line has already paid for today
+    const ownLine = department?.budgetPerDay !== undefined;
+    const spentToday = this.host.spentToday?.(ownLine ? section : undefined);
     return {
       now: Date.now(),
       bot: (id) => this.host.bot(id),
       maxConcurrent: this.host.settings().maxConcurrent,
       rules: org.rules,
       budgetCny: department?.budgetPerDay ?? org.rules.budgetPerDay,
+      ...(typeof spentToday === "number" && Number.isFinite(spentToday) ? { spentTodayCny: spentToday } : {}),
       room: this.host.maxBots - this.host.bots().length,
       roleKey: roleCore,
       modelFor: (subtask) => this.newcomerModel(run, subtask),
@@ -1342,6 +1350,9 @@ export class Dispatcher {
       squadName: nextSquadName(run),
       leadName: chief?.name ?? "?",
       ...(requested !== undefined ? { requested } : {}),
+      // a department's share of the 主 Bot's plan stays with its lead, who
+      // staffs it with its own team: newcomers never take it past the lead
+      keep: (subtask) => this.mayPlan(run, subtask),
     };
   }
 
@@ -1387,8 +1398,16 @@ export class Dispatcher {
     count = Math.min(count, Math.max(0, this.host.maxBots - this.host.bots().length));
     if (count < 1) return { error: t("The workspace has no room for more bots.") };
     const now = Date.now();
-    const plan = planSquad(run, count, { now, maxConcurrent: this.host.settings().maxConcurrent, roleKey: roleCore }, typicalDuration(run));
-    if (!plan.people.length) return { error: t("Nothing is left to hand out: every remaining subtask is running or waits on earlier work.") };
+    const keep = (subtask: DispatchSubtask) => this.mayPlan(run, subtask);
+    const plan = planSquad(run, count, { now, maxConcurrent: this.host.settings().maxConcurrent, roleKey: roleCore, keep }, typicalDuration(run));
+    if (!plan.people.length) {
+      const leadsWork = run.subtasks.some((subtask) => subtask.status === "pending" && keep(subtask));
+      return {
+        error: leadsWork
+          ? t("What is left is departments' own work, which their leads staff: ask a lead to add people to its team.")
+          : t("Nothing is left to hand out: every remaining subtask is running or waits on earlier work."),
+      };
+    }
 
     // the new people, made like the dispatcher's own specialists
     const chief = this.host.bot(run.chiefBotId);
@@ -1470,6 +1489,8 @@ export class Dispatcher {
   /** Review squads whose 30 minutes are up: did the run speed up? */
   checkReviews(now = Date.now()): void {
     for (const run of this.runs) {
+      // a finished run's squads dissolved with it
+      if (isFinished(run.status)) continue;
       let changed = false;
       for (const squad of run.squads ?? []) {
         // a dissolved squad was reviewed when its run ended (if there was enough to tell)
@@ -1604,6 +1625,36 @@ function isSettled(status: SubtaskStatus): boolean {
 
 function isFinished(status: RunStatus): boolean {
   return status === "done" || status === "failed" || status === "canceled";
+}
+
+/** Dependents of a failed, canceled or skipped subtask can never run. */
+function skipBlocked(run: DispatchRun): void {
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const subtask of run.subtasks) {
+      if (subtask.status !== "pending") continue;
+      const blocked = subtask.dependsOn.some((dep) => {
+        const status = run.subtasks.find((entry) => entry.id === dep)?.status;
+        return status === "failed" || status === "canceled" || status === "skipped";
+      });
+      if (blocked) {
+        subtask.status = "skipped";
+        subtask.error = t("Skipped because a subtask it depends on did not finish");
+        subtask.finishedAt = Date.now();
+        changed = true;
+      }
+    }
+  }
+}
+
+/** The run ended: its squads dissolve. One that joined long enough ago is
+ * reviewed on what there is, when the review was not due yet. */
+function dissolveSquads(run: DispatchRun, now: number): void {
+  for (const squad of run.squads ?? []) {
+    if (!squad.review && now - squad.addedAt >= MIN_REVIEW_WINDOW_MS) squad.review = reviewSquad(run, squad, now);
+    squad.endedAt ??= now;
+  }
 }
 
 /** The parts of a subtask's pick that differ from the bot's own settings,

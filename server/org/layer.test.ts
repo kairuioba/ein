@@ -353,6 +353,25 @@ describe("OrgLayer", () => {
       expect(layer.inbox().some((entry) => entry.id === "stuck:writer")).toBe(false);
     });
 
+    it("does not pass up a bot that is making progress in a meeting room", () => {
+      const now = Date.now();
+      layer.patchOrg({ chiefBotId: "chief", rules: { escalateAfterMin: 10 } });
+      host.botList = host.botList.map((bot) => (bot.id === "writer" ? { ...bot, busy: true, activity: "working" } : bot));
+      host.botList.push({ id: "editor", name: "主编", threadId: "t-editor", section: "内容部", chiefOfStaff: true, createdAt: 5 });
+      // its own chat has been quiet for half an hour; it holds the floor in the room right now
+      host.threads.set("t-writer", [{ id: "w1", role: "bot", kind: "text", at: now - 31 * 60_000, text: "写着呢" }]);
+      host.groupList = [{ id: "g1", name: "价格对齐会", threadId: "t-room", memberIds: ["chief", "writer"], busyBotId: "writer" }];
+      host.threads.set("t-room", [{ id: "r1", role: "bot", kind: "text", at: now - 60_000, text: "我觉得 799 合适", from: { botId: "writer" } }]);
+      expect(layer.inbox().some((item) => item.id === "stuck:writer")).toBe(false);
+      expect(layer.tickEscalations(now)).toEqual([]);
+      expect(layer.eventsSince(0).filter((event) => event.kind === "escalation")).toEqual([]);
+      expect(host.chips).toEqual([]);
+      expect(layer.brief(0).risks.some((risk) => risk.botId === "writer")).toBe(false);
+      // the room goes quiet too: now it is stuck, one level at a time
+      host.threads.set("t-room", [{ id: "r1", role: "bot", kind: "text", at: now - 12 * 60_000, text: "我觉得 799 合适", from: { botId: "writer" } }]);
+      expect(layer.tickEscalations(now)).toEqual([{ botId: "writer", to: "editor" }]);
+    });
+
     it("rejects subscriptions for unknown bots or documents", () => {
       const doc = layer.publishDoc({ title: "x", section: null, text: "y" });
       expect(() => layer.subscribeDoc(doc.id, { botId: "nobody", on: true })).toThrow(LibraryError);
@@ -379,6 +398,16 @@ describe("OrgLayer", () => {
       expect(usage.byBot.map((entry) => entry.botId)).toEqual(["writer", "designer"]);
       expect(usage.unpricedTokens).toBe(15);
       expect(usage.budgetPerDay).toBe(60);
+    });
+
+    it("says what the company and each department spent today, for the budget line", () => {
+      layer.recordTurnUsage("writer", { input: 1_000, output: 200 }, 1);
+      layer.recordTurnUsage("designer", { input: 10, output: 5 }, 0.5);
+      layer.recordTurnUsage("chief", { input: 10, output: 5 }, 0.1);
+      expect(layer.spentToday()).toBe(11.2);
+      expect(layer.spentToday("内容部")).toBe(7);
+      expect(layer.spentToday(" 设计部 ")).toBe(3.5);
+      expect(layer.spentToday("财务法务")).toBe(0);
     });
 
     it("brings the inbox, departments and spend together", () => {

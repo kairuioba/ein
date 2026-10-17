@@ -125,3 +125,10 @@ export function botThreads(bot: Pick<OrgBot, "threadId" | "tasks">): string[] {
 export function groupThreads(group: Pick<OrgGroup, "threadId" | "tasks">): string[] {
   return [...new Set([group.threadId, ...(group.tasks ?? []).map((task) => task.threadId)])];
 }
+
+/** Where a working bot's progress shows: its own conversations, and a room's
+ * while it holds the floor there. The escalation rule, the inbox and the
+ * brief all read "no progress" from these, so they agree. */
+export function workThreads(bot: Pick<OrgBot, "id" | "threadId" | "tasks">, groups: readonly OrgGroup[]): string[] {
+  return [...new Set([...botThreads(bot), ...groups.filter((group) => group.busyBotId === bot.id).flatMap((group) => groupThreads(group))])];
+}

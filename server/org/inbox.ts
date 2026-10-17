@@ -13,7 +13,7 @@
 import type { DispatchRun } from "../../shared/dispatch-types.ts";
 import { allTranslations, t } from "../../shared/i18n.ts";
 import type { InboxItem } from "../../shared/org-types.ts";
-import { botThreads, clip, firstLine, groupThreads, type OrgBot, type OrgCard, type OrgGroup, type OrgMessage } from "./util.ts";
+import { botThreads, clip, firstLine, groupThreads, workThreads, type OrgBot, type OrgCard, type OrgGroup, type OrgMessage } from "./util.ts";
 
 export interface InboxSource {
   bots: readonly OrgBot[];
@@ -53,8 +53,7 @@ export function stuckEscalations(source: InboxSource, listed: ReadonlySet<string
     if (bot.hidden || listed.has(bot.id)) continue;
     const working = bot.activity === "working" || (bot.busy === true && bot.activity === undefined);
     if (!working) continue;
-    const threads = [...botThreads(bot), ...source.groups.filter((group) => group.busyBotId === bot.id).flatMap((group) => groupThreads(group))];
-    const lastAt = Math.max(0, ...threads.map((threadId) => source.messages(threadId).at(-1)?.at ?? 0));
+    const lastAt = Math.max(0, ...workThreads(bot, source.groups).map((threadId) => source.messages(threadId).at(-1)?.at ?? 0));
     if (!lastAt) continue;
     const ladder = escalationLadder(bot, source.bots, rule.chiefId);
     // one level per step: the bot, then each rung, then you

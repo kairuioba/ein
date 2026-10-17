@@ -192,6 +192,21 @@ describe("squad plan", () => {
     expect(plan.makespanAfter).toBe(2 * 53 * MIN);
   });
 
+  it("never moves a subtask that stays with its owner, and still counts it in the estimate", () => {
+    const story = storyRun();
+    // P14 and P15 are a department lead's share: that lead staffs them itself
+    const keep = (entry: DispatchSubtask) => entry.id === "P14" || entry.id === "P15";
+    const plan = planSquad(story, 4, { now: NOW, maxConcurrent: 3, roleKey: roleCore, keep }, typicalDuration(story));
+    expect(plan.moves.has("P14")).toBe(false);
+    expect(plan.moves.has("P15")).toBe(false);
+    expect(plan.moves.size).toBeGreaterThan(0);
+    expect(plan.makespanAfter!).toBeLessThan(plan.makespanBefore!);
+    // when nothing else is left to take, nobody is planned and the check says why
+    const leadsOnly = run(story.subtasks.map((entry) => (entry.status === "pending" && !keep(entry) ? { ...entry, status: "done" as const, startedAt: NOW - 60 * MIN, finishedAt: NOW - 5 * MIN } : entry)));
+    expect(planSquad(leadsOnly, 2, { now: NOW, maxConcurrent: 3, roleKey: roleCore, keep }, typicalDuration(leadsOnly)).people).toEqual([]);
+    expect(diagnoseRun(leadsOnly, context({ keep }))).toMatchObject({ verdict: "add-wont-help", reason: expect.stringContaining("leads staff") });
+  });
+
   it("estimates nothing without a finished subtask, but still splits the work", () => {
     const fresh = run([subtask("a"), subtask("b"), subtask("c", { status: "running", attempts: 1, startedAt: NOW - MIN })]);
     const plan = planSquad(fresh, 2, { now: NOW, maxConcurrent: 3, roleKey: roleCore }, null);
@@ -328,6 +343,11 @@ describe("diagnoseRun", () => {
     expect(tight.suggestion!.add).toBeLessThan(4);
     const over = diagnoseRun(story, { ...priced, budgetCny: 40 });
     expect(over.suggestion!.withinBudget).toBe(false);
+    // the line is a day's: ¥480 of a ¥500 line already went on other work today
+    const spentElsewhere = diagnoseRun(story, { ...priced, budgetCny: 500, spentTodayCny: 480 });
+    expect(spentElsewhere.suggestion!.withinBudget).toBe(false);
+    // this run's own spend still counts when today's is smaller (it started yesterday)
+    expect(diagnoseRun(story, { ...priced, budgetCny: 500, spentTodayCny: 5 }).suggestion!.withinBudget).toBe(true);
   });
 });
 

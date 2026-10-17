@@ -64,6 +64,9 @@ export interface DiagnoseContext {
   rules: OrgRules;
   /** the daily budget line for this run (its department's, else the company's), CNY */
   budgetCny: number;
+  /** what that line has already paid for today, this run's work and all
+   * other work, CNY; absent when unknown (then this run's spend counts) */
+  spentTodayCny?: number;
   /** how many more bots the workspace can hold */
   room: number;
   /** what groups subtasks into one kind of work ("前端工程师" and "前端" alike) */
@@ -85,6 +88,10 @@ export interface DiagnoseContext {
   leadName: string;
   /** an explicit ask: how many more people */
   requested?: number;
+  /** a not-started subtask that stays with whoever has it: a department
+   * lead's share of the 主 Bot's plan, which the lead staffs with its own
+   * team. Newcomers never take one. */
+  keep?(subtask: DispatchSubtask): boolean;
 }
 
 // ── small maths ─────────────────────────────────────────────────────────
@@ -199,7 +206,8 @@ export interface PoolWorker {
  * Running work keeps its worker. Returns subtask id → worker id. */
 export function poolSchedule(input: {
   running: ReadonlyArray<{ id: string; worker: string; remaining: number }>;
-  pending: ReadonlyArray<{ id: string; owner: string; role: string; deps: readonly string[] }>;
+  /** `fixed`: stays with its owner, never taken by a newcomer */
+  pending: ReadonlyArray<{ id: string; owner: string; role: string; deps: readonly string[]; fixed?: boolean }>;
   workers: readonly PoolWorker[];
   doneIds: ReadonlySet<string>;
   cap: number;
@@ -211,7 +219,7 @@ export function poolSchedule(input: {
   const busy = new Set(active.map((entry) => entry.worker));
   const waiting = [...input.pending];
   const canTake = (worker: PoolWorker, task: (typeof waiting)[number]) =>
-    (worker.fresh ? worker.roles.has(task.role) : task.owner === worker.id) && task.deps.every((dep) => done.has(dep));
+    (worker.fresh ? !task.fixed && worker.roles.has(task.role) : task.owner === worker.id) && task.deps.every((dep) => done.has(dep));
   let now = 0;
   for (let guard = 0; guard <= (input.pending.length + input.running.length) * 2 + 2; guard += 1) {
     for (const worker of input.workers) {
@@ -301,11 +309,12 @@ export function runConcurrency(run: DispatchRun, settingsCap: number): number {
 /** Plan a squad of up to `count` newcomers for `run`: which kinds of work they
  * do, which not-started subtasks they take, and the finish time before/after.
  * Pass `duration` = typicalDuration(run) (null when nothing finished yet). */
-export function planSquad(run: DispatchRun, count: number, ctx: Pick<DiagnoseContext, "now" | "maxConcurrent" | "roleKey">, duration: number | null): SquadPlan {
+export function planSquad(run: DispatchRun, count: number, ctx: Pick<DiagnoseContext, "now" | "maxConcurrent" | "roleKey" | "keep">, duration: number | null): SquadPlan {
   const dead = doomed(run);
   const doneIds = new Set(run.subtasks.filter((subtask) => subtask.status === "done").map((subtask) => subtask.id));
   const running = run.subtasks.filter((subtask) => subtask.status === "running");
   const pending = run.subtasks.filter((subtask) => subtask.status === "pending" && !dead.has(subtask.id));
+  const stays = (subtask: DispatchSubtask) => Boolean(ctx.keep?.(subtask));
   const unit = duration ?? 60_000;
   const remainingOf = (subtask: DispatchSubtask) => Math.max(unit - (ctx.now - (subtask.startedAt ?? ctx.now)), unit * 0.2);
   const capBefore = runConcurrency(run, ctx.maxConcurrent);
@@ -317,9 +326,11 @@ export function planSquad(run: DispatchRun, count: number, ctx: Pick<DiagnoseCon
     roles.add(ctx.roleKey(subtask.role));
     rolesOf.set(subtask.assigneeBotId, roles);
   }
+  // newcomers come for the kinds of work they may take
   const pendingByRole = new Map<string, number>();
   const roleLabel = new Map<string, string>();
   for (const subtask of pending) {
+    if (stays(subtask)) continue;
     const key = ctx.roleKey(subtask.role);
     pendingByRole.set(key, (pendingByRole.get(key) ?? 0) + 1);
     if (!roleLabel.has(key)) roleLabel.set(key, subtask.role);
@@ -340,7 +351,7 @@ export function planSquad(run: DispatchRun, count: number, ctx: Pick<DiagnoseCon
   const capAfter = Math.min(MAX_RUN_CONCURRENCY, Math.max(capBefore, assignedWorkers.size + roles.length));
   const taken = poolSchedule({
     running: running.map((subtask) => ({ id: subtask.id, worker: subtask.assigneeBotId, remaining: remainingOf(subtask) })),
-    pending: pending.map((subtask) => ({ id: subtask.id, owner: subtask.assigneeBotId, role: ctx.roleKey(subtask.role), deps: subtask.dependsOn })),
+    pending: pending.map((subtask) => ({ id: subtask.id, owner: subtask.assigneeBotId, role: ctx.roleKey(subtask.role), deps: subtask.dependsOn, ...(stays(subtask) ? { fixed: true } : {}) })),
     workers,
     doneIds,
     cap: capAfter,
@@ -525,10 +536,14 @@ export function diagnoseRun(run: DispatchRun, ctx: DiagnoseContext): DispatchDia
   if (!parallel.ok) return refuse(t("Nothing left can run side by side yet; new people would wait until earlier work finishes."));
   if (!capability.ok) return refuse(t("Too much work is being sent back; a stronger model helps more than more people."));
 
+  // a department lead's share of the 主 Bot's plan is staffed by that lead
+  const takeable = ready.filter((subtask) => !ctx.keep?.(subtask));
+  if (!takeable.length) return refuse(t("What is left is departments' own work, which their leads staff: ask a lead to add people to its team."));
+
   // how many: never more than the independent work there is to take, one
   // squad (span) at a time, and only as many bots as the workspace holds
   const span = Math.max(2, Math.trunc(ctx.rules.spanOfControl) || 5);
-  const maxCount = Math.min(ready.length, span, Math.max(0, ctx.room));
+  const maxCount = Math.min(takeable.length, span, Math.max(0, ctx.room));
   if (maxCount < 1) return refuse(t("The workspace has no room for more bots."));
   const plans = new Map<number, SquadPlan>();
   const planFor = (count: number) => {
@@ -578,8 +593,11 @@ export function diagnoseRun(run: DispatchRun, ctx: DiagnoseContext): DispatchDia
     });
     return Math.max(0, round1(extra));
   };
-  // the budget line left once the work already planned is paid for (unknown prices → unlimited)
-  const budgetLeft = money.average === null ? Infinity : ctx.budgetCny - (money.total + money.average * (running.length + pending.length));
+  // the budget line left once the work already planned is paid for (unknown
+  // prices → unlimited). The line is a day's: what it already paid for today
+  // counts, other work included, not only this run's finished subtasks.
+  const spent = Math.max(money.total, ctx.spentTodayCny ?? 0);
+  const budgetLeft = money.average === null ? Infinity : ctx.budgetCny - (spent + money.average * (running.length + pending.length));
   let plan = planFor(count);
   // over the budget line: try a smaller squad before suggesting this one
   while (count > 1 && costFor(plan) > budgetLeft) {

@@ -91,13 +91,19 @@ export class TaskFolderStore {
 
   /** Create the folder for a dispatch run (idempotent). The caller supplies
    * the task's own lead; the store never assumes the company chief. */
-  ensureForRun(run: DispatchRun, leadBotId?: string): TaskFolderRecord {
+  ensureForRun(run: DispatchRun, leadBotId?: string, conversationId?: string): TaskFolderRecord {
     const existing = this.byRun(run.id);
     if (existing) {
+      let changed = false;
       if (leadBotId && !existing.leadBotId) {
         existing.leadBotId = leadBotId;
-        this.save();
+        changed = true;
       }
+      if (conversationId && !existing.conversationId) {
+        existing.conversationId = conversationId;
+        changed = true;
+      }
+      if (changed) this.save();
       return existing;
     }
     const folder: TaskFolderRecord = {
@@ -107,6 +113,7 @@ export class TaskFolderStore {
       order: this.nextOrder(),
       collapsed: false,
       ...(leadBotId ? { leadBotId } : {}),
+      ...(conversationId ? { conversationId } : {}),
       runId: run.id,
       createdAt: Number.isFinite(run.createdAt) ? run.createdAt : Date.now(),
     };

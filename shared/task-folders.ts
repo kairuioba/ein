@@ -19,6 +19,13 @@ export interface TaskFolderRecord {
   leadBotId?: string;
   /** the dispatch run executing this task, when it has one */
   runId?: string;
+  /** the task's own window: the conversation the owner opened to ask for this
+   * task. A new task always gets a new window; an old task keeps it for review
+   * even after its employees are reused by a later task. */
+  conversationId?: string;
+  /** handoff summaries explicitly shared from earlier tasks (read-only
+   * context, never the old transcript) */
+  sharedFromTaskIds?: string[];
   createdAt: number;
   archivedAt?: number;
 }

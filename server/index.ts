@@ -2308,7 +2308,7 @@ const dispatcher = new Dispatcher({
     orgLayer.onDispatchRun(run);
     if (run.parentRunId) return;
     try {
-      taskFolders?.ensureForRun(run, taskLeadForRun(run));
+      taskFolders?.ensureForRun(run, taskLeadForRun(run), run.sourceThreadId);
       broadcast({ kind: "task-folders", tasks: taskFolderViews() });
     } catch (error) {
       console.error("task folders: could not sync a dispatch run", error);

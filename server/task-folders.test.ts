@@ -38,6 +38,16 @@ describe("task folders", () => {
     expect(store.create({ title: "  " })).toMatchObject({ error: expect.stringContaining("title") });
   });
 
+  it("links the task's own window and never forgets it", () => {
+    const { store } = temp();
+    const a = store.ensureForRun(run("run-a", "做发布会材料"), "lead-a", "conv-a");
+    expect(a.conversationId).toBe("conv-a");
+    // a later sync without the conversation must not erase it
+    const again = store.ensureForRun(run("run-a", "做发布会材料"), undefined, undefined);
+    expect(again.conversationId).toBe("conv-a");
+    expect(store.ensureForRun(run("run-b", "第二个任务"), undefined, "conv-b")).toMatchObject({ conversationId: "conv-b" });
+  });
+
   it("is idempotent per run and keeps the task's own lead", () => {
     const { store } = temp();
     const a = store.ensureForRun(run("run-a", "做发布会材料"), "lead-a");

@@ -187,6 +187,7 @@
   "Always allowed": "总是允许",
   "Always allowed: {key}": "总是允许：{key}",
   "An Android device is required": "需要一台 Android 设备",
+  "An engine action needs your approval": "引擎有一个操作需要你批准（该引擎没有提供操作名称）",
   "An engine is rate limiting this work; more people would only hit the limit harder. Wait a few minutes or switch engines.": "有引擎在限流，加人只会更快撞上限额。等几分钟，或换个引擎。",
   "An update is ready": "有新版本",
   "Analytics, feature flags, experiments": "分析、功能开关和实验",

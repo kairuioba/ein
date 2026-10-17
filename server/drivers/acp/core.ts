@@ -53,6 +53,37 @@ import { appendNative } from "../native.ts";
 import { steerContinuationPrompt, undeliveredField, withEarlySteers, type PendingSteer } from "../steer.ts";
 import { SPAWNED_PROXIES } from "../../proxy-paths.ts";
 
+/** What a permission request's card should say. ACP servers vary: some send
+ * `kind` + `rawInput.command`, some only a human `title`, and some (WorkBuddy
+ * in practice) send neither — the card then said "tool", which tells the user
+ * nothing about what they are approving. */
+export function describeToolRequest(toolCall: unknown): { tool: string; summary: string } {
+  const call = (toolCall && typeof toolCall === "object" ? toolCall : {}) as {
+    kind?: unknown;
+    title?: unknown;
+    rawInput?: unknown;
+  };
+  const kind = typeof call.kind === "string" ? call.kind.trim() : "";
+  const tool = kind === "execute" ? "shell" : kind === "edit" ? "edit" : kind || "tool";
+  const raw = call.rawInput;
+  const rawText =
+    typeof raw === "string"
+      ? raw
+      : raw && typeof raw === "object"
+        ? Object.entries(raw as Record<string, unknown>)
+            .filter(([, value]) => typeof value === "string" || typeof value === "number")
+            .slice(0, 3)
+            .map(([key, value]) => `${key}: ${String(value).slice(0, 120)}`)
+            .join("; ")
+        : "";
+  const title = typeof call.title === "string" ? call.title.trim() : "";
+  const summary = (typeof (raw as { command?: unknown } | null)?.command === "string" && (raw as { command: string }).command) || title || rawText;
+  return {
+    tool,
+    summary: String(summary || "").slice(0, 200) || t("An engine action needs your approval"),
+  };
+}
+
 export interface AcpConfig {
   cli: string;
   fullAuto: boolean;
@@ -513,9 +544,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               result: allow ? { outcome: { outcome: "selected", optionId: allow } } : cancelled,
             });
           }
-          const kind = String(toolCall.kind ?? "");
-          const tool = kind === "execute" ? "shell" : kind === "edit" ? "edit" : kind || "tool";
-          const summary = String(toolCall.rawInput?.command ?? toolCall.title ?? tool).slice(0, 200);
+          const { tool, summary } = describeToolRequest(toolCall);
           const requestId = newId();
           const finish = (behavior: string, source: "user" | "timeout" | "system" = "user") => {
             if (!asks.delete(requestId)) return;

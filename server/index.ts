@@ -1641,7 +1641,12 @@ bus.subscribe((event: RuntimeEvent) => {
               : permission
                 ? t("Approval needed")
                 : t("Your bot has a question"),
-          subtitle: event.summary,
+          // an ACP server that sends neither title nor command would otherwise
+          // put the literal string "tool" under the title
+          subtitle:
+            permission && (!event.summary || event.summary === event.tool || event.summary === "tool")
+              ? t("An engine action needs your approval")
+              : event.summary,
           options: event.choices?.length ? event.choices : permission ? ["Allow", "Deny"] : [],
           requestId: event.requestId,
           tool: permission ? event.tool : undefined,

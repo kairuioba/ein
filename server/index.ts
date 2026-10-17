@@ -75,6 +75,7 @@ import { Dispatcher, dispatchSettings } from "./dispatch.ts";
 import { TaskFolderStore } from "./task-folders.ts";
 import { buildTaskRetro } from "./task-retro.ts";
 import { buildStateDoc } from "./state-doc.ts";
+import { buildOwnerMetrics } from "./owner-metrics.ts";
 import { buildDecisionStack, emptyDecisionStack } from "./decision-stack.ts";
 import { buildProjectOffice, emptyProjectOffice } from "./office-view.ts";
 import { buildContextShare, type ContextSource } from "./context-share.ts";
@@ -5746,6 +5747,12 @@ const server = createServer(async (req, res) => {
       if ("error" in resolved) return json(res, 400, resolved);
       broadcast({ kind: "inbox", items: inbox.list(), counts: inbox.counts() });
       return json(res, 200, { item: resolved, counts: inbox.counts() });
+    }
+
+    // ── 老板时间账本：决策延迟 / 返工率 / 待处理 ─────────────────────
+    if (path === "/api/office/metrics/owner-time" && method === "GET") {
+      const waitingProjects = (dispatcher.list() ?? []).filter((run) => run.status === "running" || run.status === "synthesizing").length;
+      return json(res, 200, { metrics: buildOwnerMetrics({ items: inbox.list("all"), retros: dispatcher.retros(50), waitingProjects }) });
     }
 
     // ── 自我进化 · 阶段 3：失败模式 → 改进提案 ─────────────────────────

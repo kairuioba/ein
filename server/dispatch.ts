@@ -1005,7 +1005,7 @@ export class Dispatcher {
    * task: a pending subtask whose owner is busy, same department first, then
    * one whose role it plausibly fits. Never steals running or started work,
    * and never borrows a bot that belongs to another task. */
-  private rebalance(run: DispatchRun): void {
+  private rebalance(run: DispatchRun, reason: "finished" | "helping" = "finished"): void {
     if (run.status !== "running") return;
     const pending = run.subtasks.filter((subtask) => subtask.status === "pending" && subtask.attempts === 0 && !subtask.threadId);
     if (!pending.length) return;
@@ -1033,7 +1033,14 @@ export class Dispatcher {
       pick.assigneeBotId = botId;
       pick.reassignedFrom = previous;
       pending.splice(pending.indexOf(pick), 1);
-      this.host.activity(run.sourceThreadId, t("@{name} finished early and took over “{title}”", { name: bot.name, title: pick.title }));
+      if (reason === "helping") {
+        this.host.activity(
+          run.sourceThreadId,
+          t("@{name} is free and helps @{owner} finish “{title}”", { name: bot.name, owner: this.host.bot(previous)?.name ?? "?", title: pick.title }),
+        );
+      } else {
+        this.host.activity(run.sourceThreadId, t("@{name} finished early and took over “{title}”", { name: bot.name, title: pick.title }));
+      }
     }
   }
 
@@ -1270,6 +1277,9 @@ export class Dispatcher {
     }
     for (const run of this.runs) {
       if (run.status !== "running" && run.status !== "synthesizing") continue;
+      // Same department, no separate data boundary: a free teammate may help
+      // a busy colleague's not-started subtasks even without a new order.
+      if (run.status === "running" && run.subtasks.some((subtask) => subtask.assigneeBotId === botId)) this.rebalance(run, "helping");
       if (run.chiefBotId === botId || run.subtasks.some((subtask) => subtask.assigneeBotId === botId && subtask.status === "pending")) {
         this.pump(run.id);
       }

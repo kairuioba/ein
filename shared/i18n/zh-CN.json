@@ -36,6 +36,7 @@
   "@{name} finished early and took over “{title}”": "@{name} 提前完成，接手了「{title}」",
   "@{name} finished “{title}” ({done}/{total})": "@{name} 完成了“{title}”（{done}/{total}）",
   "@{name} handed “{title}” to its team ({count} subtasks)": "@{name} 把“{title}”交给了自己的团队（{count} 个子任务）",
+  "@{name} is free and helps @{owner} finish “{title}”": "@{name} 空闲，帮着 @{owner} 一起做「{title}」",
   "@{name} is still working — ask converted to a delegation": "@{name} 仍在工作——询问已转为派发任务",
   "@{name} replied to the delegated task:": "@{name} 回复了派发的任务：",
   "@{name} will retry “{title}” — {reason}": "@{name} 将重试“{title}”——{reason}",

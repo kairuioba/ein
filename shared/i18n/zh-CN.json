@@ -1080,6 +1080,7 @@
   "Ended {time} · {count} people": "{time} 已结束 · {count} 人",
   "Engine": "引擎",
   "Engine CLIs": "引擎 CLI",
+  "Engine and model": "引擎与模型",
   "Engine default": "引擎默认",
   "Engine default effort": "引擎默认推理强度",
   "Engine look": "引擎形象",

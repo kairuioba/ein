@@ -11,6 +11,12 @@ import { Button, Segmented } from "@/components/ui";
 import { api, useStore } from "@/state/store";
 import { t } from "@/lib/i18n";
 import { SectionHeader, SettingRow } from "./parts";
+import {
+  groupMaintenanceModels,
+  parseSelectionKey,
+  selectionKey,
+  type ModelChoice,
+} from "@/lib/maintenance-models";
 
 type Channel = "stable" | "dev";
 
@@ -58,7 +64,7 @@ export function MaintenanceSection() {
   const { state: store, dispatch } = useStore();
   const { state, reload } = useMaintenance(true);
   const [repoPath, setRepoPath] = useState("");
-  const [instanceId, setInstanceId] = useState("");
+  const [choiceKey, setChoiceKey] = useState("");
   const [branch, setBranch] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
@@ -109,7 +115,23 @@ export function MaintenanceSection() {
     );
   }
 
-  const selected = ready.find((instance) => instance.instanceId === instanceId) ?? ready[0];
+  const groups = groupMaintenanceModels(ready);
+  const parsed = parseSelectionKey(choiceKey);
+  const selected: ModelChoice | undefined =
+    (parsed &&
+      (() => {
+        const instance = ready.find((entry) => entry.instanceId === parsed.instanceId);
+        const model = instance?.models.options.find((option) => option.id === parsed.modelId);
+        return instance && model ? { instance, model } : undefined;
+      })()) ??
+    (ready[0]
+      ? {
+          instance: ready[0],
+          model:
+            ready[0].models.options.find((option) => option.id === ready[0].models.default) ??
+            ready[0].models.options[0]!,
+        }
+      : undefined);
   const channel: Channel = state.channel ?? "stable";
   const repoNote = state.repo?.ok
     ? `${state.repo.branch ?? "?"} · ${state.repo.commit ?? ""} ${state.repo.subject ?? ""}${state.repo.dirty ? ` · ${t("uncommitted changes")}` : ""}`
@@ -137,16 +159,47 @@ export function MaintenanceSection() {
             />
             <div className="flex flex-wrap items-center gap-2">
               <select
-                value={selected?.instanceId ?? ""}
-                onChange={(event) => setInstanceId(event.target.value)}
-                aria-label={t("Engine")}
-                className="h-9 min-w-[180px] rounded-lg border border-hairline/50 bg-app px-2 text-[13px] text-ink"
+                value={selected ? selectionKey(selected.instance.instanceId, selected.model.id) : ""}
+                onChange={(event) => setChoiceKey(event.target.value)}
+                aria-label={t("Engine and model")}
+                className="h-9 min-w-[220px] rounded-lg border border-hairline/50 bg-app px-2 text-[13px] text-ink"
               >
-                {ready.map((instance) => (
-                  <option key={instance.instanceId} value={instance.instanceId}>
-                    {instance.displayName} · {instance.models.options.find((option) => option.id === instance.models.default)?.label ?? instance.models.default}
-                  </option>
-                ))}
+                {groups.cloud.length > 0 && (
+                  <optgroup label={t("Cloud")}>
+                    {groups.cloud.map((choice) => (
+                      <option
+                        key={selectionKey(choice.instance.instanceId, choice.model.id)}
+                        value={selectionKey(choice.instance.instanceId, choice.model.id)}
+                      >
+                        {choice.model.label}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                {groups.workbuddy.length > 0 && (
+                  <optgroup label="WorkBuddy">
+                    {groups.workbuddy.map((choice) => (
+                      <option
+                        key={selectionKey(choice.instance.instanceId, choice.model.id)}
+                        value={selectionKey(choice.instance.instanceId, choice.model.id)}
+                      >
+                        {choice.model.label}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                {groups.engines.length > 0 && (
+                  <optgroup label={t("Engines")}>
+                    {groups.engines.map((choice) => (
+                      <option
+                        key={selectionKey(choice.instance.instanceId, choice.model.id)}
+                        value={selectionKey(choice.instance.instanceId, choice.model.id)}
+                      >
+                        {choice.instance.displayName} · {choice.model.label}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
               </select>
               <Button
                 size="sm"
@@ -157,7 +210,10 @@ export function MaintenanceSection() {
                       method: "PUT",
                       body: JSON.stringify({
                         repoPath: repoPath.trim(),
-                        modelSelection: { instanceId: selected!.instanceId, model: selected!.models.default },
+                        modelSelection: {
+                          instanceId: selected!.instance.instanceId,
+                          model: selected!.model.id,
+                        },
                       }),
                     });
                     return t("The maintenance desk is set up.");

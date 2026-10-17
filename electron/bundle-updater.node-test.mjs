@@ -51,13 +51,13 @@ test("reads latest-mac.yml and picks the ZIP for this Mac", () => {
 });
 
 test("finds the bundle and refuses to replace a copy it cannot", () => {
-  assert.equal(bundleOf("/Applications/OpenMausBot.app/Contents/MacOS/OpenMausBot"), "/Applications/OpenMausBot.app");
+  assert.equal(bundleOf("/Applications/Ein.app/Contents/MacOS/Ein"), "/Applications/Ein.app");
   assert.equal(bundleOf("/usr/bin/node"), null);
   const writable = () => true;
-  assert.equal(installBlocker("/Applications/OpenMausBot.app", { writable }), null);
-  assert.equal(installBlocker("/Volumes/Ein 0.1.43/OpenMausBot.app", { writable }), "not-installed");
-  assert.equal(installBlocker("/private/var/folders/x/AppTranslocation/ABC/d/OpenMausBot.app", { writable }), "not-installed");
-  assert.equal(installBlocker("/Applications/OpenMausBot.app", { writable: () => false }), "read-only");
+  assert.equal(installBlocker("/Applications/Ein.app", { writable }), null);
+  assert.equal(installBlocker("/Volumes/Ein 0.1.43/Ein.app", { writable }), "not-installed");
+  assert.equal(installBlocker("/private/var/folders/x/AppTranslocation/ABC/d/Ein.app", { writable }), "not-installed");
+  assert.equal(installBlocker("/Applications/Ein.app", { writable: () => false }), "read-only");
   assert.equal(installBlocker(null, { writable }), "not-a-bundle");
 });
 
@@ -70,7 +70,7 @@ test("the swap script copies beside the app, renames twice and rolls back", () =
 
 function world({ zipBytes = Buffer.from("zip-contents"), bundleId = "com.kairuioba.ein", current = "0.1.43", arch = "arm64" } = {}) {
   const root = mkdtempSync(join(tmpdir(), "bundle-updater-"));
-  const app = join(root, "Applications/OpenMausBot.app");
+  const app = join(root, "Applications/Ein.app");
   mkdirSync(join(app, "Contents"), { recursive: true });
   const sha = createHash("sha512").update(zipBytes).digest("base64");
   const feed = LATEST.replace("sha512: ARM", `sha512: ${sha}`).replace("size: 11", `size: ${zipBytes.length}`);
@@ -124,7 +124,7 @@ test("checks, downloads, verifies, unpacks and installs on restart", async () =>
     assert.equal(result.isUpdateAvailable, true);
     assert.deepEqual(w.events.find(([name]) => name === "update-available")?.[1].version, "0.2.0");
     const [staged] = await w.updater.downloadUpdate();
-    assert.ok(staged.endsWith("0.2.0/unpacked/Ein.app"));
+    assert.ok(staged.endsWith(join("0.2.0", "unpacked", "Ein.app")));
     assert.ok(existsSync(staged));
     assert.ok(w.fetched.includes("https://github.com/kairuioba/ein-releases/releases/latest/download/Ein-0.2.0-arm64.zip"));
     assert.ok(w.events.some(([name, payload]) => name === "download-progress" && payload.percent === 100));
@@ -185,7 +185,7 @@ test("refuses a download that is another app", async () => {
 test("refuses a download whose bytes do not match latest-mac.yml", async () => {
   const root = mkdtempSync(join(tmpdir(), "bundle-updater-sum-"));
   try {
-    const app = join(root, "Applications/OpenMausBot.app");
+    const app = join(root, "Applications/Ein.app");
     mkdirSync(join(app, "Contents"), { recursive: true });
     const updater = createBundleUpdater({
       feedUrl: "https://example.test/download",
@@ -214,7 +214,7 @@ test("a copy run from the disk image is told to move into Applications", async (
   const updater = createBundleUpdater({
     feedUrl: "https://example.test/download",
     currentVersion: "0.1.0",
-    appPath: "/Volumes/Ein/OpenMausBot.app",
+    appPath: "/Volumes/Ein/Ein.app",
     arch: "arm64",
     cacheDir: join(tmpdir(), "never-used"),
     fetch: async () => new Response(LATEST, { status: 200 }),

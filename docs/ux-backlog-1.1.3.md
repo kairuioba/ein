@@ -13,7 +13,7 @@
 | 4 | 维护岗配置（源码路径/bot/渠道）重启后丢失 | `saveConfig()` 补 `maintenance` 白名单 + 回归测试 | `fix/maintenance-config-persist` `635d3f5` |
 | 5 | 维护机器人聊天里一堆红色命令，看不懂是什么 | 工具步骤显示「运行命令」等短标签，原命令放 tooltip，失败只加红色小标记；维护手册要求用中文叙述「在修什么/怎么修/测试结果」；本机补 node/pnpm 软链让命令不再因缺工具而失败 | `fix/tool-activity-narration` `b8213d8` |
 | 6 | 新建 Bot 默认落到还没填 Key 的引擎，第一条消息就失败 | 默认引擎只跳过明确报告「credential 未配置」的引擎 | `fix/default-selection-authenticated` `c5fb561`+`602920a` |
-| 7 | WorkBuddy 列表里「WorkBuddy 默认模型」占位项；要求 DeepSeek V4.1 排第一并默认 | 由 App 内「Ein 维护」机器人在 `fix/workbuddy-deepseek-default` 分支处理（进行中，需复核后合并） | 待定 |
+| 7 | WorkBuddy 列表里「WorkBuddy 默认模型」占位项；要求 DeepSeek V4.1 排第一并默认 | 老板的「Ein 维护」机器人已在 `fix/workbuddy-deepseek-default` 完成（去掉占位模型、DeepSeek V4.1 Flash 置顶并默认、旧 Bot 自动迁移、ACP 回合固定真实 model id）；Lead 已复核并合并进 `review/1.1.3`，未覆盖 | `fix/workbuddy-deepseek-default` `589965b` |
 
 ## 二、待办（按优先级）
 

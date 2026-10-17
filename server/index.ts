@@ -5662,7 +5662,20 @@ const server = createServer(async (req, res) => {
       if (action === "reject" && typeof body.note !== "string") {
         return json(res, 400, { error: "reject needs a note" });
       }
-      const resolved = inbox.resolve(item.id, action, typeof body.note === "string" ? body.note : undefined);
+      const note = typeof body.note === "string" ? body.note : undefined;
+      // act on the task before dropping the item: a send-back runs the work
+      // again with the owner's sentence as feedback; an approval records the
+      // override of a needs_human gate
+      if (item.kind === "gate_failed" && item.runId && item.subtaskId) {
+        if (action === "reject") {
+          if (!note) return json(res, 400, { error: "reject needs a note" });
+          const reworked = dispatcher.rework(item.runId, item.subtaskId, note);
+          if ("error" in reworked) return json(res, 400, reworked);
+        } else if (action === "approve") {
+          dispatcher.acceptGate(item.runId, item.subtaskId);
+        }
+      }
+      const resolved = inbox.resolve(item.id, action, note);
       if ("error" in resolved) return json(res, 400, resolved);
       broadcast({ kind: "inbox", items: inbox.list(), counts: inbox.counts() });
       return json(res, 200, { item: resolved, counts: inbox.counts() });

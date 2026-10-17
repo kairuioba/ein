@@ -556,6 +556,50 @@ describe("Dispatcher", () => {
     expect(host.inbox.filter((item) => item.kind === "signoff")).toHaveLength(1);
   });
 
+  it("a send-back runs the subtask again with the owner's sentence in the prompt", async () => {
+    const result = submit([
+      {
+        id: "a",
+        title: "品牌文案",
+        brief: "写一段品牌文案",
+        role: "文案策划",
+        criteria: [{ id: "c1", text: "文风符合品牌调性", required: true, kind: "subjective" }],
+      },
+    ]);
+    expect("error" in result).toBe(false);
+    if ("error" in result) return;
+    await settle();
+    const first = host.workerTurns()[0]!;
+    host.finish(dispatcher, first.threadId, true, "第一版，```json\n{\"handoff\":{\"status\":\"done\",\"summary\":\"第一版\"}}\n```");
+    await settle();
+    expect(dispatcher.get(result.run.id)!.subtasks[0]!.gate).toMatchObject({ status: "needs_human" });
+    const reworked = dispatcher.rework(result.run.id, "a", "第 2 点没看到数据来源");
+    expect("error" in reworked).toBe(false);
+    await settle();
+    const subtask = dispatcher.get(result.run.id)!.subtasks[0]!;
+    expect(subtask).toMatchObject({ status: "running", reworkNote: "第 2 点没看到数据来源", reworkCount: 1 });
+    const second = host.workerTurns()[1]!;
+    expect(second.text).toContain("previous attempt was sent back");
+    expect(second.text).toContain("第 2 点没看到数据来源");
+  });
+
+  it("the owner can accept a needs_human gate without re-running", async () => {
+    const result = submit([
+      { id: "a", title: "文案", brief: "写文案", role: "文案策划", criteria: [{ id: "c1", text: "文风好", required: true, kind: "subjective" }] },
+    ]);
+    expect("error" in result).toBe(false);
+    if ("error" in result) return;
+    await settle();
+    const turn = host.workerTurns()[0]!;
+    host.finish(dispatcher, turn.threadId, true, "写好了，```json\n{\"handoff\":{\"status\":\"done\",\"summary\":\"写好了\"}}\n```");
+    await settle();
+    const accepted = dispatcher.acceptGate(result.run.id, "a");
+    expect("error" in accepted).toBe(false);
+    const subtask = dispatcher.get(result.run.id)!.subtasks[0]!;
+    expect(subtask.gate).toMatchObject({ status: "pass", reason: expect.stringContaining("owner") });
+    expect(subtask.gateOverridden).toBe(true);
+  });
+
   it("passes the gate when a required deterministic criterion is met", async () => {
     const result = submit([
       {

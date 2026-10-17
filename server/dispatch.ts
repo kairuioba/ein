@@ -1161,7 +1161,42 @@ export class Dispatcher {
     return run;
   }
 
-  /** Retry a failed or canceled subtask (and let its dependents run again). */
+  /** A human sent a finished subtask back with a sentence of feedback: run it
+   * again, carrying the feedback into the next worker prompt. */
+  rework(runId: string, subtaskId: string, feedback: string): DispatchRun | { error: string } {
+    const run = this.get(runId);
+    const subtask = run?.subtasks.find((entry) => entry.id === subtaskId);
+    if (!run || !subtask) return { error: t("No such subtask") };
+    const note = feedback.trim();
+    if (!note) return { error: t("a send-back needs a note") };
+    subtask.status = "pending";
+    subtask.attempts = 0;
+    subtask.reworkCount = (subtask.reworkCount ?? 0) + 1;
+    subtask.reworkNote = note.slice(0, 1_000);
+    delete subtask.error;
+    delete subtask.finishedAt;
+    delete subtask.childRunId;
+    delete subtask.gate;
+    this.reopen(run);
+    this.touch(run);
+    queueMicrotask(() => this.pump(run.id));
+    return run;
+  }
+
+  /** A human accepted a needs_human gate verdict: record it, don't re-run. */
+  acceptGate(runId: string, subtaskId: string): DispatchRun | { error: string } {
+    const run = this.get(runId);
+    const subtask = run?.subtasks.find((entry) => entry.id === subtaskId);
+    if (!run || !subtask) return { error: t("No such subtask") };
+    if (subtask.gate) {
+      subtask.gate = { ...subtask.gate, status: "pass", reason: t("accepted by the owner") };
+      subtask.gateOverridden = true;
+    }
+    this.touch(run);
+    return run;
+  }
+
+    /** Retry a failed or canceled subtask (and let its dependents run again). */
   retry(runId: string, subtaskId: string): DispatchRun | { error: string } {
     const run = this.get(runId);
     const subtask = run?.subtasks.find((entry) => entry.id === subtaskId);
@@ -2098,6 +2133,7 @@ function workerPrompt(
     subtask.acceptance ? `\nAcceptance criteria (checked by ${subtask.reviewer ?? chiefName}): ${subtask.acceptance}` : "",
     subtask.acceptance ? "" : "",
     subtask.reviewer ? `\nReviewer: ${subtask.reviewer}` : "",
+    subtask.reworkNote ? `\nThe previous attempt was sent back — fix this: ${subtask.reworkNote}` : "",
     deps.length ? "\nResults from earlier subtasks you build on:" : "",
     ...deps.map((dep) => `\n### ${dep.title}\n${clip(dep.result ?? "", RESULT_CONTEXT_CHARS)}`),
     ...(squad

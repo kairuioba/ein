@@ -190,6 +190,12 @@ export interface DispatchSubtask {
   criteria?: AcceptanceCriterion[];
   /** the acceptance gate's verdict for the latest attempt */
   gate?: SubtaskGate;
+  /** feedback from a "send back" decision; the next attempt must address it */
+  reworkNote?: string;
+  /** how many times a human sent this subtask back (audit) */
+  reworkCount?: number;
+  /** a human accepted the gate's needs_human verdict (recorded overrides) */
+  gateOverridden?: boolean;
   /** audit of the read-only context injected into the worker prompt */
   injectedContext?: {
     sourceTaskIds?: string[];

@@ -4313,5 +4313,7 @@
   "← in": "← 收到",
   "→ out": "→ 发出",
   "⌘↩ to send": "⌘↩ 发送",
-  "✕ removes a step": "点 ✕ 删掉一步"
+  "✕ removes a step": "点 ✕ 删掉一步",
+  "A handoff is stuck": "交接卡住了",
+  "A handoff was sent but never received — the downstream work is blocked.": "交接发出后一直没人接收，下游工作被卡住了。"
 }

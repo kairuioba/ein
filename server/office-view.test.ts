@@ -117,7 +117,7 @@ describe("buildProjectOffice", () => {
     });
     // longest wait first: the delivered handoff (90 min) before the still-running dependency (20 min)
     expect(office.now.waiting).toEqual([
-      { from: { botId: "zhe", name: "阿哲" }, to: { botId: "mei", name: "阿美" }, item: "做落地页", status: "handoff", since: NOW - 90 * MIN, minutes: 90 },
+      { from: { botId: "zhe", name: "阿哲" }, to: { botId: "mei", name: "阿美" }, item: "做落地页", status: "handoff_unreceived", since: NOW - 90 * MIN, minutes: 90 },
       { from: { botId: "lin", name: "小林" }, to: { botId: "mei", name: "阿美" }, item: "做落地页", status: "running", since: NOW - 20 * MIN, minutes: 20 },
     ]);
   });

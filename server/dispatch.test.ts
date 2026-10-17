@@ -611,6 +611,41 @@ describe("Dispatcher", () => {
     expect(dispatcher.get(result.run.id)!.subtasks[0]!.handoff).toMatchObject({ status: "done", synthetic: true });
   });
 
+  it("marks a handoff received when the dependent subtask starts", async () => {
+    const result = submit([
+      { id: "a", title: "写文案", brief: "写文案", role: "文案策划" },
+      { id: "b", title: "排版", brief: "排版", role: "设计", depends_on: ["a"] },
+    ]);
+    expect("error" in result).toBe(false);
+    if ("error" in result) return;
+    await settle();
+    const aTurn = host.workerTurns()[0]!;
+    host.finish(dispatcher, aTurn.threadId, true, "文案好了，```json\n{\"handoff\":{\"status\":\"done\",\"summary\":\"三段文案\"}}\n```");
+    await settle();
+    const subtasks = dispatcher.get(result.run.id)!.subtasks;
+    expect(subtasks[0]!.handoff?.ack).toMatchObject({ state: "received" });
+    expect(subtasks[0]!.handoff?.id).toBe("a#1");
+  });
+
+  it("sweeps an unreceived handoff and escalates it to the inbox", async () => {
+    const result = submit([
+      { id: "a", title: "写文案", brief: "写文案", role: "文案策划" },
+      { id: "b", title: "排版", brief: "排版", role: "设计", depends_on: ["a"] },
+    ]);
+    expect("error" in result).toBe(false);
+    if ("error" in result) return;
+    await settle();
+    host.finish(dispatcher, host.workerTurns()[0]!.threadId, true, "文案好了，```json\n{\"handoff\":{\"status\":\"done\",\"summary\":\"三段文案\"}}\n```");
+    await settle();
+    const subtask = dispatcher.get(result.run.id)!.subtasks[0]!;
+    // simulate a receiver that never picked it up
+    subtask.handoff!.ack = { state: "sent", round: 1, sentAt: 0, sentBy: "b1", expiresAt: 0, nudgeCount: 0, v: 1 };
+    expect(dispatcher.sweepHandoffs(5_000)).toBe(1);
+    expect(dispatcher.get(result.run.id)!.subtasks[0]!.handoff!.ack).toMatchObject({ state: "expired", nudgeCount: 1, v: 2 });
+    expect(dispatcher.sweepHandoffs(6_000)).toBeGreaterThanOrEqual(1);
+    expect(host.inbox.filter((item) => item.kind === "handoff_stuck")).toHaveLength(1);
+  });
+
   it("passes the gate when a required deterministic criterion is met", async () => {
     const result = submit([
       {

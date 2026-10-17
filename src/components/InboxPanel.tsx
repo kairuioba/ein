@@ -12,6 +12,7 @@ const KIND_LABEL: Record<InboxItem["kind"], string> = {
   signoff: t("Ready to confirm"),
   question: t("Waiting for your answer"),
   failed_exhausted: t("Gave up — needs you"),
+  handoff_stuck: t("A handoff is stuck"),
 };
 
 export function InboxPanel({

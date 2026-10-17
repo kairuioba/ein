@@ -2143,6 +2143,14 @@ const refreshRecommenderInstances = (): Promise<void> => {
 // fresh scan before every plan, pick and staffing change (dispatch-api)
 for (const delay of [2_000, 8_000, 20_000]) setTimeout(() => void refreshRecommenderInstances(), delay).unref?.();
 setInterval(() => void refreshRecommenderInstances(), 60_000).unref?.();
+// handoff receipts: expire unreceived handoffs and escalate them (CAS-protected)
+setInterval(() => {
+  try {
+    dispatcher.sweepHandoffs();
+  } catch (error) {
+    console.error("dispatch: handoff sweep failed", error);
+  }
+}, 60_000).unref?.();
 // 任务文件夹层：侧栏最外层「任务」。dispatch run 是执行体，这里存用户自己的
 // 整理（颜色/序号/折叠/归档）与任务负责人。建在 dispatcher 之前是为了让广播
 // 钩子能在第一批 run 上就被调用。

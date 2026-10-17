@@ -204,15 +204,23 @@ function waitingChains(
       const incomplete = dependency.status !== "done" && dependency.status !== "skipped";
       const handoff = !incomplete && dependency.status === "done" && Boolean(dependency.handoff);
       if (!incomplete && !handoff) continue;
+      const ack = dependency.handoff?.ack;
+      // a received handoff is consumed: nothing is waiting for it anymore
+      if (handoff && ack?.state === "received") continue;
       const key = `${dependency.id}->${pending.id}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      const since = lastActivityOf(dependency, run, folder, now);
+      const returned = handoff && ack?.state === "returned";
+      const since = returned ? (ack?.returnedAt ?? ack?.sentAt ?? lastActivityOf(dependency, run, folder, now)) : ack?.sentAt ?? lastActivityOf(dependency, run, folder, now);
       rows.push({
-        from: { botId: dependency.assigneeBotId, name: nameOf(dependency.assigneeBotId) },
-        to: { botId: pending.assigneeBotId, name: nameOf(pending.assigneeBotId) },
+        from: returned
+          ? { botId: ack?.returnedBy, name: nameOf(ack?.returnedBy) }
+          : { botId: dependency.assigneeBotId, name: nameOf(dependency.assigneeBotId) },
+        to: returned
+          ? { botId: run?.chiefBotId, name: nameOf(run?.chiefBotId) }
+          : { botId: pending.assigneeBotId, name: nameOf(pending.assigneeBotId) },
         item: pending.title,
-        status: handoff ? "handoff" : dependency.status,
+        status: returned ? "handoff_returned" : handoff ? "handoff_unreceived" : dependency.status,
         since,
         minutes: Math.max(0, Math.round((now - since) / 60_000)),
       });

@@ -1,24 +1,8 @@
 // Handoff 接收/退回：交接属于「某一轮发送」，不属于 subtask；
 // 所有转移都是纯函数 + 版本号 CAS，sweeper 与隐式 receive 的竞态靠 v 解决。
-export type AckState = "sent" | "received" | "returned" | "expired";
-export type ReturnReasonCode = "missing_input" | "wrong_scope" | "blocked" | "overload" | "other";
+import type { HandoffAck, HandoffAckState as AckState, HandoffReturnReasonCode as ReturnReasonCode } from "../shared/dispatch-types.ts";
 
-export interface HandoffAck {
-  state: AckState;
-  round: number;
-  sentAt: number;
-  sentBy: string;
-  expiresAt?: number;
-  receivedAt?: number;
-  receivedBy?: string;
-  returnedAt?: number;
-  returnedBy?: string;
-  returnReason?: { code: ReturnReasonCode; text?: string };
-  nudgeCount: number;
-  escalatedAt?: number;
-  /** CAS version: writers must pass the version they read */
-  v: number;
-}
+export type { HandoffAck, AckState, ReturnReasonCode };
 
 export interface AckRead {
   ack: HandoffAck;
@@ -29,7 +13,7 @@ export interface AckRead {
 
 export interface AckSubtaskLike {
   status: string;
-  handoff?: { ack?: HandoffAck; round?: number; sentAt?: number; sentBy?: string } & Record<string, unknown>;
+  handoff?: { ack?: HandoffAck; round?: number; sentAt?: number; sentBy?: string };
 }
 
 const STARTED = new Set(["in_progress", "running", "done", "review", "needs_review"]);

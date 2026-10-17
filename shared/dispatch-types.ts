@@ -95,9 +95,36 @@ export interface DispatchCheckpoint {
 /** What a worker sends back: the same envelope whatever model ran it. The
  * free-form result stays for reading; the handoff is what the chief and the
  * reviewer consume without re-reading the whole process. */
+export type HandoffAckState = "sent" | "received" | "returned" | "expired";
+export type HandoffReturnReasonCode = "missing_input" | "wrong_scope" | "blocked" | "overload" | "other";
+
+/** Receipt for one handoff round: a handoff is re-sent, never mutated in
+ * place; the round + CAS version keep the sweeper and the receiver honest. */
+export interface HandoffAck {
+  state: HandoffAckState;
+  round: number;
+  sentAt: number;
+  sentBy: string;
+  expiresAt?: number;
+  receivedAt?: number;
+  receivedBy?: string;
+  returnedAt?: number;
+  returnedBy?: string;
+  returnReason?: { code: HandoffReturnReasonCode; text?: string };
+  nudgeCount: number;
+  escalatedAt?: number;
+  v: number;
+}
+
 export interface DispatchHandoff {
   status: "done" | "partial" | "blocked";
   summary: string;
+  /** handoff identity = subtaskId#round */
+  id?: string;
+  round?: number;
+  sentAt?: number;
+  sentBy?: string;
+  ack?: HandoffAck;
   evidence?: string[];
   artifacts?: string[];
   decisions?: Array<{ what: string; why?: string }>;
@@ -152,7 +179,7 @@ export interface SubtaskGate {
 /** One thing waiting on the owner. */
 export interface InboxItem {
   id: string;
-  kind: "gate_failed" | "signoff" | "question" | "failed_exhausted";
+  kind: "gate_failed" | "signoff" | "question" | "failed_exhausted" | "handoff_stuck";
   taskId?: string;
   runId?: string;
   subtaskId?: string;

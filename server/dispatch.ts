@@ -32,6 +32,7 @@ import { join } from "node:path";
 import { t } from "../shared/i18n.ts";
 import { handoffLine, parseHandoff } from "./agent-handoff.ts";
 import { evaluateGate } from "./review-gate.ts";
+import { sweepHandoffs as sweepHandoffAcks, transitionAck } from "./handoff-ack.ts";
 import { reasonLabel } from "./reason-labels.ts";
 import { profileFor, type Capability } from "../shared/model-profiles.ts";
 import { assessTask, effortFor, type Effort, type Recommendation, type RecommendationPolicy, type TaskProfile } from "../shared/model-recommender.ts";
@@ -168,7 +169,7 @@ export interface DispatchHost {
    * by the caller). Injected at the end of the worker prompt, in a fence. */
   contextFor?(input: { runId: string; subtaskId: string; role: "worker" }): { text: string; sourceTaskIds?: string[]; tokens?: number } | undefined;
   /** Put something in the owner's inbox (gate escalation / final sign-off). */
-  needsYou?(item: { kind: "gate_failed" | "signoff" | "question" | "failed_exhausted"; runId: string; subtaskId?: string; attemptId?: string; title: string; reason: string; evidence?: string[] }): void;
+  needsYou?(item: { kind: "gate_failed" | "signoff" | "question" | "failed_exhausted" | "handoff_stuck"; runId: string; subtaskId?: string; attemptId?: string; title: string; reason: string; evidence?: string[] }): void;
   /** Start a turn; rejects when the bot cannot start (busy, missing, no engine). */
   startTurn(botId: string, text: string, opts: DispatchTurnOptions): Promise<void>;
   interrupt(botId: string, threadId: string): Promise<void>;
@@ -1224,7 +1225,54 @@ export class Dispatcher {
     return run;
   }
 
-    /** Retry a failed or canceled subtask (and let its dependents run again). */
+    /** Timeout scan for handoff receipts: CAS-protected against a concurrent
+   * implicit receive. Returns how many acks changed (for tests/logs). */
+  sweepHandoffs(now = Date.now()): number {
+    let changed = 0;
+    for (const run of this.runs) {
+      const subtasks = run.subtasks.map((subtask) => ({ id: subtask.id, status: subtask.status, ...(subtask.handoff ? { handoff: subtask.handoff } : {}) }));
+      const actions = sweepHandoffAcks(subtasks, now);
+      for (const action of actions) {
+        const subtask = run.subtasks.find((entry) => entry.id === action.subtaskId);
+        const ack = subtask?.handoff?.ack;
+        if (!subtask || !ack || ack.v !== action.expectedVersion) continue;
+        if (action.kind === "expire") {
+          ack.state = "expired";
+          ack.nudgeCount += 1;
+          ack.v += 1;
+          changed += 1;
+          if (action.escalate) {
+            this.host.needsYou?.({
+              kind: "handoff_stuck",
+              runId: run.id,
+              subtaskId: subtask.id,
+              ...(subtask.currentAttemptId ? { attemptId: subtask.currentAttemptId } : {}),
+              title: subtask.title,
+              reason: t("A handoff was sent but never received — the downstream work is blocked."),
+              evidence: [`round ${ack.round}`, `nudges ${ack.nudgeCount}`],
+            });
+          }
+        } else {
+          ack.escalatedAt = now;
+          ack.v += 1;
+          changed += 1;
+          this.host.needsYou?.({
+            kind: "handoff_stuck",
+            runId: run.id,
+            subtaskId: subtask.id,
+            ...(subtask.currentAttemptId ? { attemptId: subtask.currentAttemptId } : {}),
+            title: subtask.title,
+            reason: t("A handoff was sent but never received — the downstream work is blocked."),
+            evidence: [`round ${ack.round}`, `nudges ${ack.nudgeCount}`],
+          });
+        }
+      }
+      if (changed) this.touch(run);
+    }
+    return changed;
+  }
+
+  /** Retry a failed or canceled subtask (and let its dependents run again). */
   retry(runId: string, subtaskId: string): DispatchRun | { error: string } {
     const run = this.get(runId);
     const subtask = run?.subtasks.find((entry) => entry.id === subtaskId);
@@ -1337,6 +1385,21 @@ export class Dispatcher {
         const summary = reply.trim().slice(0, 400);
         subtask.handoff = summary ? { status: "done", summary, synthetic: true } : undefined;
         if (!subtask.handoff) delete subtask.handoff;
+      }
+      // handoff receipt: if anyone depends on this result, the handoff is
+      // "sent" to the next assignee and gets a timeout; otherwise the chief's
+      // synthesis consumes it immediately and it is already received.
+      if (subtask.handoff) {
+        const now = Date.now();
+        const hasDependents = run.subtasks.some((entry) => entry.dependsOn.includes(subtask.id));
+        const sentBy = bot?.id ?? "";
+        subtask.handoff.id = `${subtask.id}#1`;
+        subtask.handoff.round = 1;
+        subtask.handoff.sentAt = now;
+        subtask.handoff.sentBy = sentBy;
+        subtask.handoff.ack = hasDependents && !subtask.handoff.synthetic
+          ? { state: "sent", round: 1, sentAt: now, sentBy, expiresAt: now + 10 * 60_000, nudgeCount: 0, v: 1 }
+          : { state: "received", round: 1, sentAt: now, sentBy, receivedAt: now, receivedBy: "synthesis", nudgeCount: 0, v: 1 };
       }
       subtask.finishedAt = Date.now();
       delete subtask.error;
@@ -1528,6 +1591,15 @@ export class Dispatcher {
       return;
     }
     const threadId = task.threadId;
+    // starting this subtask implicitly receives its dependencies' handoffs:
+    // nobody would ever call ack by hand, so the turn start is the receipt
+    for (const depId of subtask.dependsOn) {
+      const dep = run.subtasks.find((entry) => entry.id === depId);
+      const ack = dep?.handoff?.ack;
+      if (!dep?.handoff || !ack) continue;
+      const result = transitionAck({ current: ack, action: "receive", round: ack.round, actor: bot.id, now: Date.now(), expectedVersion: ack.v });
+      if (result.ok) dep.handoff.ack = result.ack;
+    }
     subtask.status = "running";
     subtask.attempts += 1;
     subtask.threadId = threadId;

@@ -2137,8 +2137,11 @@ const dispatcher = new Dispatcher({
       { name: input.name, title: input.title, description: input.description, section: input.section, modelSelection: input.modelSelection },
       { seedMessages: false },
     );
-    // same safe defaults as create_bot: no connected apps, no auto-approval
-    return store.patchBot(created.id, { composio: false, autoApprove: false, approvePeerComms: false }) ?? created;
+    // no connected apps and no peer-comms approval, but dispatched workers DO
+    // run in auto mode: they work unattended (overnight, long tasks) and a
+    // read-only tool shouldn't park the whole plan on an approval card. Auto
+    // mode still stops for destructive or publishing actions (autoVerdict).
+    return store.patchBot(created.id, { composio: false, autoApprove: true, approvePeerComms: false }) ?? created;
   },
   createTask: (botId, title) => {
     const task = store.createTask(botId, title, false);

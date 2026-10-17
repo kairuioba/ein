@@ -6,7 +6,7 @@
 // menus, rename, archive, the "+" menu and the mobile drawer all stay.
 import { track } from "@/lib/analytics";
 import { t, tn } from "@/lib/i18n";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
   Archive,
@@ -91,11 +91,13 @@ import {
   placeSection,
   sameSectionOrder,
   sidebarLayoutInteractive,
+  sidebarRevealScrollTop,
   sidebarSectionCollapsed,
   sidebarSectionLabel,
   userSectionId,
   type SectionDropPlace,
 } from "@/lib/sidebar-layout";
+import { shownTaskTitle } from "./TaskPicker";
 import { sidebarSectionAttention, type SidebarSectionAttention } from "@/lib/sidebar-attention";
 import {
   activeRunsByLead,
@@ -240,6 +242,16 @@ function lastLine(visible: readonly Message[]): string {
   if (!last) return "";
   if (last.kind === "screen") return t("Screen frame");
   return messageLine(last);
+}
+
+/** A fresh conversation has no last line yet. When the bot has more than one
+ * task, the row names the one that is open ("New task"), so a new chat from
+ * the + menu visibly lands on its bot's row instead of blanking it. */
+function emptyConversationLine(bot: Bot): string {
+  const tasks = bot.tasks ?? [];
+  if (tasks.length < 2) return "";
+  const open = tasks.find((task) => task.threadId === bot.threadId);
+  return open ? shownTaskTitle(open.title) : "";
 }
 
 /** The open question in a bot's own thread, when it is waiting on you. */
@@ -1477,6 +1489,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
       preview: lastLine(visible),
     });
   };
+  const previewFor = (bot: Bot, visible: readonly Message[]) => (visible.length ? undefined : emptyConversationLine(bot));
   const botById = useMemo(() => new Map(state.bots.map((bot) => [bot.id, bot])), [state.bots]);
   const squadBySection = useMemo(
     () => addedSquadsBySection(runs, (id) => botById.get(id)?.section?.trim() || undefined),
@@ -1623,6 +1636,47 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     saveCollapsedSections(next);
   };
 
+  // ── the open conversation stays in sight ──
+  // A new bot lands in 未分部门 and a new group chat in 群聊, both at the
+  // bottom of the list; a chat opened from ⌘K, the workbench or a
+  // notification can be anywhere. Whenever the open conversation changes,
+  // its section opens if it was folded and the list scrolls its row into
+  // view — waiting for the row when it is created a moment later.
+  const openChatId = state.activeView === "chat" ? state.selectedId : null;
+  const openChatSection = openChatId
+    ? (sectionIds.find((id) => views.get(id)?.rows.some((row) => (row.kind === "bot" ? row.bot.id : row.group.id) === openChatId)) ?? null)
+    : null;
+  const openChatFolded = openChatSection !== null && sectionCollapsed(openChatSection);
+  useEffect(() => {
+    if (!openChatSection || !openChatFolded) return;
+    const next = collapsedSections.filter((id) => id !== openChatSection);
+    setCollapsedSections(next);
+    saveCollapsedSections(next);
+    // only when the open conversation moves into a folded section: folding
+    // it again afterwards is the reader's choice
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openChatId, openChatSection]);
+  const listRef = useRef<HTMLDivElement>(null);
+  const pendingReveal = useRef<{ id: string; smooth: boolean } | null>(null);
+  const revealedOnce = useRef(false);
+  useLayoutEffect(() => {
+    pendingReveal.current = openChatId ? { id: openChatId, smooth: revealedOnce.current } : null;
+  }, [openChatId]);
+  useLayoutEffect(() => {
+    const pending = pendingReveal.current;
+    const list = listRef.current;
+    if (!pending || !list) return;
+    const id = CSS.escape(pending.id);
+    const row = list.querySelector<HTMLElement>(`[data-sidebar-bot="${id}"], [data-sidebar-group="${id}"]`);
+    if (!row) return; // not drawn yet: a row being created, a section unfolding
+    pendingReveal.current = null;
+    revealedOnce.current = true;
+    const top = sidebarRevealScrollTop(list.getBoundingClientRect(), row.getBoundingClientRect(), list.scrollTop);
+    if (top === null) return;
+    const reduced = typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    list.scrollTo({ top, behavior: pending.smooth && !reduced ? "smooth" : "auto" });
+  });
+
   const commitSectionOrder = (visibleOrder: string[]) => {
     if (!layoutInteractive) return;
     const next = mergeSectionOrder(sectionOrder, visibleOrder);
@@ -1700,7 +1754,9 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const renderBot = (bot: Bot, variant: "chief" | "lead" | "member") => {
     const items = inboxForBot.get(bot.id) ?? [];
     const visible = visibleMessages(bot);
-    const status = rowStatus(bot, items, visible);
+    const fresh = previewFor(bot, visible);
+    const base = rowStatus(bot, items, visible);
+    const status = fresh && base.kind === "preview" ? { kind: "preview" as const, text: fresh } : base;
     const chiefCount = variant === "chief" ? needsYouCount : undefined;
     const needsYou = variant === "chief" ? needsYouCount > 0 || status.kind === "waiting" : status.kind === "waiting";
     return (
@@ -2036,7 +2092,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
       <div className={cn("mt-2 h-px shrink-0 bg-hairline/30", iconOnly ? "mx-4" : "mx-[22px]")} />
 
       {/* The team */}
-      <div className={cn("min-h-0 flex-1 overflow-y-auto pb-2 pt-2", iconOnly ? "px-2.5" : "px-3")}>
+      <div ref={listRef} className={cn("min-h-0 flex-1 overflow-y-auto pb-2 pt-2", iconOnly ? "px-2.5" : "px-3")}>
         <div className="flex flex-col">
           {chief && <div className="mb-0.5">{renderBot(chief, "chief")}</div>}
           {sectionIds.map((id, index) => {

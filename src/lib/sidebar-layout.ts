@@ -190,3 +190,28 @@ export function mergeSectionOrder(
 export function sameSectionOrder(a: SidebarSectionId[], b: SidebarSectionId[]): boolean {
   return a.length === b.length && a.every((id, index) => id === b[index]);
 }
+
+/** Breathing room left around a row the list scrolls to. */
+export const SIDEBAR_REVEAL_MARGIN = 8;
+
+/**
+ * Where the sidebar list must scroll for a row to be fully in sight, or null
+ * when it already is. New bots and group chats are filed at the bottom of
+ * the list (未分部门, 群聊), and a chat opened from ⌘K, the workbench or a
+ * notification can sit anywhere — the row of the open conversation has to
+ * come into view, not stay below the fold.
+ * `view` and `row` are viewport rects; `scrollTop` is the list's.
+ */
+export function sidebarRevealScrollTop(
+  view: { top: number; bottom: number },
+  row: { top: number; bottom: number },
+  scrollTop: number,
+  margin: number = SIDEBAR_REVEAL_MARGIN,
+): number | null {
+  if (row.top >= view.top && row.bottom <= view.bottom) return null;
+  // above the fold, or too tall to fit: line its top up with the list's
+  if (row.top < view.top || row.bottom - row.top > view.bottom - view.top - 2 * margin) {
+    return Math.max(0, scrollTop - (view.top - row.top) - margin);
+  }
+  return scrollTop + (row.bottom - view.bottom) + margin;
+}

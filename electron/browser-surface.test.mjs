@@ -669,7 +669,7 @@ describe("browser surface manager", () => {
   it("forgets a Guest session the moment the bot switches off it", async () => {
     const { manager, views } = harness();
     manager.layout("bot-a", BOUNDS, GUEST_PROFILE, "compact");
-    expect(views[0].partition).toMatch(/^openmausbot-browser-guest-bot-a-\d+$/);
+    expect(views[0].partition).toMatch(/^ein-browser-guest-bot-a-\d+$/);
     expect(views[0].partition.startsWith("persist:")).toBe(false);
     await manager.navigate("bot-a", "https://secret.example");
     manager.layout("bot-a", BOUNDS, "", "compact");
@@ -1427,7 +1427,7 @@ describe("browser surface manager", () => {
     expect(helperCalls.some(([, params]) => params.expression === "/*injected*/")).toBe(true);
     expect(cdpCalls(views[0])).toContainEqual([
       "Page.createIsolatedWorld",
-      { frameId: "main-frame", worldName: "openmausbot-browser-snapshot", grantUniveralAccess: false },
+      { frameId: "main-frame", worldName: "ein-browser-snapshot", grantUniveralAccess: false },
     ]);
   });
 

@@ -182,7 +182,7 @@ describe("mergeLocalInject", () => {
   it("marks oMLX /v1/models/status loaded rows, not the default_model", async () => {
     const catalog = await mergeLocalInject(
       { default: "keep", options: [{ id: "keep", label: "Keep" }] },
-      { VITEST: "true", OPENMAUSBOT_PROBE_LOCAL_INJECT: "1" },
+      { VITEST: "true", EIN_PROBE_LOCAL_INJECT: "1" },
       async (url) => {
         const href = String(url);
         if (href.includes("/v1/models/status")) {
@@ -227,7 +227,7 @@ describe("mergeLocalInject", () => {
   it("appends live host models as custom without touching official rows", async () => {
     const catalog = await mergeLocalInject(
       { default: "claude-sonnet-5", options: [{ id: "claude-sonnet-5", label: "Claude Sonnet 5" }] },
-      { VITEST: "true", OPENMAUSBOT_PROBE_LOCAL_INJECT: "1" },
+      { VITEST: "true", EIN_PROBE_LOCAL_INJECT: "1" },
       async (url) => {
         if (String(url).includes(":8080")) {
           return new Response(JSON.stringify({ data: [{ id: "GLM-5.2-fp8" }, { id: "nomic-embed" }] }), { status: 200 });
@@ -249,7 +249,7 @@ describe("mergeLocalInject", () => {
           { id: "orcarouter/Qwen3.8-27B-Uncensored-GGUF", label: "orcarouter/Qwen3.8-27B-Uncensored-GGUF", custom: true },
         ],
       },
-      { VITEST: "true", OPENMAUSBOT_PROBE_LOCAL_INJECT: "1" },
+      { VITEST: "true", EIN_PROBE_LOCAL_INJECT: "1" },
       async (url) => {
         if (String(url).includes(":8888")) {
           return new Response(JSON.stringify({ data: [{ id: "orcarouter/Qwen3.8-27B-Uncensored-GGUF" }] }), { status: 200 });
@@ -291,11 +291,11 @@ describe("codexLocalProviderArgs", () => {
     const args = codexLocalProviderArgs(env, "unsloth::local-model");
     const rendered = JSON.stringify(args);
     expect(rendered).toContain("model_providers.unsloth.base_url");
-    expect(rendered).toContain("OPENMAUSBOT_LOCAL_UNSLOTH_API_KEY");
+    expect(rendered).toContain("EIN_LOCAL_UNSLOTH_API_KEY");
     expect(rendered).not.toContain("unsloth-secret");
     expect(rendered).not.toContain("model_providers.ollama.base_url");
     expect(rendered).not.toContain("model_providers.lmstudio.base_url");
-    expect(env.OPENMAUSBOT_LOCAL_UNSLOTH_API_KEY).toBe("unsloth-secret");
+    expect(env.EIN_LOCAL_UNSLOTH_API_KEY).toBe("unsloth-secret");
   });
 });
 
@@ -967,7 +967,7 @@ describe("ensureQwenInjectModel", () => {
       modelProviders: { openai: Array<{ id: string }> };
     };
     expect(settings.modelProviders.openai.map((row) => row.id)).toEqual(["keep-me", "GLM-5.2-fp8"]);
-    expect(settings.env.OPENMAUSBOT_QWEN_OMLX_API_KEY).toBe("omlx");
+    expect(settings.env.EIN_QWEN_OMLX_API_KEY).toBe("omlx");
     if (process.platform !== "win32") {
       expect(statSync(join(home, ".qwen", "settings.json")).mode & 0o777).toBe(0o600);
     }
@@ -997,7 +997,7 @@ describe("live Custom lists on every local CLI harness", () => {
     }) as typeof fetch;
     const home = mkdtempSync(join(tmpdir(), "omb-all-inject-"));
     scratchDirs.push(home);
-    const environment = { HOME: home, OPENMAUSBOT_PROBE_LOCAL_INJECT: "1" };
+    const environment = { HOME: home, EIN_PROBE_LOCAL_INJECT: "1" };
     const instances: Array<Awaited<ReturnType<typeof KimiAgentDriver.create>>> = [];
     try {
       instances.push(

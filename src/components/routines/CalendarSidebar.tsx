@@ -5,7 +5,7 @@ import { getLocale, t } from "@/lib/i18n";
 import type { Bot } from "@/state/store";
 import { MiniMonth } from "./MiniMonth";
 
-export const BOT_CALENDAR_DRAG_TYPE = "application/x-openmaus-bot";
+export const BOT_CALENDAR_DRAG_TYPE = "application/x-ein-bot";
 
 export interface CalendarSidebarProps {
   bots: Bot[];

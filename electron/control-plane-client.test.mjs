@@ -79,7 +79,7 @@ describe("control-plane desktop client", () => {
     const timeoutSignal = vi.fn(() => new AbortController().signal);
     const fetchImpl = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse({ ok: true, service: "openmausbot-control-plane" }))
+      .mockResolvedValueOnce(jsonResponse({ ok: true, service: "ein-control-plane" }))
       .mockResolvedValueOnce(jsonResponse({ ok: true, service: "some-other-service" }));
     const client = createControlPlaneClient({
       baseURL: "https://accounts.openmausbot.com",

@@ -58,6 +58,12 @@
 | 应用名 | `Ein.app`（访达和程序坞显示“一念”） |
 | Bundle ID / Windows AppUserModelId | `com.kairuioba.ein` |
 | 数据目录 | `~/.ein`（手机配对服务在 `~/.ein-companion`） |
-| 网址协议 | `ein://` |
+| 网址协议 | `ein://`（安装包链接 `ein://install`，手机配对 `ein://pair`） |
+| 本机服务握手标识 | `{"app":"ein"}`（界面、手机伴侣、MCP 服务只认这个） |
+| 局域网发现（Bonjour） | `_ein._tcp`，主机名 `ein-xxxxxxxx.local` |
+| MCP 服务 | `ein-mcp`，配置用 `EIN_URL` / `EIN_PORT` / `EIN_TOKEN` |
+| 写进各引擎全局配置的名字 | `ein-computer`、`ein-agents`（Antigravity），`custom:ein-…`（Factory），`EIN_QWEN_…`（Qwen） |
 
 自动更新会核对新版的 Bundle ID 必须和正在运行的一致，所以这些值改了就等于换了一个软件：已经装好的版本收不到更新，只能卸载重装。1.0.0 还沿用旧身份，就是因为这个原因没法自动升级到 1.1.0。
+
+上面这些标识都和原项目（OpenMausBot）不同，所以两个软件装在同一台电脑上也不会串：一念的 MCP 服务、手机伴侣和界面只认 `{"app":"ein"}`，原项目在同一个端口上回答也会被跳过；手机端只认 `ein://pair` 和 `_ein._tcp`。改动时要保持两边一致，iOS 工程里的 `Client.swift`、`Discovery.swift` 和 `project.yml` 用的也是这几个值。

@@ -79,7 +79,7 @@ export function startSpeech(win, options = {}) {
   // identity and TCC kills it for lacking a usage description. LaunchServices
   // preserves that identity. `open` redirects its stdout/stderr to files,
   // which we tail to retain the helper's NDJSON streaming contract.
-  const sessionDir = mkdtempSync(path.join(app.getPath("temp"), "openmausbot-speech-"));
+  const sessionDir = mkdtempSync(path.join(app.getPath("temp"), "ein-speech-"));
   const outputPath = path.join(sessionDir, "stdout.ndjson");
   const errorPath = path.join(sessionDir, "stderr.log");
   const stopPath = path.join(sessionDir, "stop");

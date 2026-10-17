@@ -26,7 +26,7 @@ function jsonResponse(body: unknown, options: { ok?: boolean; status?: number; s
 afterEach(() => {
   vi.restoreAllMocks();
   globalThis.fetch = ORIGINAL_FETCH;
-  delete process.env.OPENMAUSBOT_TOKEN;
+  delete process.env.EIN_TOKEN;
   delete process.env.ALLOW_INSECURE_HTTP;
 });
 
@@ -40,7 +40,7 @@ describe("MCP JSON-RPC protocol", () => {
     })))!);
     expect(supported.result).toMatchObject({
       protocolVersion: "2024-11-05",
-      serverInfo: { name: "openmausbot-mcp", version: "1.1.0" },
+      serverInfo: { name: "ein-mcp", version: "1.1.0" },
       capabilities: { tools: {} },
     });
 
@@ -557,15 +557,17 @@ describe("connection security and discovery", () => {
 
   it("skips a foreign process and discovers the real fallback port", async () => {
     globalThis.fetch = vi.fn(async (url: any) => {
-      if (String(url).includes(":8799")) return jsonResponse({ app: "not-openmausbot" });
-      if (String(url).includes(":18799")) return jsonResponse({ app: "openmausbot" });
+      // the original OpenMausBot app answering on the shared default port is
+      // a foreign process too: Ein's MCP must never drive it
+      if (String(url).includes(":8799")) return jsonResponse({ app: "openmausbot" });
+      if (String(url).includes(":18799")) return jsonResponse({ app: "ein" });
       throw new Error("unexpected port");
     }) as any;
     await expect(probeBaseUrls(["http://127.0.0.1:8799", "http://127.0.0.1:18799"])).resolves.toBe("http://127.0.0.1:18799");
   });
 
   it("rejects successful non-JSON responses and sends an optional bearer token", async () => {
-    process.env.OPENMAUSBOT_TOKEN = "proxy-token";
+    process.env.EIN_TOKEN = "proxy-token";
     globalThis.fetch = vi.fn(async (_url: any, options: any) => {
       expect(new Headers(options.headers).get("Authorization")).toBe("Bearer proxy-token");
       return { ...jsonResponse({}), json: vi.fn(async () => { throw new Error("not json"); }) };
@@ -574,8 +576,8 @@ describe("connection security and discovery", () => {
   });
 
   it("requires an explicit destination before sending a bearer token", async () => {
-    process.env.OPENMAUSBOT_TOKEN = "proxy-token";
-    await expect(resolveBaseUrl()).rejects.toThrow("OPENMAUSBOT_URL or OMB_PORT");
+    process.env.EIN_TOKEN = "proxy-token";
+    await expect(resolveBaseUrl()).rejects.toThrow("EIN_URL or EIN_PORT");
   });
 
   it("validates direct tool arguments", () => {

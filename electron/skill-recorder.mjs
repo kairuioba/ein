@@ -68,7 +68,7 @@ export function startRecorder(win) {
   const permission = recorderPermissionStatus();
   if (!permission.supported) throw new Error(t("Skill recording is currently available on macOS."));
   ensureBuilt();
-  const sessionDir = mkdtempSync(path.join(app.getPath("temp"), "openmausbot-recorder-"));
+  const sessionDir = mkdtempSync(path.join(app.getPath("temp"), "ein-recorder-"));
   const outputPath = path.join(sessionDir, "events.ndjson");
   const errorPath = path.join(sessionDir, "stderr.log");
   const stopPath = path.join(sessionDir, "stop");

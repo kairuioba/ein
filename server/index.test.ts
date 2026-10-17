@@ -70,7 +70,7 @@ const waitForIsolatedServer = async (
       if (response.status === 200) {
         const health = await response.json() as { app?: unknown; pid?: unknown; static?: unknown };
         lastObservedHealth = JSON.stringify(health);
-        if (health.app === "openmausbot" && health.pid === serverChild.pid && health.static === true) return;
+        if (health.app === "ein" && health.pid === serverChild.pid && health.static === true) return;
       }
     } catch {
       /* still starting */
@@ -374,7 +374,7 @@ describe("harness HTTP API", () => {
   it("identifies itself on /api/health", async () => {
     const { status, body } = await api("GET", "/api/health");
     expect(status).toBe(200);
-    expect(body.app).toBe("openmausbot");
+    expect(body.app).toBe("ein");
     expect(typeof body.pid).toBe("number");
     expect(body.static).toBe(true);
   });
@@ -3226,7 +3226,7 @@ describe("harness HTTP API", () => {
           postMessage(message) {
             if (message?.requestId && /browser-(?:bot|profile)-deleted/.test(message.type ?? "")) {
               queueMicrotask(() => listener?.({ data: {
-                type: "openmausbot:browser-lifecycle-result",
+                type: "ein:browser-lifecycle-result",
                 requestId: message.requestId,
                 ok: false,
               } }));
@@ -3351,7 +3351,7 @@ describe("harness HTTP API", () => {
           postMessage(message) {
             if (message?.requestId && /browser-(?:bot|profile)-deleted/.test(message.type ?? "")) {
               queueMicrotask(() => listener?.({ data: {
-                type: "openmausbot:browser-lifecycle-result",
+                type: "ein:browser-lifecycle-result",
                 requestId: message.requestId,
                 ok: true,
               } }));

@@ -12,6 +12,7 @@ import {
   mascotForInstance,
   modelChips,
   onboardingEngines,
+  onboardingEnginesWith,
   recommendedFor,
   strategyExamples,
   type EngineBot,
@@ -117,6 +118,22 @@ describe("onboarding grid", () => {
       3,
     ).map((instance) => instance.driverKind);
     expect(order).toEqual(["workbuddyAgent", "claudeAgent", "codex"]);
+  });
+
+  it("keeps the engine already chosen on the first-bot step, even when it ranks lower", () => {
+    const all = [
+      { instanceId: "pi", driverKind: "piAgent" },
+      { instanceId: "codex", driverKind: "codex" },
+      { instanceId: "box", driverKind: "boxAgent" },
+      { instanceId: "wb", driverKind: "workbuddyAgent" },
+      { instanceId: "claude", driverKind: "claudeAgent" },
+    ];
+    const ids = (chosen: string | null) => onboardingEnginesWith(all, chosen, 3).map((instance) => instance.instanceId);
+    expect(ids(null)).toEqual(["wb", "claude", "codex"]);
+    expect(ids("claude")).toEqual(["wb", "claude", "codex"]); // already shown: unchanged
+    expect(ids("pi")).toEqual(["wb", "claude", "pi"]); // takes the last slot
+    expect(ids("box")).toEqual(["wb", "claude", "codex"]); // never a cloud box
+    expect(ids("gone")).toEqual(["wb", "claude", "codex"]);
   });
 });
 

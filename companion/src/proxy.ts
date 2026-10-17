@@ -203,7 +203,7 @@ const forwardHeaders = (req: IncomingMessage): Record<string, string> => {
     // Lets a response whose URL is intentionally loopback-only (the VPS SSH
     // viewer) fail before opening a tunnel a phone cannot reach. This header
     // carries no authority; it only narrows behavior at the harness.
-    "x-openmausbot-companion": "1",
+    "x-ein-companion": "1",
   };
   const contentType = req.headers["content-type"];
   if (contentType) out["content-type"] = String(contentType);
@@ -356,13 +356,13 @@ export function createProxyHandler(options: ProxyOptions) {
             if (
               (harness.statusCode ?? 500) < 200 ||
               (harness.statusCode ?? 500) >= 300 ||
-              (identity as { app?: unknown } | null)?.app !== "openmausbot"
+              (identity as { app?: unknown } | null)?.app !== "ein"
             ) {
               fail();
               return;
             }
             finished = true;
-            sendJson(res, 200, { app: "openmausbot" });
+            sendJson(res, 200, { app: "ein" });
           });
           return;
         }

@@ -5,7 +5,7 @@
 export const REMOTE_CUA_VERSION = "0.20.0";
 export const REMOTE_CUA_EXECUTABLE = "/opt/ogb/cua-driver";
 export const REMOTE_CUA_SOCKET = "/opt/ogb/run/cua.sock";
-export const REMOTE_CUA_SESSION = "openmausbot";
+export const REMOTE_CUA_SESSION = "ein";
 export const REMOTE_CDP_HELPER = "/opt/ogb/openmausbot-cdp.mjs";
 
 const REMOTE_CUA_WHEELS = {

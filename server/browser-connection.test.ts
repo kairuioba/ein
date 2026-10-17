@@ -167,7 +167,7 @@ describe("browser connection descriptor", () => {
       pid: process.pid,
     }));
     expect(applyDesktopBrowserConnectionMessage({
-      type: "openmausbot:browser-connection",
+      type: "ein:browser-connection",
       connection: {
         version: 1,
         url: "http://127.0.0.1:2222",
@@ -181,7 +181,7 @@ describe("browser connection descriptor", () => {
     });
     expect(applyDesktopBrowserConnectionMessage({ type: "something-else" })).toBe(false);
     expect(applyDesktopBrowserConnectionMessage({
-      type: "openmausbot:browser-connection",
+      type: "ein:browser-connection",
       connection: null,
     })).toBe(true);
     // A packaged clear suppresses even a valid stale descriptor on disk.

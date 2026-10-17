@@ -138,7 +138,7 @@ describe("control-plane migrations and health", () => {
   it("serves a no-store health response without CORS wildcards", async () => {
     const response = await call("/healthz");
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ ok: true, service: "openmausbot-control-plane" });
+    await expect(response.json()).resolves.toEqual({ ok: true, service: "ein-control-plane" });
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(response.headers.get("access-control-allow-origin")).toBeNull();
   });

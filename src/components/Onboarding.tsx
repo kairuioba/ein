@@ -3,7 +3,11 @@
 // (live checks from the harness), the first bot — your 主 Bot, created with
 // POST /api/bots and made the chief of staff — then the optional microphone
 // and phone setup that can always be resumed from Settings.
-// Every step is skippable: onboarding must never brick the app.
+// Every step is skippable: onboarding must never brick the app. Picking a
+// connected engine is the one decision that matters, so clicking one moves
+// straight on, and the step buttons stay pinned to the bottom of the window
+// however many engines the grid shows. Once the main bot exists the next
+// click is the app itself; the microphone and phone are an optional detour.
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { ArrowRight, Check, Eye, Loader2, Mic, RefreshCw, Sparkles, X } from "lucide-react";
 import { identifyEmail, setEmailGateDone, track } from "@/lib/analytics";
@@ -18,7 +22,7 @@ import { cn } from "@/lib/cn";
 import { PRODUCT_TAGLINE } from "@/lib/brand";
 import { msg, t, tn } from "@/lib/i18n";
 import type { MascotPose } from "@/lib/engine-mascots";
-import { RECOMMENDED_DRIVER, engineState, engineUsable, mascotForInstance, onboardingEngines, type EngineState } from "./settings/engine-model";
+import { RECOMMENDED_DRIVER, engineState, engineUsable, mascotForInstance, onboardingEngines, onboardingEnginesWith, type EngineState } from "./settings/engine-model";
 import { MarkTile } from "./settings/parts";
 
 type Step = "profile" | "engines" | "bot" | "chief" | "permissions" | "phone";
@@ -86,6 +90,19 @@ function Heading({ title, tagline, sub }: { title: string; tagline?: string; sub
       <h1 className="text-[24px] leading-[1.3] font-bold tracking-[-0.2px] text-ink">{title}</h1>
       {tagline && <p className="mt-1 text-[13px] tracking-[0.05em] text-ink-secondary/80">{tagline}</p>}
       <p className="mt-1.5 text-[14px] text-ink-secondary">{sub}</p>
+    </div>
+  );
+}
+
+/** A step's actions, pinned to the bottom of the window: with a long engine
+ * list or a short window the way forward is still in view without scrolling. */
+function StepFooter({ children, className }: { children: ReactNode; className?: string }) {
+  return (
+    <div
+      className={cn("sticky bottom-0 z-10 -mx-3 mt-6 flex items-center gap-2.5 px-3 pt-4 pb-3", className)}
+      style={{ background: "linear-gradient(180deg, transparent 0%, var(--color-app) 38%)" }}
+    >
+      {children}
     </div>
   );
 }
@@ -327,6 +344,8 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   const usableCount = instances.filter((instance) => instance.driverKind !== "boxAgent" && engineUsable(instance)).length;
   const recommended = instances.find((instance) => instance.driverKind === RECOMMENDED_DRIVER);
   const chosen = instances.find((instance) => instance.instanceId === engineId);
+  // what the first-bot step shows: the curated eight, always with the choice
+  const botGrid = useMemo(() => onboardingEnginesWith(instances, engineId), [instances, engineId]);
 
   // The email is optional in this edition: nothing is mailed, and analytics
   // (the only thing that would ever read it) start switched off.
@@ -378,6 +397,15 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   };
 
   const afterChief = () => setStep(capabilities.dictation.available ? "permissions" : "phone");
+
+  // The engines step's one decision: a connected engine becomes the main
+  // bot's engine and the next step opens with it already chosen.
+  const pickEngine = (instance: InstanceInfo) => {
+    setEngineId(instance.instanceId);
+    track("onboarding_engine_picked", { engine: instance.driverKind });
+    setStep("bot");
+  };
+  const chosenUsable = chosen ? engineUsable(chosen) : false;
 
   const finish = () => {
     track("onboarding_completed", {
@@ -507,7 +535,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
 
         {step === "engines" && (
           <div className="mt-[42px] flex w-full max-w-[900px] flex-col">
-            <Heading title={t("Connect engines")} sub={t("Bots run on AI tools installed on this computer — here’s what we found. One is enough to start.")} />
+            <Heading title={t("Connect engines")} sub={t("Pick a connected engine for your main bot. One is enough to start; connect the others any time later.")} />
             <section className={cn(cardCls, "mt-8 p-6")}>
               <div className="mb-3 flex items-center gap-2 text-[12.5px] font-semibold text-ink-secondary">
                 {checkingEngines ? (
@@ -528,23 +556,23 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
                   <EngineTile
                     key={instance.instanceId}
                     instance={instance}
-                    selected={false}
+                    selected={instance.instanceId === engineId}
                     recommended={instance.driverKind === RECOMMENDED_DRIVER}
-                    onSelect={() => {}}
+                    onSelect={() => pickEngine(instance)}
                     onSetup={() => setSetupFor(instance.instanceId)}
                   />
                 ))}
               </div>
             </section>
-            <div className="mt-6 flex items-center justify-end gap-2.5">
+            <StepFooter className="justify-end">
               <Button variant="ghost" size="lg" onClick={() => setStep("profile")}>
                 {t("Previous step")}
               </Button>
-              <Button size="lg" onClick={() => setStep("bot")}>
-                {usableCount ? t("Continue") : t("Skip for now")}
+              <Button size="lg" onClick={() => (chosen && chosenUsable ? pickEngine(chosen) : setStep("bot"))}>
+                {chosen && chosenUsable ? t("Continue with {name}", { name: chosen.displayName }) : t("Skip for now")}
                 <ArrowRight size={15} />
               </Button>
-            </div>
+            </StepFooter>
           </div>
         )}
 
@@ -609,7 +637,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
                     </em>
                   </span>
                   <div role="radiogroup" aria-label={t("Which engine")} className="grid grid-cols-4 gap-2.5">
-                    {grid.map((instance) => (
+                    {botGrid.map((instance) => (
                       <EngineTile
                         key={instance.instanceId}
                         instance={instance}
@@ -619,13 +647,13 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
                         onSetup={() => setSetupFor(instance.instanceId)}
                       />
                     ))}
-                    {grid.length === 0 && <div className="col-span-4 py-6 text-center text-[13px] text-ink-secondary">{t("Checking which engines this computer has…")}</div>}
+                    {botGrid.length === 0 && <div className="col-span-4 py-6 text-center text-[13px] text-ink-secondary">{t("Checking which engines this computer has…")}</div>}
                   </div>
                 </div>
               </section>
               <BotPreview name={botName} tag={botTag} instance={chosen} />
             </div>
-            <div className="mt-6 flex flex-wrap items-center gap-2.5">
+            <StepFooter className="flex-wrap">
               <div className={cn(cardCls, "flex h-[52px] items-center gap-2.5 rounded-xl pr-3.5 pl-2.5")}>
                 <span className="grid size-8 place-items-center rounded-[9px] bg-[#FFF6DD]">
                   <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden>
@@ -640,7 +668,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
               </div>
               <span className="flex-1" />
               {createError && <span role="alert" className="max-w-[320px] text-[12.5px] text-danger">{createError}</span>}
-              <button type="button" onClick={afterChief} className="px-2 text-[12.5px] text-ink-secondary hover:text-ink">
+              <button type="button" onClick={finish} className="px-2 text-[12.5px] text-ink-secondary hover:text-ink">
                 {t("Skip for now")}
               </button>
               <Button variant="ghost" size="lg" className="h-11" onClick={() => setStep("engines")}>
@@ -651,7 +679,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
                 {t("Create and continue")}
                 <ArrowRight size={15} />
               </Button>
-            </div>
+            </StepFooter>
           </div>
         )}
 
@@ -697,10 +725,13 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
                 </div>
               </section>
             )}
-            <p className="mt-4 text-center text-[12.5px] text-ink-secondary">{t("Next: let it reach you. The microphone and your phone are both optional.")}</p>
+            <p className="mt-4 text-center text-[12.5px] text-ink-secondary">{t("The microphone and your phone are optional: set them up now, or later in Settings.")}</p>
             <div className="mt-5 flex items-center justify-end gap-2.5">
-              <Button size="lg" className="h-11" onClick={afterChief}>
-                {t("Continue")}
+              <Button variant="ghost" size="lg" className="h-11" onClick={afterChief}>
+                {t("Set up the microphone and phone")}
+              </Button>
+              <Button size="lg" className="h-11" onClick={finish}>
+                {t("Start using Ein")}
                 <ArrowRight size={15} />
               </Button>
             </div>

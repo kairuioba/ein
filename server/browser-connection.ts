@@ -103,7 +103,7 @@ const descriptorSchema = z.object({
   pid: z.number().int().positive(),
 }).strict();
 const desktopConnectionMessageSchema = z.object({
-  type: z.literal("openmausbot:browser-connection"),
+  type: z.literal("ein:browser-connection"),
   connection: descriptorSchema.nullable(),
 }).strict();
 
@@ -157,7 +157,7 @@ export function applyDesktopBrowserConnectionMessage(message: unknown): boolean 
   if (
     typeof message !== "object" ||
     message === null ||
-    (message as { type?: unknown }).type !== "openmausbot:browser-connection"
+    (message as { type?: unknown }).type !== "ein:browser-connection"
   ) {
     return false;
   }

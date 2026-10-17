@@ -96,7 +96,7 @@ async function handle(msg: any) {
       result: {
         protocolVersion: msg.params?.protocolVersion ?? "2024-11-05",
         capabilities: { tools: {} },
-        serverInfo: { name: "openmausbot-permissions", version: "1" },
+        serverInfo: { name: "ein-permissions", version: "1" },
       },
     });
   }

@@ -50,7 +50,7 @@ const device = async (
 
 beforeAll(async () => {
   harness = createServer((req, res) => {
-    companionMarker = String(req.headers["x-openmausbot-companion"] ?? "");
+    companionMarker = String(req.headers["x-ein-companion"] ?? "");
     respond(res);
   });
   const harnessPort = await listen(harness);

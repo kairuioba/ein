@@ -76,7 +76,7 @@ export function chineseFirst(voices: Voice[], locale: string = getLocale()): Voi
 export async function synthesizeSystem(text: string, voiceId: string | undefined, run: Runner = defaultRun): Promise<Audio> {
   const trimmed = text.trim();
   if (!trimmed) return { bytes: new Uint8Array(), mime: "audio/wav" };
-  const dir = await mkdtemp(join(tmpdir(), "openmausbot-say-"));
+  const dir = await mkdtemp(join(tmpdir(), "ein-say-"));
   const out = join(dir, "utterance.wav");
   try {
     const args = ["-o", out, "--data-format=LEI16@22050"];

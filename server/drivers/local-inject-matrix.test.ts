@@ -331,7 +331,7 @@ describe("probe payload dialects", () => {
   const probe = (payload: unknown) =>
     mergeLocalInject(
       { default: "keep", options: [{ id: "keep", label: "Keep" }] },
-      { VITEST: "true", OPENMAUSBOT_PROBE_LOCAL_INJECT: "1" },
+      { VITEST: "true", EIN_PROBE_LOCAL_INJECT: "1" },
       async (url) => {
         if (String(url).includes(":8080")) return new Response(JSON.stringify(payload), { status: 200 });
         return new Response("nope", { status: 500 });
@@ -366,7 +366,7 @@ describe("loaded host probes", () => {
   it("pins every host's actually-loaded models in one Custom list", async () => {
     const catalog = await mergeLocalInject(
       { default: "keep", options: [{ id: "keep", label: "Keep" }] },
-      { VITEST: "true", OPENMAUSBOT_PROBE_LOCAL_INJECT: "1" },
+      { VITEST: "true", EIN_PROBE_LOCAL_INJECT: "1" },
       async (url) => {
         const href = String(url);
         if (href.includes("/v1/models/status")) {

@@ -146,7 +146,7 @@ export function createWorker(cloudflareFetch: CloudflareFetch = fetch) {
         } catch {
           return secureResponse(errorResponse(503, "misconfigured"), request, null, requestId);
         }
-        return secureResponse(json({ ok: true, service: "openmausbot-control-plane" }), request, null, requestId);
+        return secureResponse(json({ ok: true, service: "ein-control-plane" }), request, null, requestId);
       }
 
       let config: ControlPlaneConfig | null = null;

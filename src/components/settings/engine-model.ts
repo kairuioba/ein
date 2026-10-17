@@ -186,6 +186,21 @@ export function onboardingEngines<I extends Pick<EngineInstance, "driverKind">>(
     .map(({ instance }) => instance);
 }
 
+/** The first-bot step's engine grid: the usual curated eight, but the engine
+ * already chosen (on the engines step, where every engine is listed) is
+ * always among them — it takes the last slot when it ranks lower, so the
+ * choice the person just made is never invisible. */
+export function onboardingEnginesWith<I extends Pick<EngineInstance, "driverKind" | "instanceId">>(
+  instances: readonly I[],
+  chosenId: string | null,
+  limit = 8,
+): I[] {
+  const grid = onboardingEngines(instances, limit);
+  if (!chosenId || grid.some((instance) => instance.instanceId === chosenId)) return grid;
+  const chosen = instances.find((instance) => instance.instanceId === chosenId && instance.driverKind !== "boxAgent");
+  return chosen ? [...grid.slice(0, Math.max(0, limit - 1)), chosen] : grid;
+}
+
 /** The sample jobs the strategy card shows, as task text for the recommender. */
 export const STRATEGY_EXAMPLES: ReadonlyArray<{ id: string; label: string; task: string }> = [
   { id: "writing", label: msg("Writing"), task: "写一篇发布会新闻稿和三段卖点文案" },

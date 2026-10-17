@@ -14,8 +14,8 @@ import type { Routine, RoutineRunStatus, RoutineSchedule } from "@/lib/routines"
 
 export const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
 export const WEEKDAYS = [1, 2, 3, 4, 5];
-export const BOT_DRAG_TYPE = "application/x-openmaus-bot";
-export const EVENT_DRAG_TYPE = "application/x-openmaus-calendar-event";
+export const BOT_DRAG_TYPE = "application/x-ein-bot";
+export const EVENT_DRAG_TYPE = "application/x-ein-calendar-event";
 
 export type EventKind = "routine" | "call";
 export type RecurrenceChoice = "none" | "daily" | "weekdays" | "weekly" | "custom";

@@ -79,6 +79,7 @@ import { buildDecisionStack, emptyDecisionStack } from "./decision-stack.ts";
 import { buildProjectOffice, emptyProjectOffice } from "./office-view.ts";
 import { buildContextShare, type ContextSource } from "./context-share.ts";
 import { InboxStore } from "./inbox-store.ts";
+import { deriveSignals, EvolutionStore, proposeImprovements } from "./evolution.ts";
 import type { DispatchRun } from "../shared/dispatch-types.ts";
 import { DEPARTMENT_COLORS } from "../shared/org-types.ts";
 import { UnattendedBots } from "./unattended-state.ts";
@@ -2417,6 +2418,9 @@ const dispatcher = new Dispatcher({
 dispatcher.load();
 taskFolders = new TaskFolderStore(DATA_DIR);
 const inbox = new InboxStore(DATA_DIR);
+// self-evolution phase 3: failure patterns → improvement proposals, only the
+// owner accepts/rejects them (server/evolution.ts). Nothing here edits code.
+const evolution = new EvolutionStore(DATA_DIR);
 taskFolders.seedFromRuns(dispatcher.list(), 12, (run) => taskLeadForRun(run));
 setTimeout(() => dispatcher.resumeAll(), 3_000).unref?.();
 // an engine throttling a worker (429s the driver retries) feeds the
@@ -5742,6 +5746,32 @@ const server = createServer(async (req, res) => {
       if ("error" in resolved) return json(res, 400, resolved);
       broadcast({ kind: "inbox", items: inbox.list(), counts: inbox.counts() });
       return json(res, 200, { item: resolved, counts: inbox.counts() });
+    }
+
+    // ── 自我进化 · 阶段 3：失败模式 → 改进提案 ─────────────────────────
+    // 只读复盘与派单事实，生成提案并记录老板的决定；不改代码、不发版。
+    if (path === "/api/evolution" && method === "GET") {
+      const signals = deriveSignals({ retros: dispatcher.retros(50), runs: dispatcher.list(), now: Date.now() });
+      const proposals = evolution.list("all");
+      return json(res, 200, { signals, proposals, open: proposals.filter((item) => item.status === "open").length });
+    }
+    if (path === "/api/evolution/generate" && method === "POST") {
+      const signals = deriveSignals({ retros: dispatcher.retros(50), runs: dispatcher.list(), now: Date.now() });
+      const { added, skipped } = evolution.append(proposeImprovements(signals));
+      return json(res, 200, { signals, added, skipped, proposals: evolution.list("all") });
+    }
+    const evolutionMatch = path.match(/^\/api\/evolution\/([\w-]+)\/resolve$/);
+    if (evolutionMatch && method === "POST") {
+      const body = (await readBody(req)) ?? {};
+      const status = body.status;
+      if (status !== "accepted" && status !== "rejected" && status !== "deferred") {
+        return json(res, 400, { error: "status must be accepted, rejected or deferred" });
+      }
+      const note = typeof body.note === "string" ? body.note : undefined;
+      const resolved = evolution.resolve(evolutionMatch[1]!, status, note);
+      if ("error" in resolved) return json(res, 404, resolved);
+      broadcast({ kind: "evolution", proposal: resolved });
+      return json(res, 200, { proposal: resolved });
     }
 
     // ── 任务文件夹：侧栏最外层「任务」 ─────────────────────────────────

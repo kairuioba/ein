@@ -84,7 +84,8 @@ import { InboxStore } from "./inbox-store.ts";
 import { deriveSignals, EvolutionStore, proposeImprovements } from "./evolution.ts";
 import { EvolutionRunStore } from "./evolution-runs.ts";
 import { pipelineHeadline } from "./evolution-pipeline.ts";
-import { ApprovalAuditStore } from "./approval-audit.ts";
+import { ApprovalAuditStore, inboxDecisionAudit } from "./approval-audit.ts";
+import { attentionCounts, classifyInboxQueue } from "./attention-inbox.ts";
 import type { DispatchRun } from "../shared/dispatch-types.ts";
 import { DEPARTMENT_COLORS } from "../shared/org-types.ts";
 import { UnattendedBots } from "./unattended-state.ts";
@@ -5759,8 +5760,17 @@ const server = createServer(async (req, res) => {
       }
       const resolved = inbox.resolve(item.id, action, note);
       if ("error" in resolved) return json(res, 400, resolved);
+      // an owner approval is a manual audit event (trust-bearing); rejects are not
+      const auditEvent = inboxDecisionAudit({ item, action, ...(note ? { note } : {}) });
+      if (auditEvent) approvalAudit.append(auditEvent);
       broadcast({ kind: "inbox", items: inbox.list(), counts: inbox.counts() });
       return json(res, 200, { item: resolved, counts: inbox.counts() });
+    }
+
+    // ── 注意力闸门：收件箱先分流（push 才打扰老板）──────────────────
+    if (path === "/api/attention/queue" && method === "GET") {
+      const queue = classifyInboxQueue(inbox.list("open"), approvalAudit);
+      return json(res, 200, { queue, counts: attentionCounts(queue) });
     }
 
     // ── 晨报：三个数字，不调用模型 ────────────────────────────────────

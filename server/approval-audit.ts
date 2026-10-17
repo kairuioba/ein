@@ -90,6 +90,30 @@ export function foldAuditEvents(events: readonly AuditEvent[], options: { now?: 
   return stats;
 }
 
+/** An owner's explicit approval of an inbox item is a manual approval event:
+ * only these grant trust to the matching action type, never automatic ones. */
+export function inboxDecisionAudit(input: {
+  item: { id: string; kind: string; taskId?: string; title?: string };
+  action: "approve" | "reject" | "abandon";
+  note?: string;
+  now?: number;
+}): Omit<AuditEvent, "id"> | null {
+  if (input.action !== "approve") return null;
+  const now = input.now ?? Date.now();
+  return {
+    idempotencyKey: `inbox:approve:${input.item.id}`,
+    event: "approved",
+    actionType: `inbox.approve:${input.item.kind}`,
+    project: input.item.taskId ?? "ein",
+    target: input.item.id,
+    actor: "owner",
+    mode: "manual",
+    ruleVersion: 1,
+    decidedAt: now,
+    ...(input.note ? { evidence: [input.note.slice(0, 300)] } : {}),
+  };
+}
+
 /** In-memory index over the JSONL log; append is the only write. */
 export class ApprovalAuditStore {
   private readonly file: string;

@@ -82,6 +82,9 @@ import { buildProjectOffice, emptyProjectOffice } from "./office-view.ts";
 import { buildContextShare, type ContextSource } from "./context-share.ts";
 import { InboxStore } from "./inbox-store.ts";
 import { deriveSignals, EvolutionStore, proposeImprovements } from "./evolution.ts";
+import { EvolutionRunStore } from "./evolution-runs.ts";
+import { pipelineHeadline } from "./evolution-pipeline.ts";
+import { ApprovalAuditStore } from "./approval-audit.ts";
 import type { DispatchRun } from "../shared/dispatch-types.ts";
 import { DEPARTMENT_COLORS } from "../shared/org-types.ts";
 import { UnattendedBots } from "./unattended-state.ts";
@@ -2431,6 +2434,8 @@ const inbox = new InboxStore(DATA_DIR);
 // self-evolution phase 3: failure patterns → improvement proposals, only the
 // owner accepts/rejects them (server/evolution.ts). Nothing here edits code.
 const evolution = new EvolutionStore(DATA_DIR);
+const approvalAudit = new ApprovalAuditStore(DATA_DIR);
+const evolutionRuns = new EvolutionRunStore(DATA_DIR);
 taskFolders.seedFromRuns(dispatcher.list(), 12, (run) => taskLeadForRun(run));
 setTimeout(() => dispatcher.resumeAll(), 3_000).unref?.();
 // an engine throttling a worker (429s the driver retries) feeds the
@@ -5801,8 +5806,15 @@ const server = createServer(async (req, res) => {
       const note = typeof body.note === "string" ? body.note : undefined;
       const resolved = evolution.resolve(evolutionMatch[1]!, status, note);
       if ("error" in resolved) return json(res, 404, resolved);
+      // manual accept → track a stage-4 run and start accumulating the owner's
+      // manual-approval trust (no code is changed here)
+      const accepted = resolved.status === "accepted" ? evolutionRuns.onAccepted(resolved, approvalAudit) : undefined;
       broadcast({ kind: "evolution", proposal: resolved });
-      return json(res, 200, { proposal: resolved });
+      return json(res, 200, { proposal: resolved, ...(accepted ? { run: accepted.run } : {}) });
+    }
+
+    if (path === "/api/evolution/runs" && method === "GET") {
+      return json(res, 200, { runs: evolutionRuns.list().map((run) => ({ run, headline: pipelineHeadline(run) })) });
     }
 
     // ── 任务文件夹：侧栏最外层「任务」 ─────────────────────────────────

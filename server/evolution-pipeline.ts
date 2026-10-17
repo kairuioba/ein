@@ -6,6 +6,8 @@ export type PipelineState =
 
 export interface PipelineRun {
   id: string;
+  /** the evolution proposal this run came from (accepted → run) */
+  proposalId?: string;
   state: PipelineState;
   headSha?: string;
   baseSha: string;

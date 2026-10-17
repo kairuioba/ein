@@ -382,6 +382,8 @@ function isStopReason(reason: string | undefined): boolean {
 export class Dispatcher {
   private runs: DispatchRun[] = [];
   private routeList: DispatchRoute[] = [];
+  /** runs this boot closed because their report turn did not survive it */
+  private restartFinishes: DispatchRun[] = [];
   /** worker thread → the subtask its turn is doing */
   private readonly watch = new Map<string, { runId: string; subtaskId: string }>();
   /** chief's thread → the run whose consolidated-report turn runs there */
@@ -416,12 +418,15 @@ export class Dispatcher {
     }
     const now = Date.now();
     // A report turn does not survive a restart: the run is done without it,
-    // and its squads dissolve as at any other end.
+    // and its squads dissolve as at any other end. Remember which ones so the
+    // company timeline can still show 已完成 (the boot seed treats runs on
+    // disk as history, so a run closed here would otherwise vanish silently).
     for (const run of this.runs) {
       if (run.status === "synthesizing" && run.synthesisStarted) {
         run.status = "done";
         run.finishedAt ??= now;
         dissolveSquads(run, now);
+        this.restartFinishes.push(run);
       }
     }
     // No worker turn survives either: running work goes back to pending
@@ -441,6 +446,14 @@ export class Dispatcher {
       }
     }
     this.saveRuns();
+  }
+
+  /** Runs this boot finished on a restart's behalf, once each: the company
+   * layer announces them (run.done) after the dispatcher is wired. */
+  takeRestartFinished(): DispatchRun[] {
+    const runs = this.restartFinishes;
+    this.restartFinishes = [];
+    return runs;
   }
 
   private saveRuns(): void {
@@ -503,6 +516,18 @@ export class Dispatcher {
   /** A department lead: a section's chief of staff (the org chief is not one). */
   private isLead(bot: DispatchBot): boolean {
     return Boolean(bot.chiefOfStaff) && sectionKey(bot.section) !== "" && !this.isOrgChief(bot.id);
+  }
+
+  /** How many more non-hidden people a section may hold before its configured
+   * 编制 (headcount) is full. Infinity when the section has no quota — or no
+   * section at all (the 主 Bot's company pool, where nobody has a quota). */
+  private headcountRoom(section?: string): number {
+    const key = sectionKey(section);
+    if (!key) return Number.POSITIVE_INFINITY;
+    const quota = this.org().departments.find((entry) => sectionKey(entry.section) === key)?.headcount;
+    if (quota === undefined) return Number.POSITIVE_INFINITY;
+    const people = this.host.bots().filter((bot) => !bot.hidden && sectionKey(bot.section) === key).length;
+    return quota - people;
   }
 
   /** Bots this Chief may dispatch to: its section's visible members unless
@@ -642,10 +667,22 @@ export class Dispatcher {
             error: `Nobody on your team fits subtask "${item.id}" (${item.role}), and your company rules do not let you create specialists on your own. Name an assignee from list_bots, or ask the user to add one.`,
           };
         }
-        if (created.length >= settings.maxNewBots || this.host.bots().length + created.length >= this.host.maxBots) {
+        // a department's 编制 is a quota too: never create past it (the same
+        // place the bot-cap fallback lives)
+        const noHeadcountRoom = this.headcountRoom(chief.section) - created.length <= 0;
+        if (noHeadcountRoom || created.length >= settings.maxNewBots || this.host.bots().length + created.length >= this.host.maxBots) {
           // out of room for new bots: share the work among who we have
           assignee = this.leastLoaded(team.concat(created), subtasks, orgChief);
-          if (!assignee) return { error: "No team member is available and no more bots can be created. Ask the user to add a bot." };
+          if (!assignee) {
+            return {
+              error: noHeadcountRoom
+                ? t(
+                    "Nobody on your team fits subtask {id} ({role}), and the {section} department is at its headcount. Raise it in Settings → Organization, or name an assignee from list_bots.",
+                    { id: item.id, role: item.role, section: sectionKey(chief.section) },
+                  )
+                : "No team member is available and no more bots can be created. Ask the user to add a bot.",
+            };
+          }
         } else {
           // Planned, not created: a later subtask can still reject the whole
           // plan, and a rejected plan must not leave specialists behind (the
@@ -741,6 +778,34 @@ export class Dispatcher {
     }
     if (run.status === "running") queueMicrotask(() => this.pump(run.id));
     return { run, created: created.map((bot) => bot.id) };
+  }
+
+  /** A Chief's direct create_bot (server/index.ts's /api/internal/create-bot):
+   * unlike a plan's automatic specialist it takes no diagnosis, so the same
+   * two limits are checked here — the company's 新增专员 rule for the 主 Bot,
+   * and the department's 编制 for anyone with a section. */
+  createSpecialist(chiefId: string, input: { name: string; title: string; instructions: string }): DispatchBot | { error: string } {
+    const chief = this.host.bot(chiefId);
+    if (!chief) return { error: t("No such bot") };
+    if (this.isOrgChief(chiefId) && !this.org().rules.chiefMay.newSpecialist) {
+      return {
+        error: t("Your company rules do not let you create specialists on your own. Ask the user to add one, or enable new specialists in Settings → Organization."),
+      };
+    }
+    if (this.headcountRoom(chief.section) <= 0) {
+      return {
+        error: t("The {section} department is at its headcount. Raise it in Settings → Organization, or use the people it already has.", {
+          section: sectionKey(chief.section),
+        }),
+      };
+    }
+    return this.host.createBot({
+      name: input.name,
+      title: input.title,
+      description: input.instructions,
+      section: chief.section,
+      modelSelection: { ...chief.modelSelection },
+    });
   }
 
   private findAssignee(nameOrId: string, team: DispatchBot[], orgChief: boolean): DispatchBot | undefined {
@@ -1376,7 +1441,11 @@ export class Dispatcher {
   /** Add people to a running job. The owner's call always goes through (as
    * many people as there are not-started subtasks to hand out); the chief's
    * only when the diagnosis says it helps and the org rules and budget allow. */
-  amend(runId: string, add: number, by: { by: "owner" | "chief"; botId?: string } = { by: "owner" }): DispatchAmendResult | { error: string } {
+  amend(
+    runId: string,
+    add: number,
+    by: { by: "owner" | "chief"; botId?: string } = { by: "owner" },
+  ): DispatchAmendResult | { error: string; code?: "department-work" } {
     const run = this.get(runId);
     if (!run) return { error: t("No such dispatch run") };
     if (run.status !== "running" && run.status !== "awaiting-approval") return { error: t("People can only be added while a run is in progress") };
@@ -1406,17 +1475,44 @@ export class Dispatcher {
         error: leadsWork
           ? t("What is left is departments' own work, which their leads staff: ask a lead to add people to its team.")
           : t("Nothing is left to hand out: every remaining subtask is running or waits on earlier work."),
+        ...(leadsWork ? { code: "department-work" as const } : {}),
       };
     }
 
     // the new people, made like the dispatcher's own specialists
     const chief = this.host.bot(run.chiefBotId);
+    // a department's 编制 is a real quota: a newcomer that would take it past
+    // the line is not made, and the work stays with the team it already has
+    const rooms = new Map<string, number>();
+    const roomFor = (section?: string): number => {
+      const key = sectionKey(section);
+      if (!key) return Number.POSITIVE_INFINITY;
+      let left = rooms.get(key);
+      if (left === undefined) {
+        left = this.headcountRoom(key);
+        rooms.set(key, left);
+      }
+      return left;
+    };
+    const people = plan.people.filter((person) => {
+      const first = run.subtasks.find((subtask) => subtask.id === person.subtaskIds[0])!;
+      const section = this.host.bot(first.assigneeBotId)?.section || chief?.section;
+      const left = roomFor(section);
+      if (left <= 0) return false;
+      if (Number.isFinite(left)) rooms.set(sectionKey(section), left - 1);
+      return true;
+    });
+    if (!people.length) {
+      return {
+        error: t("The departments involved are at their headcount. Raise it in Settings → Organization, or add people to a department's own plan."),
+      };
+    }
     const taken = this.host.bots().map((bot) => bot.name);
     const span = Math.max(2, org.rules.spanOfControl);
     const created: DispatchBot[] = [];
     const squadIndex: number[] = [];
     const firstSquad = (run.squads ?? []).length;
-    plan.people.forEach((person, index) => {
+    people.forEach((person, index) => {
       const first = run.subtasks.find((subtask) => subtask.id === person.subtaskIds[0])!;
       const model = this.newcomerModel(run, first);
       const name = uniqueName(person.roleLabel, taken);
@@ -1439,7 +1535,7 @@ export class Dispatcher {
     const squads: DispatchSquad[] = [];
     const groups = Math.max(...squadIndex) + 1;
     for (let group = 0; group < groups; group += 1) {
-      const members = plan.people.map((person, index) => ({ person, bot: created[index]! })).filter((_, index) => squadIndex[index] === group);
+      const members = people.map((person, index) => ({ person, bot: created[index]! })).filter((_, index) => squadIndex[index] === group);
       squads.push({
         name: squadLetterName(firstSquad + group),
         leadBotId: members[0]!.bot.id,
@@ -1453,7 +1549,7 @@ export class Dispatcher {
       });
     }
     const moved: string[] = [];
-    plan.people.forEach((person, index) => {
+    people.forEach((person, index) => {
       for (const id of person.subtaskIds) {
         const subtask = run.subtasks.find((entry) => entry.id === id);
         if (!subtask || subtask.status !== "pending") continue;
@@ -1484,6 +1580,38 @@ export class Dispatcher {
     const timer = setTimeout(() => this.checkReviews(), REVIEW_AFTER_MS + 1_000);
     timer.unref?.();
     return { ok: true, added: created.map((bot) => bot.id), squad: squads[0]!, moved, run };
+  }
+
+  /** The workbench's 加人 (dispatch-api's owner route). The owner's own call
+   * normally goes straight to amend(); when the company plan has nothing left
+   * to hand out because each department's lead staffs its own share, the
+   * newcomers instead join those departments' running plans (the lead's child
+   * runs), which is where the not-started work actually is. */
+  amendFromWorkbench(runId: string, add: number): DispatchAmendResult | { error: string } {
+    const direct = this.amend(runId, add, { by: "owner" });
+    if (!("error" in direct) || direct.code !== "department-work") return direct;
+    const run = this.get(runId);
+    if (!run) return direct;
+    let left = Math.trunc(Number(add));
+    const added: string[] = [];
+    const moved: string[] = [];
+    let squad: DispatchSquad | undefined;
+    let problem: string | undefined;
+    for (const child of this.runs.filter((entry) => entry.parentRunId === run.id && !isFinished(entry.status))) {
+      if (left < 1) break;
+      if (!child.subtasks.some((subtask) => subtask.status === "pending")) continue;
+      const result = this.amend(child.id, left, { by: "owner" });
+      if ("error" in result) {
+        problem ??= result.error;
+        continue;
+      }
+      added.push(...result.added);
+      moved.push(...result.moved);
+      squad ??= result.squad;
+      left -= result.added.length;
+    }
+    if (!squad) return problem ? { error: problem } : direct;
+    return { ok: true, added, squad, moved, run };
   }
 
   /** Review squads whose 30 minutes are up: did the run speed up? */

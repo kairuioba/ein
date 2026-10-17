@@ -148,20 +148,34 @@ export class RunWatcher {
     }
 
     if (prev && prev.status !== run.status) {
-      const done = run.subtasks.filter((subtask) => subtask.status === "done").length;
-      if (run.status === "done") {
-        events.push({
-          ...runBase,
-          kind: "run.done",
-          title: t("Finished “{goal}”: {done}/{total} done", { goal: goalOf(run), done, total: run.subtasks.length }),
-          severity: "info",
-        });
-      } else if (run.status === "failed") {
-        events.push({ ...runBase, kind: "run.failed", title: t("“{goal}” finished without results", { goal: goalOf(run) }), severity: "error" });
-      }
+      const finished = runFinishedEvent(run, ctx);
+      if (finished) events.push(finished);
     }
 
     this.snaps.set(run.id, snapshot(run, announced));
     return events;
   }
+}
+
+/** The run.done / run.failed event for a run that just settled, or null for a
+ * run that is not over. Shared with the restart path: a run a restart closes
+ * finishes without a broadcast, so the timeline still has to say so. */
+export function runFinishedEvent(run: DispatchRun, ctx: Pick<RunEventContext, "botName" | "botSection">): OrgEventInput | null {
+  if (run.status !== "done" && run.status !== "failed") return null;
+  const runBase = {
+    runId: run.id,
+    botId: run.chiefBotId,
+    threadId: run.sourceThreadId,
+    ...(ctx.botSection(run.chiefBotId) ? { section: ctx.botSection(run.chiefBotId) } : {}),
+  };
+  if (run.status === "done") {
+    const done = run.subtasks.filter((subtask) => subtask.status === "done").length;
+    return {
+      ...runBase,
+      kind: "run.done",
+      title: t("Finished “{goal}”: {done}/{total} done", { goal: goalOf(run), done, total: run.subtasks.length }),
+      severity: "info",
+    };
+  }
+  return { ...runBase, kind: "run.failed", title: t("“{goal}” finished without results", { goal: goalOf(run) }), severity: "error" };
 }

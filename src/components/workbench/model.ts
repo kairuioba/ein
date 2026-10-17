@@ -228,8 +228,8 @@ export function useWorkbenchModel(): WorkbenchModel {
   }, [bots, runs, needsYou, brief.risks, chief?.id, rooms, botById, dispatch.settings.maxAttempts, lastSeen, now]);
 
   const stats = useMemo(
-    () => departmentStats(rooms.filter((room) => !room.unassigned).map((room) => ({ section: room.section, botIds: room.everyone.map((bot) => bot.id) })), runs, states, brief.departments),
-    [rooms, runs, states, brief.departments],
+    () => departmentStats(rooms.filter((room) => !room.unassigned).map((room) => ({ section: room.section, botIds: room.everyone.map((bot) => bot.id) })), runs, states, brief.departments, now),
+    [rooms, runs, states, brief.departments, now],
   );
 
   const library = useMemo(() => libraryData?.docs ?? [], [libraryData]);

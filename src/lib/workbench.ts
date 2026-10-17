@@ -436,13 +436,25 @@ export function departmentStats(
   runs: readonly DispatchRun[],
   states: ReadonlyMap<string, PersonState>,
   brief?: readonly BriefDepartment[],
+  now = Date.now(),
 ): Map<string, DeptStats> {
+  // Same scope as the brief (server/org/brief.ts), so the numbers a room shows
+  // before the brief loads are the numbers it will show after: work still in
+  // progress or settled today, a canceled subtask not counted, and a
+  // department's plan counted through its team's subtasks — not also as the
+  // lead's container.
+  const dayStart = new Date(now).setHours(0, 0, 0, 0);
+  const finished = (run: DispatchRun) => run.status === "done" || run.status === "failed" || run.status === "canceled";
+  const inView = new Set(runs.filter((run) => !finished(run) || run.updatedAt >= dayStart).map((run) => run.id));
+  const isWork = (subtask: Pick<DispatchSubtask, "childRunId">) => !(subtask.childRunId && inView.has(subtask.childRunId));
   const out = new Map<string, DeptStats>();
   for (const { section, botIds } of sections) {
     const ids = new Set(botIds);
     const subtasks = runs
-      .filter((run) => isActiveRun(run) || run.status === "done")
-      .flatMap((run) => run.subtasks.filter((subtask) => ids.has(subtask.assigneeBotId) && isLeafSubtask(subtask) && subtask.status !== "canceled" && subtask.status !== "skipped"));
+      .filter((run) => inView.has(run.id))
+      .flatMap((run) =>
+        run.subtasks.filter((subtask) => ids.has(subtask.assigneeBotId) && isWork(subtask) && subtask.status !== "canceled"),
+      );
     const people = botIds.map((id) => states.get(id)).filter((state): state is PersonState => Boolean(state));
     const count = (status: PersonStatus) => people.filter((state) => state.status === status).length;
     const derived: DeptStats = {

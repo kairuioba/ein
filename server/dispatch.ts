@@ -846,10 +846,12 @@ export class Dispatcher {
     delete subtask.childRunId;
     this.reopen(run);
     // a department's reopened plan: the subtask above waits for it again, and
-    // the company plan around it goes back to work (unless you canceled it)
+    // the company plan around it goes back to work (unless you canceled it).
+    // Only the plan that subtask still answers to: once the subtask itself
+    // was retried, an older plan of its department no longer speaks for it.
     const parent = run.parentRunId ? this.get(run.parentRunId) : undefined;
     const parentSubtask = parent?.subtasks.find((entry) => entry.id === run.parentSubtaskId);
-    if (parent && parentSubtask && parent.status !== "canceled" && parentSubtask.status !== "running") {
+    if (parent && parentSubtask && parent.status !== "canceled" && parentSubtask.status !== "running" && parentSubtask.childRunId === run.id) {
       parentSubtask.status = "running";
       parentSubtask.childRunId = run.id;
       delete parentSubtask.error;

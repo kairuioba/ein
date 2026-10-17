@@ -1116,6 +1116,33 @@ describe("Dispatcher", () => {
       expect(dispatcher.get(top.run.id)).toMatchObject({ status: "done", report: "落地页已上线" });
     });
 
+    it("leaves the company plan alone when a department's superseded plan is retried", async () => {
+      writeOrg({ chiefBotId: "boss" });
+      host.settingsValue = dispatchSettings({ maxAttempts: 1 });
+      const top = orgPlan([{ id: "page", title: "落地页", brief: "做落地页", role: "前端工程师" }]);
+      if ("error" in top) throw new Error(top.error);
+      await flush();
+      const leadTurn = host.workerTurns()[0]!;
+      const child = dispatcher.submitPlan("tech", leadTurn.threadId, { goal: "落地页", subtasks: [{ id: "build", title: "页面开发", brief: "写", role: "前端" }] });
+      if ("error" in child) throw new Error(child.error);
+      host.finish(dispatcher, leadTurn.threadId, true, "已派出");
+      await flush();
+      host.finish(dispatcher, host.workerTurns().find((turn) => turn.botId === "fe1")!.threadId, false, "");
+      await flush();
+      // the owner retries the company subtask itself; this time the lead just does it
+      dispatcher.retry(top.run.id, "page");
+      await flush();
+      host.finish(dispatcher, host.workerTurns().filter((turn) => turn.botId === "tech").at(-1)!.threadId, true, "落地页我直接做好了");
+      await flush();
+      host.finish(dispatcher, "boss-thread", true, "落地页已上线");
+      expect(dispatcher.get(top.run.id)).toMatchObject({ status: "done", report: "落地页已上线" });
+      // a retry inside the department's old plan cannot take that back
+      dispatcher.retry(child.run.id, "build");
+      await flush();
+      expect(dispatcher.get(top.run.id)).toMatchObject({ status: "done", report: "落地页已上线" });
+      expect(dispatcher.get(top.run.id)!.subtasks[0]).toMatchObject({ status: "done", result: "落地页我直接做好了" });
+    });
+
     it("keeps a lead planning for the chief to the company's hiring rule", async () => {
       writeOrg({ chiefBotId: "boss", rules: { chiefMay: { newSpecialist: false } } });
       const top = orgPlan([{ id: "page", title: "落地页", brief: "做发布会落地页", role: "前端工程师" }]);

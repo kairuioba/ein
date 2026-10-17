@@ -6059,6 +6059,27 @@ const server = createServer(async (req, res) => {
       return json(res, 200, { item: resolved, counts: inbox.counts() });
     }
 
+    // ── 项目的交接回执（项目页接收/退回/重发按钮用）──────────────────
+    const projectHandoffsMatch = path.match(/^\/api\/task-folders\/([\w-]+)\/handoffs$/);
+    if (projectHandoffsMatch && method === "GET") {
+      if (!taskFolders) return json(res, 503, { error: "task folders are not ready yet" });
+      const folder = taskFolders.byId(projectHandoffsMatch[1]!);
+      if (!folder) return json(res, 404, { error: "no such task folder" });
+      const run = folder.runId ? dispatcher.get(folder.runId) : undefined;
+      const handoffs = (run?.subtasks ?? [])
+        .filter((subtask) => Boolean(subtask.handoff))
+        .map((subtask) => ({
+          runId: run!.id,
+          ...handoffCard({
+            subtaskId: subtask.id,
+            title: subtask.title,
+            ...(subtask.handoff ? { handoff: subtask.handoff } : {}),
+            assigneeName: store.bot(subtask.assigneeBotId)?.name,
+          }),
+        }));
+      return json(res, 200, { handoffs });
+    }
+
     // ── 注意力闸门：收件箱先分流（push 才打扰老板）──────────────────
     if (path === "/api/attention/queue" && method === "GET") {
       const queue = classifyInboxQueue(inbox.list("open"), approvalAudit);

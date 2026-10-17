@@ -47,11 +47,49 @@ function cliOfRaw(raw: unknown): string | undefined {
   return typeof cli === "string" && cli ? cli : undefined;
 }
 
+/** Key order never matters to a driver, so it must not matter here either:
+ * an entry rebuilt from the same settings has to compare equal. */
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .filter((key) => record[key] !== undefined)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
+/** Everything a driver is created from. Two entries with the same key build
+ * the same instance, so a settings save that leaves it alone must not touch
+ * the running instance (or the turns on it). */
+function entryKey(entry: InstanceConfigMap[string]): string {
+  return stableJson({
+    driver: entry.driver,
+    displayName: entry.displayName,
+    enabled: entry.enabled,
+    config: entry.config,
+    environment: entry.environment,
+  });
+}
+
+export interface ReconcileResult {
+  /** Instances torn down because their entry changed or disappeared — any
+   * turn that was running on one of them ended with it. */
+  replaced: InstanceId[];
+  /** Live instances created by this pass (new or rebuilt), to attach to the bus. */
+  created: ProviderInstance[];
+}
+
 export class ProviderRegistry {
   private byId = new Map<InstanceId, RegistryEntry>();
   /** decoded per-instance `cli` overrides, for describe() — drivers spawn
    * from their own config; this map only reports what was configured */
   private cliByInstance = new Map<InstanceId, string>();
+  /** the entry each instance was built from (see entryKey) */
+  private keyById = new Map<InstanceId, string>();
   private driversByKind: Map<string, AnyProviderDriver>;
 
   constructor(drivers: readonly AnyProviderDriver[]) {
@@ -60,49 +98,92 @@ export class ProviderRegistry {
 
   async load(configs: InstanceConfigMap) {
     for (const [instanceId, entry] of Object.entries(configs)) {
-      const driver = this.driversByKind.get(entry.driver);
-      if (!driver) {
-        this.byId.set(instanceId, {
+      await this.loadEntry(instanceId, entry);
+    }
+  }
+
+  /** Bring the fleet in line with a new instance map, rebuilding only the
+   * instances whose entry actually changed. A save that touches nothing a
+   * driver reads (dispatch strategy, language, spend display…) leaves every
+   * instance — and every turn running on it — exactly as it was. */
+  async reconcile(configs: InstanceConfigMap): Promise<ReconcileResult> {
+    const next = Object.entries(configs);
+    const replaced = this.changedInstances(configs);
+    await Promise.allSettled(replaced.map((instanceId) => this.byId.get(instanceId)?.live?.dispose()));
+    for (const instanceId of replaced) {
+      this.byId.delete(instanceId);
+      this.cliByInstance.delete(instanceId);
+      this.keyById.delete(instanceId);
+    }
+    const created: ProviderInstance[] = [];
+    for (const [instanceId, entry] of next) {
+      if (this.byId.has(instanceId)) continue;
+      const live = await this.loadEntry(instanceId, entry);
+      if (live) created.push(live);
+    }
+    // keep the configured order: describe() rows (and the picker) follow it
+    this.byId = new Map(next.flatMap(([instanceId]) => {
+      const registered = this.byId.get(instanceId);
+      return registered ? [[instanceId, registered] as const] : [];
+    }));
+    return { replaced, created };
+  }
+
+  /** The registered instances a reconcile to `configs` would tear down:
+   * entries that changed, and entries that are gone. */
+  changedInstances(configs: InstanceConfigMap): InstanceId[] {
+    return [...this.byId.keys()].filter((instanceId) => {
+      const entry = Object.hasOwn(configs, instanceId) ? configs[instanceId] : undefined;
+      return !entry || this.keyById.get(instanceId) !== entryKey(entry);
+    });
+  }
+
+  private async loadEntry(instanceId: InstanceId, entry: InstanceConfigMap[string]): Promise<ProviderInstance | null> {
+    this.keyById.set(instanceId, entryKey(entry));
+    const driver = this.driversByKind.get(entry.driver);
+    if (!driver) {
+      this.byId.set(instanceId, {
+        instanceId,
+        shadow: {
           instanceId,
-          shadow: {
-            instanceId,
-            driverKind: entry.driver,
-            displayName: entry.displayName,
-            cli: cliOfRaw(entry.config),
-            shadow: true,
-            reason: t('unknown driver "{driver}" — kept as configured, unavailable here', { driver: String(entry.driver) }),
-          },
-        });
-        continue;
-      }
-      try {
-        const config = entry.config === undefined ? driver.defaultConfig() : driver.decodeConfig(entry.config);
-        // Override detection is on the RAW config, never the decoded one:
-        // decodeConfig fills in the driver default ("claude", "codex", …),
-        // so reading `cli` there would flag every instance as overridden.
-        const rawCli = cliOfRaw(entry.config);
-        if (rawCli) this.cliByInstance.set(instanceId, rawCli);
-        const live = await driver.create({
+          driverKind: entry.driver,
+          displayName: entry.displayName,
+          cli: cliOfRaw(entry.config),
+          shadow: true,
+          reason: t('unknown driver "{driver}" — kept as configured, unavailable here', { driver: String(entry.driver) }),
+        },
+      });
+      return null;
+    }
+    try {
+      const config = entry.config === undefined ? driver.defaultConfig() : driver.decodeConfig(entry.config);
+      // Override detection is on the RAW config, never the decoded one:
+      // decodeConfig fills in the driver default ("claude", "codex", …),
+      // so reading `cli` there would flag every instance as overridden.
+      const rawCli = cliOfRaw(entry.config);
+      if (rawCli) this.cliByInstance.set(instanceId, rawCli);
+      const live = await driver.create({
+        instanceId,
+        displayName: entry.displayName ?? driver.metadata.displayName,
+        environment: entry.environment ?? {},
+        enabled: entry.enabled ?? true,
+        config,
+      });
+      this.byId.set(instanceId, { instanceId, live });
+      return live;
+    } catch (e) {
+      this.byId.set(instanceId, {
+        instanceId,
+        shadow: {
           instanceId,
+          driverKind: entry.driver,
           displayName: entry.displayName ?? driver.metadata.displayName,
-          environment: entry.environment ?? {},
-          enabled: entry.enabled ?? true,
-          config,
-        });
-        this.byId.set(instanceId, { instanceId, live });
-      } catch (e) {
-        this.byId.set(instanceId, {
-          instanceId,
-          shadow: {
-            instanceId,
-            driverKind: entry.driver,
-            displayName: entry.displayName ?? driver.metadata.displayName,
-            cli: cliOfRaw(entry.config),
-            shadow: true,
-            reason: e instanceof Error ? e.message : String(e),
-          },
-        });
-      }
+          cli: cliOfRaw(entry.config),
+          shadow: true,
+          reason: e instanceof Error ? e.message : String(e),
+        },
+      });
+      return null;
     }
   }
 
@@ -196,5 +277,6 @@ export class ProviderRegistry {
     await Promise.allSettled(this.instances().map((i) => i.dispose()));
     this.byId.clear();
     this.cliByInstance.clear();
+    this.keyById.clear();
   }
 }

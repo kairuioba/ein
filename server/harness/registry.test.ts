@@ -133,6 +133,81 @@ describe("ProviderRegistry", () => {
     expect((await registry.describe())[0].capabilities.approvalReview).toBe(true);
   });
 
+  describe("reconcile", () => {
+    // Regression: every settings save (dispatch strategy, language, any one
+    // key) rebuilt the whole fleet, killing every running turn and posting
+    // "turn interrupted — provider settings changed" into each busy chat.
+    it("keeps instances whose entry did not change, even with keys reordered", async () => {
+      const fake = makeFakeDriver();
+      const registry = new ProviderRegistry([fake.driver]);
+      await registry.load({
+        a: { driver: "fake", config: { cli: "x", flags: ["-v"] }, environment: { K: "1", L: "2" } },
+        b: { driver: "fake" },
+      });
+      const a = registry.get("a");
+      const b = registry.get("b");
+
+      const same = {
+        a: { environment: { L: "2", K: "1" }, config: { flags: ["-v"], cli: "x" }, driver: "fake" },
+        b: { driver: "fake" },
+      };
+      expect(registry.changedInstances(same)).toEqual([]);
+      const result = await registry.reconcile(same);
+
+      expect(result).toEqual({ replaced: [], created: [] });
+      expect(registry.get("a")).toBe(a);
+      expect(registry.get("b")).toBe(b);
+      expect(fake.disposed).toEqual([]);
+    });
+
+    it("rebuilds only the changed instance and leaves its siblings running", async () => {
+      const fake = makeFakeDriver();
+      const registry = new ProviderRegistry([fake.driver]);
+      await registry.load({ a: { driver: "fake", environment: { KEY: "old" } }, b: { driver: "fake" } });
+      const a = registry.get("a");
+      const b = registry.get("b");
+
+      const next = { a: { driver: "fake", environment: { KEY: "new" } }, b: { driver: "fake" } };
+      expect(registry.changedInstances(next)).toEqual(["a"]);
+      const result = await registry.reconcile(next);
+
+      expect(result.replaced).toEqual(["a"]);
+      expect(result.created.map((instance) => instance.instanceId)).toEqual(["a"]);
+      expect(fake.disposed).toEqual(["a"]);
+      expect(registry.get("a")).not.toBe(a);
+      expect(registry.get("b")).toBe(b);
+      // describe() keeps the configured order after a rebuild
+      expect(registry.entries().map((entry) => entry.instanceId)).toEqual(["a", "b"]);
+    });
+
+    it("disposes removed instances and creates added ones", async () => {
+      const fake = makeFakeDriver();
+      const registry = new ProviderRegistry([fake.driver]);
+      await registry.load({ a: { driver: "fake" }, gone: { driver: "fake" } });
+
+      const result = await registry.reconcile({ a: { driver: "fake" }, fresh: { driver: "fake" } });
+
+      expect(result.replaced).toEqual(["gone"]);
+      expect(result.created.map((instance) => instance.instanceId)).toEqual(["fresh"]);
+      expect(fake.disposed).toEqual(["gone"]);
+      expect(registry.get("gone")).toBeNull();
+      expect(registry.entries().map((entry) => entry.instanceId)).toEqual(["a", "fresh"]);
+    });
+
+    it("retries a shadow whose entry changed, and leaves an unchanged shadow alone", async () => {
+      const fake = makeFakeDriver();
+      const registry = new ProviderRegistry([fake.driver]);
+      await registry.load({ broken: { driver: "fake", config: { bad: true } }, mystery: { driver: "later" } });
+      expect(registry.get("broken")).toBeNull();
+
+      const result = await registry.reconcile({ broken: { driver: "fake", config: { fixed: true } }, mystery: { driver: "later" } });
+
+      expect(result.replaced).toEqual(["broken"]);
+      expect(registry.get("broken")).not.toBeNull();
+      expect(registry.entries().find((entry) => entry.instanceId === "mystery")?.shadow).toBeTruthy();
+    });
+  });
+
   it("disposeAll disposes every live instance and empties the registry", async () => {
     const fake = makeFakeDriver();
     const registry = new ProviderRegistry([fake.driver]);

@@ -4609,18 +4609,34 @@ function configStatus() {
   };
 }
 
-/** Rebuild the provider fleet after a config change so new keys take
- * effect without a server restart (kills any in-flight turns). */
+/** Bring the provider fleet in line with the saved config so new keys take
+ * effect without a server restart. Only engines whose own settings changed
+ * are rebuilt, and only turns running on those engines end: saving the
+ * dispatch strategy, the language or another engine's key must never cut
+ * off work in progress. */
 async function reloadProviders() {
-  await releaseAllBrowserCapabilities();
-  bus.detachAll();
-  await registry.disposeAll();
-  await registry.load(instanceConfigs(cfg));
-  bus.attach(registry.instances());
-  // A killed turn's terminal events can die with the old fleet (dispose is
+  const nextConfigs = instanceConfigs(cfg);
+  // which engine each busy bot's running turn is on, read BEFORE anything is
+  // torn down (threadEngines remembers a borrowed engine)
+  const runningOn = new Map(
+    store.bots.filter((b) => b.busy).map((b) => [b.id, threadEngines.get(b.threadId) ?? b.modelSelection.instanceId]),
+  );
+  const changing = new Set(registry.changedInstances(nextConfigs));
+  const registered = new Set(registry.entries().map((entry) => entry.instanceId));
+  const adding = Object.keys(nextConfigs).some((instanceId) => !registered.has(instanceId));
+  if (!changing.size && !adding) return;
+  const interrupted = store.bots.filter((b) => b.busy && changing.has(runningOn.get(b.id) ?? ""));
+  await Promise.all(interrupted.map((b) => releaseBrowserCapabilitiesForBot(b.id)));
+  bus.detach(changing);
+  const { created } = await registry.reconcile(nextConfigs);
+  bus.attach(created);
+  // A killed turn's terminal events can die with the old instance (dispose is
   // async under the hood), stranding the bot busy — and its screen poller —
-  // forever. Settle anything still marked busy.
-  for (const b of store.bots.filter((b) => b.busy)) {
+  // forever. Settle the bots whose engine was rebuilt.
+  for (const before of interrupted) {
+    // the rebuild awaited: a turn that settled on its own meanwhile is not interrupted
+    const b = store.bot(before.id);
+    if (!b?.busy) continue;
     const vmThread = [...localVmThreadTargets.entries()].find(([, target]) =>
       localVmLeaseFor(target).current(localVmOwnerBusy)?.botId === b.id
     )?.[0];
@@ -4648,9 +4664,9 @@ async function reloadProviders() {
   drainSecretResumes();
 }
 
-// Config writes rebuild the whole provider registry. Keep the read-modify-write
+// Config writes reconcile the provider registry. Keep the read-modify-write
 // and reload sequence single-flight so two settings requests cannot drop one
-// another's changes or dispose a fleet while another reload is creating it.
+// another's changes or dispose an engine while another reload is creating it.
 let providerConfigBusy = false;
 
 // ── HTTP plumbing ─────────────────────────────────────────────────────
@@ -7702,7 +7718,7 @@ const server = createServer(async (req, res) => {
 
     // ── per-instance CLI path override (custom builds / versioned bins) ──
     // PATCH /api/instances/:id {cli: "/path/to/cli" | ""} — "" reverts to the
-    // driver default. Kills in-flight turns like any provider reload.
+    // driver default. Rebuilds that one engine, ending only the turns on it.
     const instancePatch = /^\/api\/instances\/([\w.-]+)$/.exec(path);
     if (method === "PATCH" && instancePatch) {
       // same non-simple-request gate as the local-VM lifecycle routes

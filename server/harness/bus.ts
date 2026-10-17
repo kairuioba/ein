@@ -18,7 +18,8 @@ const INCOMPLETE_LOG_MESSAGE = msg(
 
 export class EventBus {
   private listeners = new Set<RuntimeEventListener>();
-  private unsubscribes: Array<() => void> = [];
+  /** per instance id, so one rebuilt engine can be detached without the rest */
+  private unsubscribes = new Map<string, Array<() => void>>();
   private pendingLogWarnings = new Map<string, RuntimeEvent>();
   private readonly appendLog: typeof appendFileSync;
 
@@ -37,7 +38,17 @@ export class EventBus {
         }
         this.publish({ ...event, providerInstanceId: instance.instanceId });
       });
-      this.unsubscribes.push(unsub);
+      const existing = this.unsubscribes.get(instance.instanceId) ?? [];
+      existing.push(unsub);
+      this.unsubscribes.set(instance.instanceId, existing);
+    }
+  }
+
+  /** Stop listening to these instances (they are about to be disposed). */
+  detach(instanceIds: Iterable<string>) {
+    for (const instanceId of instanceIds) {
+      for (const unsub of this.unsubscribes.get(instanceId) ?? []) unsub();
+      this.unsubscribes.delete(instanceId);
     }
   }
 
@@ -93,6 +104,8 @@ export class EventBus {
   }
 
   detachAll() {
-    for (const unsub of this.unsubscribes.splice(0)) unsub();
+    const all = [...this.unsubscribes.values()].flat();
+    this.unsubscribes.clear();
+    for (const unsub of all) unsub();
   }
 }

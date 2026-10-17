@@ -3786,6 +3786,15 @@ describe("harness HTTP API", () => {
 
       const saved = await api("PUT", "/api/config", { rooms: { turnTimeoutMinutes: 20 } });
       expect(saved.status).toBe(200);
+      // Regression: the dispatch strategy, the spend display and another
+      // engine's key reach no driver this turn runs on, so saving them must
+      // not end it ("turn interrupted — provider settings changed").
+      const strategy = await api("PATCH", "/api/config", {
+        dispatch: { policy: "economy" },
+        usage: { usdToCny: 7.1 },
+        xai: { key: "xai_unrelated_engine" },
+      });
+      expect(strategy.status).toBe(200);
 
       const after = (await api("GET", "/api/bots")).body;
       expect(after.bots.find((bot: { id: string }) => bot.id === botId)?.busy).toBe(true);

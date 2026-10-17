@@ -159,4 +159,22 @@ describe("EventBus", () => {
     emit(testEvent());
     expect(seenAfterDetach).toHaveLength(0);
   });
+
+  it("detach stops one instance and leaves the others delivering", async () => {
+    const fake = makeFakeDriver();
+    for (const instanceId of ["kept", "rebuilt"]) {
+      await fake.driver.create({ instanceId, displayName: undefined, environment: {}, enabled: true, config: {} });
+    }
+    const kept = fake.created.get("kept")!;
+    const rebuilt = fake.created.get("rebuilt")!;
+    const bus = new EventBus();
+    bus.attach([kept.instance, rebuilt.instance]);
+    const seen: string[] = [];
+    bus.subscribe((e) => seen.push(e.providerInstanceId ?? ""));
+
+    bus.detach(["rebuilt"]);
+    rebuilt.emit(testEvent());
+    kept.emit(testEvent());
+    expect(seen).toEqual(["kept"]);
+  });
 });

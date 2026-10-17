@@ -10,7 +10,7 @@
 // turned it into `node <script>` on Windows too, so the e2e half now runs
 // everywhere alongside the mention-resolution units.
 import { spawn, type ChildProcess } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -776,9 +776,11 @@ describe("comms e2e (fake ACP fleet)", () => {
         return queued && waiting && !current.busy;
       }, 25_000, "approved ask was not retained as a waiting delegation");
 
-      // Provider reload releases B without turn.completed. The explicit idle
-      // retry must still pick up the waiting handoff on the rebuilt fleet.
-      expect((await api("PUT", "/api/config", { xai: { key: `xai_retry_${Date.now()}` } })).status).toBe(200);
+      // Rebuilding B's engine releases B without turn.completed. The explicit
+      // idle retry must still pick up the waiting handoff on the rebuilt engine.
+      const movedCli = join(home, "fake-acp-cli-gate.ts");
+      symlinkSync(FAKE_CLI, movedCli);
+      expect((await api("PATCH", "/api/instances/helperGate", { cli: movedCli })).status).toBe(200);
       writeFileSync(gateFile, "go");
 
       let finalAsker: any;
@@ -948,9 +950,26 @@ describe("comms e2e (fake ACP fleet)", () => {
         await new Promise((r) => setTimeout(r, 250));
       }
 
-      // Any provider credential change rebuilds the fleet and settles busy
-      // turns without relying on a provider turn.completed event.
-      const reload = await api("PUT", "/api/config", { xai: { key: "xai_reload_test" } });
+      // A save that leaves the helper's own engine as it was must not touch
+      // its turn: the dispatch strategy, the language or another engine's key
+      // used to rebuild the whole fleet and cut every running turn off.
+      const unrelated = await api("PUT", "/api/config", { xai: { key: "xai_reload_test" }, dispatch: { policy: "economy" } });
+      expect(unrelated.status).toBe(200);
+      await new Promise((r) => setTimeout(r, 1_000));
+      {
+        const state = (await api("GET", "/api/bots")).body;
+        const helperBot = state.bots.find((b: any) => b.id === helper.id);
+        expect(helperBot.busy).toBe(true);
+        expect(
+          helperBot.messages.some((m: any) => String(m.tool?.name ?? "").includes("provider settings changed")),
+        ).toBe(false);
+      }
+
+      // Rebuilding the helper's own engine settles its turn without relying on
+      // a provider turn.completed event.
+      const movedCli = join(home, "fake-acp-cli-moved.ts");
+      symlinkSync(FAKE_CLI, movedCli);
+      const reload = await api("PATCH", "/api/instances/helperHang", { cli: movedCli });
       expect(reload.status).toBe(200);
 
       const terminalDeadline = Date.now() + 30_000;

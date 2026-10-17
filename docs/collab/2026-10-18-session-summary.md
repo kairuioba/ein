@@ -53,3 +53,22 @@
 4. 任务负责人权限模型 + 跨部门派单边界；
 5. StateDoc Tier 0 的窗口置顶卡片与对表 routine；
 6. 长任务实测（老板本人跑一次跨天任务）。
+
+## 收尾（04:10 更新）
+
+- 最新开发版 **1.1.4-dev.38** 已发布且 feed 一致，已安装在本机（普通启动、数据干净）；
+- 本地全量 **3617 passed / 19 skipped**；
+- 正式版 **1.1.4 未发**，等老板实测 + GitHub Billing 修复；
+- 今晚最后接线：采纳进化提案 → 创建可追踪 pipeline run（`evo-run:<id>`）+ 写人工批准审计；`GET /api/evolution/runs`；
+- 评审修复：9 条 P1 全部落地（handoff 复活/假绿面板/attemptId/非活跃 run/legacy ack/审计容错/pipeline 复位/注意力风险与配额）；
+- 明天顺序（Claude 建议）：①修 Billing ②老板真机实测主路径 ③干净 checkout 全量验证 ④实测反馈只修 P0 ⑤决定是否发正式版；
+- 仓库卫生：`docs/collab/transcript.jsonl` 已移出版本控制（生成物）。
+
+## 关键文档索引
+
+- 交接：`docs/collab/2026-10-18-session-summary.md`
+- 发布说明（候选）：`docs/release-notes-1.1.4.md`
+- 自测：`docs/testing/3-minute-self-test.md`
+- 缺口扫描：`docs/collab/2026-10-17T20-04-final-gap-scan.md`
+- 最后优先级：`docs/collab/2026-10-17T20-07-final-priorities.md`
+- 底座接线：`docs/collab/2026-10-17T20-06-bottom-layer-wiring.md`

@@ -185,6 +185,15 @@ export interface SearchHit {
 /** Case-insensitive substring search over text messages, newest first.
  * A LIKE scan, deliberately: local transcripts are megabytes at most, a
  * scan is milliseconds, and it needs no FTS extension to exist. */
+/** When a thread last received a message, if it has any. The sidebar uses it
+ * so a click opens the task with news even right after a restart. */
+export function lastMessageAt(threadId: string): number | undefined {
+  const row = db().prepare("SELECT MAX(at) AS at FROM messages WHERE thread_id = ?").get(threadId) as
+    | { at: number | null }
+    | undefined;
+  return row?.at ?? undefined;
+}
+
 export function searchMessages(query: string, limit = 40, threadId?: string): SearchHit[] {
   const needle = query.trim().toLowerCase();
   if (!needle) return [];

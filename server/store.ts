@@ -626,6 +626,14 @@ export class Store {
     } catch {
       this.groups = [];
     }
+    // Task activity is derived state: the message DB is the source of truth,
+    // so a restart doesn't lose "this task has news" (the sidebar opens the
+    // task the badge is about). Cheaper than persisting a write per message.
+    for (const bot of this.bots) {
+      for (const task of bot.tasks ?? []) {
+        task.lastActivityAt = mdb.lastMessageAt(task.threadId) ?? task.lastActivityAt;
+      }
+    }
     // busy never survives a restart — no turn does either. Rooms saved
     // before default responders existed adopt their first member as lead.
     let botsMigrated = false;

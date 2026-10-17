@@ -29,6 +29,7 @@ import { appendFileSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 import { t } from "../shared/i18n.ts";
+import { handoffLine, parseHandoff } from "./agent-handoff.ts";
 import { reasonLabel } from "./reason-labels.ts";
 import { profileFor, type Capability } from "../shared/model-profiles.ts";
 import { assessTask, effortFor, type Effort, type Recommendation, type RecommendationPolicy, type TaskProfile } from "../shared/model-recommender.ts";
@@ -1182,6 +1183,9 @@ export class Dispatcher {
     if (ok && reply.trim()) {
       subtask.status = "done";
       subtask.result = reply.trim().slice(0, RESULT_KEEP_CHARS);
+      const handoff = parseHandoff(reply);
+      if (handoff) subtask.handoff = handoff;
+      else delete subtask.handoff;
       subtask.finishedAt = Date.now();
       delete subtask.error;
       this.host.activity(
@@ -1869,7 +1873,18 @@ export class Dispatcher {
   private synthesisPrompt(run: DispatchRun): string {
     const lines = run.subtasks.map((subtask) => {
       const who = this.host.bot(subtask.assigneeBotId)?.name ?? "?";
-      if (subtask.status === "done") return `### ${subtask.title} (@${who})\n${clip(subtask.result ?? "", RESULT_CONTEXT_CHARS)}`;
+      if (subtask.status === "done") {
+        if (subtask.handoff) {
+          const h = subtask.handoff;
+          return [
+            `### ${subtask.title} (@${who}) — handoff: ${h.status}${h.acceptanceMet === false ? ", acceptance: not met" : ""}`,
+            handoffLine(h),
+            ...(h.evidence?.length ? [`evidence: ${h.evidence.join("; ")}`] : []),
+            ...(h.artifacts?.length ? [`artifacts: ${h.artifacts.join("; ")}`] : []),
+          ].join("\n");
+        }
+        return `### ${subtask.title} (@${who})\n${clip(subtask.result ?? "", RESULT_CONTEXT_CHARS)}`;
+      }
       return `### ${subtask.title} (@${who}) — ${subtask.status}${subtask.error ? `: ${subtask.error}` : ""}`;
     });
     const parent = run.parentRunId ? this.get(run.parentRunId) : undefined;
@@ -1962,6 +1977,12 @@ function workerPrompt(run: DispatchRun, subtask: DispatchSubtask, context: { chi
     leadOf
       ? `If this needs several pieces of work from your department, call submit_plan once with a plan for your own team: they run it, then you are asked for one consolidated result, which goes back to @${chiefName} automatically. After submit_plan, say the plan in a line and end your turn. If you can do it well yourself, reply with the finished deliverable instead.`
       : "Reply with the complete result. If something blocks you, say exactly what is missing.",
+    "",
+    "End your reply with a fenced json block carrying the handoff — the same envelope whatever model you are:",
+    '```json',
+    '{"handoff":{"status":"done|partial|blocked","summary":"one line: what you delivered","evidence":["file/link/test output"],"artifacts":["where the result lives"],"decisions":[{"what":"...","why":"..."}],"assumptions":["..."],"openQuestions":["..."],"risks":[{"risk":"...","impact":"...","next":"..."}],"nextStep":"the first thing whoever picks this up should do","acceptanceMet":true}}',
+    '```',
+    "`summary`, `status` and `nextStep` matter most; keep the whole block short. The person who receives this reads the envelope, not your process.",
   ]
     .filter((line) => line !== "")
     .join("\n");

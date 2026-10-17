@@ -421,6 +421,27 @@ describe("Dispatcher", () => {
     expect(host.chips.some((chip) => chip.label.includes("took over"))).toBe(true);
   });
 
+  it("parses a worker's handoff envelope and gives the chief the envelope, not the process", async () => {
+    const result = submit([{ id: "a", title: "文案", brief: "写文案", role: "文案策划" }]);
+    expect("error" in result).toBe(false);
+    if ("error" in result) return;
+    await settle();
+    const turn = host.workerTurns()[0]!;
+    const reply = [
+      "三段文案写好了，过程很长……",
+      "```json",
+      JSON.stringify({ handoff: { status: "done", summary: "三段文案", evidence: ["reply"], acceptanceMet: true } }),
+      "```",
+    ].join("\n");
+    host.finish(dispatcher, turn.threadId, true, reply);
+    await settle();
+    const run = dispatcher.get(result.run.id)!;
+    expect(run.subtasks[0]!.handoff).toMatchObject({ status: "done", summary: "三段文案", acceptanceMet: true });
+    const synthesis = host.turns.find((entry) => entry.continuation)?.text ?? "";
+    expect(synthesis).toContain("三段文案");
+    expect(synthesis).toContain("handoff: done");
+  });
+
   it("records a retrospective when a run settles", async () => {
     const result = submit([
       { id: "a", title: "文案", brief: "写文案", role: "文案策划", acceptance: "三段以内" },

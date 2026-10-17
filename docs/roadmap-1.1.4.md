@@ -34,6 +34,11 @@
 - 最该吸收：角色模板库、按角色工具权限、强制 Handoff 契约、总控上下文纪律、验证闸门
 - 不照搬：单主 Agent、无限子 Agent、自由文本结果、它的 UI
 
+### 1.45 异构模型「收发信封 + 派发逻辑」（新）
+- 设计：`docs/agent-message-protocol.md`（对标 Claude Code 的 Task 收发，做异构模型统一信封：Send Envelope / Result Envelope / 回退矩阵 / await 模式）
+- 已实现：Result Envelope（Handoff）字段、容错解析、worker 提示词契约、总控汇总只读信封（带测试）
+- 待做：角色模板+工具权限（P0）、信封 meta、验收闸门、跨引擎回退、await
+
 ### 1.5 中途换模型的上下文交接（新，设计已完成）
 - 设计：`docs/model-switch-handoff.md`
 - 核心：换模型不重放历史，交接包 ≤1200 tokens（目标/当前子任务/最新 Handoff/产出引用），切换前显示 token 与费用估算；派单子任务只对「未开始」的换模型

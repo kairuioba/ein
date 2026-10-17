@@ -92,6 +92,23 @@ export interface DispatchCheckpoint {
   by?: string;
 }
 
+/** What a worker sends back: the same envelope whatever model ran it. The
+ * free-form result stays for reading; the handoff is what the chief and the
+ * reviewer consume without re-reading the whole process. */
+export interface DispatchHandoff {
+  status: "done" | "partial" | "blocked";
+  summary: string;
+  evidence?: string[];
+  artifacts?: string[];
+  decisions?: Array<{ what: string; why?: string }>;
+  assumptions?: string[];
+  openQuestions?: string[];
+  risks?: Array<{ risk: string; impact?: string; next?: string }>;
+  nextStep?: string;
+  /** the worker's own read of its acceptance criteria; the reviewer decides */
+  acceptanceMet?: boolean;
+}
+
 export interface DispatchSubtask {
   id: string;
   title: string;
@@ -115,6 +132,8 @@ export interface DispatchSubtask {
   threadId?: string;
   result?: string;
   error?: string;
+  /** the structured answer the worker sent back (parsed from its reply) */
+  handoff?: DispatchHandoff;
   /** when the latest attempt started */
   startedAt?: number;
   /** when it settled (done, failed, skipped or canceled) */

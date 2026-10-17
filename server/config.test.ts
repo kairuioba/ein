@@ -735,3 +735,32 @@ describe("workspace credential env strip", () => {
     expect(WORKSPACE_CREDENTIAL_ENV).toContain("OMB_USER_DATA");
   });
 });
+
+describe("developer edition maintenance config", () => {
+  const path = join(DATA_DIR, "config.json");
+  beforeEach(() => {
+    mkdirSync(DATA_DIR, { recursive: true });
+    rmSync(path, { force: true });
+  });
+  afterEach(() => {
+    rmSync(path, { force: true });
+  });
+
+  it("persists the maintenance section across saveConfig and loadConfig", () => {
+    saveConfig({ maintenance: { repoPath: "/Users/owner/Ein-src", botId: "bot-1", channel: "dev" } });
+    expect(JSON.parse(readFileSync(path, "utf8")).maintenance).toEqual({
+      repoPath: "/Users/owner/Ein-src",
+      botId: "bot-1",
+      channel: "dev",
+    });
+    expect(loadConfig().maintenance).toEqual({ repoPath: "/Users/owner/Ein-src", botId: "bot-1", channel: "dev" });
+
+    // an unrelated save must not drop the desk's fields
+    saveConfig({ profile: { name: "Ada" } });
+    expect(loadConfig().maintenance).toEqual({ repoPath: "/Users/owner/Ein-src", botId: "bot-1", channel: "dev" });
+
+    // switching channels is a partial update, not a replace
+    saveConfig({ maintenance: { channel: "stable" } });
+    expect(loadConfig().maintenance).toEqual({ repoPath: "/Users/owner/Ein-src", botId: "bot-1", channel: "stable" });
+  });
+});

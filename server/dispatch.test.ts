@@ -151,6 +151,12 @@ class FakeHost implements DispatchHost {
   }
   claims = new Map<string, string>();
 
+  inbox: Array<{ kind: string; runId: string; subtaskId?: string; title: string; reason: string }> = [];
+
+  needsYou(item: { kind: string; runId: string; subtaskId?: string; title: string; reason: string }) {
+    this.inbox.push(item);
+  }
+
   claimBot(botId: string, taskId: string): boolean {
     const current = this.claims.get(botId);
     if (current && current !== taskId) return false;
@@ -496,6 +502,51 @@ describe("Dispatcher", () => {
     const again = new Dispatcher(host, dir);
     again.load();
     expect(again.get(result.run.id)!.subtasks[0]!.interruptCount).toBe(1);
+  });
+
+  it("routes a subtask whose criteria cannot be verified to the inbox, then asks for a final sign-off", async () => {
+    const result = submit([
+      {
+        id: "a",
+        title: "品牌文案",
+        brief: "写一段品牌文案",
+        role: "文案策划",
+        criteria: [{ id: "c1", text: "文风符合品牌调性", required: true, kind: "subjective" }],
+      },
+    ]);
+    expect("error" in result).toBe(false);
+    if ("error" in result) return;
+    await settle();
+    const turn = host.workerTurns()[0]!;
+    host.finish(dispatcher, turn.threadId, true, "品牌文案写好了，```json\n{\"handoff\":{\"status\":\"done\",\"summary\":\"写好了\"}}\n```");
+    await settle();
+    expect(host.inbox.filter((item) => item.kind === "gate_failed")).toHaveLength(1);
+    expect(dispatcher.get(result.run.id)!.subtasks[0]!.gate).toMatchObject({ status: "needs_human" });
+    // the chief's synthesis finishes the run → one sign-off item
+    const synthesis = host.turns.find((entry) => entry.continuation)!;
+    host.finish(dispatcher, synthesis.threadId, true, "已汇总");
+    await settle();
+    expect(host.inbox.filter((item) => item.kind === "signoff")).toHaveLength(1);
+  });
+
+  it("passes the gate when a required deterministic criterion is met", async () => {
+    const result = submit([
+      {
+        id: "a",
+        title: "文案",
+        brief: "写文案",
+        role: "文案策划",
+        criteria: [{ id: "c1", text: "交回结构化 handoff", required: true, kind: "deterministic", check: "handoff" }],
+      },
+    ]);
+    expect("error" in result).toBe(false);
+    if ("error" in result) return;
+    await settle();
+    const turn = host.workerTurns()[0]!;
+    host.finish(dispatcher, turn.threadId, true, "写好了，```json\n{\"handoff\":{\"status\":\"done\",\"summary\":\"三行文案\"}}\n```");
+    await settle();
+    expect(dispatcher.get(result.run.id)!.subtasks[0]!.gate).toMatchObject({ status: "pass" });
+    expect(host.inbox.filter((item) => item.kind === "gate_failed")).toHaveLength(0);
   });
 
   it("records a retrospective when a run settles", async () => {

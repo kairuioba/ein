@@ -309,6 +309,23 @@ const TOOLS = [
                 type: "string",
                 description: "How a reviewer tells the subtask is done well: falsifiable criteria, no 'works well'.",
               },
+              criteria: {
+                type: "array",
+                maxItems: 7,
+                description:
+                  "Structured acceptance criteria the gate checks. Prefer 'deterministic' with a check name (result, handoff, artifacts, placeholders); 'subjective' means a human or reviewer must judge.",
+                items: {
+                  type: "object",
+                  properties: {
+                    id: { type: "string", description: "Short unique id within the subtask, e.g. c1." },
+                    text: { type: "string", description: "One sentence, observable, no 'works well'." },
+                    required: { type: "boolean", description: "True unless this is a nice-to-have." },
+                    kind: { type: "string", enum: ["deterministic", "subjective"] },
+                    check: { type: "string", description: "For deterministic: result | handoff | artifacts | placeholders." },
+                  },
+                  required: ["text"],
+                },
+              },
               boundaries: {
                 type: "string",
                 description: "What is explicitly out of scope, or what must not be touched (files, systems, decisions).",

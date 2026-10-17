@@ -109,6 +109,58 @@ export interface DispatchHandoff {
   acceptanceMet?: boolean;
 }
 
+/** One falsifiable acceptance criterion. New plans carry these; older plans
+ * only had a single free-form `acceptance` string (mapped on read). */
+export interface AcceptanceCriterion {
+  id: string;
+  text: string;
+  required: boolean;
+  kind: "deterministic" | "subjective";
+  /** a named deterministic check, when the planner can name one */
+  check?: string;
+}
+
+export interface GateCheck {
+  name: string;
+  ok: boolean;
+  detail?: string;
+}
+
+export interface GateCriterionVerdict {
+  id: string;
+  status: "pass" | "fail" | "unverifiable";
+  evidence?: string;
+}
+
+/** The acceptance gate's verdict for one attempt. */
+export interface SubtaskGate {
+  attemptId?: string;
+  status: "pass" | "fail" | "needs_human";
+  criteria: GateCriterionVerdict[];
+  deterministic: GateCheck[];
+  reason?: string;
+  at: number;
+  /** gate has not been judged by a reviewer yet (deterministic proxy only) */
+  provisional?: boolean;
+}
+
+/** One thing waiting on the owner. */
+export interface InboxItem {
+  id: string;
+  kind: "gate_failed" | "signoff" | "question" | "failed_exhausted";
+  taskId?: string;
+  runId?: string;
+  subtaskId?: string;
+  attemptId?: string;
+  title: string;
+  reason: string;
+  evidence?: string[];
+  createdAt: number;
+  seenAt?: number;
+  resolvedAt?: number;
+  resolution?: { action: "approve" | "reject" | "abandon"; note?: string; at: number };
+}
+
 export interface DispatchSubtask {
   id: string;
   title: string;
@@ -134,6 +186,10 @@ export interface DispatchSubtask {
   error?: string;
   /** the structured answer the worker sent back (parsed from its reply) */
   handoff?: DispatchHandoff;
+  /** structured acceptance criteria (new plans; legacy uses `acceptance`) */
+  criteria?: AcceptanceCriterion[];
+  /** the acceptance gate's verdict for the latest attempt */
+  gate?: SubtaskGate;
   /** id of the attempt currently allowed to write this subtask's result;
    * a late event from an older attempt is dropped instead of overwriting */
   currentAttemptId?: string;

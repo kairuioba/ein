@@ -4,7 +4,7 @@
 // 数据来自 docs/collab/transcript.jsonl（每次调用追加）与 ~/.ein/claude-collab/state.json。
 import { createServer } from "node:http";
 import { readFileSync, existsSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, networkInterfaces } from "node:os";
 import { join } from "node:path";
 
 const PORT = Number(process.env.COLLAB_PORT ?? 8899);
@@ -40,7 +40,7 @@ const readTranscript = () => {
 const PAGE = String.raw`<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>一念 Ein × Claude 实时协作</title>
+<title>一念 Ein × Claude 实时协作（手机版）</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: "PingFang SC", -apple-system, sans-serif; background: #f4f5f7; color: #14161c; padding: 22px 26px 60px; }
@@ -66,6 +66,19 @@ const PAGE = String.raw`<!doctype html>
   .cost { font-size: 11px; color: #8a8f99; margin-top: 6px; }
   .empty { padding: 30px; text-align: center; color: #8a8f99; font-size: 13px; }
   .refresh { position: fixed; right: 18px; bottom: 16px; background: #14161c; color: #fff; border-radius: 999px; padding: 7px 12px; font-size: 11.5px; opacity: .85; }
+  details { margin-top: 6px; }
+  details > summary { cursor: pointer; font-size: 12px; color: #3b5bff; font-weight: 600; padding: 4px 0; }
+  @media (max-width: 640px) {
+    body { padding: 14px 12px 54px; }
+    h1 { font-size: 17px; }
+    .meta { gap: 6px; margin: 10px 0 14px; position: sticky; top: 0; z-index: 5; background: rgba(244,245,247,.96); padding: 8px 0; }
+    .chip { padding: 5px 9px; font-size: 11px; }
+    .round-head { padding: 10px 12px; font-size: 12.5px; }
+    .block { padding: 10px 12px; }
+    pre { font-size: 12.3px; line-height: 1.65; }
+    .answer pre { white-space: pre-wrap; }
+    .refresh { right: 10px; bottom: 10px; font-size: 10.5px; padding: 6px 9px; }
+  }
 </style></head>
 <body>
   <h1>一念 Ein × Claude 实时协作</h1>
@@ -118,7 +131,12 @@ function render({ transcript, state }) {
     const after = notes.filter((n) => n.ts >= r.at);
     html += '<div class="round"><div class="round-head"><span class="tag">第 ' + index + ' 轮</span><span>' + esc(r.slug) + '</span></div>';
     if (r.ask) html += '<div class="block ask"><div class="label">① 我们怎么问的</div><pre>' + esc(r.ask.text) + '</pre></div>';
-    if (r.answer) html += '<div class="block answer"><div class="label">② Claude 怎么回答的</div><pre>' + esc(r.answer.text) + '</pre>' + (r.answer.costUsd ? '<div class="cost">本次 ' + fmtCost(r.answer.costUsd) + ' · 耗时 ' + Math.round((r.answer.durationMs || 0) / 1000) + 's</div>' : '') + '</div>';
+    if (r.answer) {
+      const text = esc(r.answer.text);
+      const body = '<pre>' + text + '</pre>' + (r.answer.costUsd ? '<div class="cost">本次 ' + fmtCost(r.answer.costUsd) + ' · 耗时 ' + Math.round((r.answer.durationMs || 0) / 1000) + 's</div>' : '');
+      const latest = index === list.length;
+      html += '<div class="block answer"><div class="label">② Claude 怎么回答的</div>' + (latest ? body : '<details><summary>展开全文（' + r.answer.text.length + ' 字）</summary>' + body + '</details>') + '</div>';
+    }
     const roundNotes = after.filter((n) => n.kind === "note");
     const roundConclusions = after.filter((n) => n.kind === "conclusion");
     if (roundNotes.length) html += '<div class="block note"><div class="label">③ 我接下来做了什么</div><pre>' + esc(roundNotes.map((n) => "· " + n.text).join("\n")) + '</pre></div>';
@@ -144,6 +162,11 @@ createServer((req, res) => {
   }
   res.writeHead(404, { "content-type": "text/plain" });
   res.end("not found");
-}).listen(PORT, "127.0.0.1", () => {
-  console.log(`collab viewer: http://127.0.0.1:${PORT}`);
+}).listen(PORT, "0.0.0.0", () => {
+  console.log(`collab viewer (local): http://127.0.0.1:${PORT}`);
+  for (const [name, addresses] of Object.entries(networkInterfaces())) {
+    for (const address of addresses ?? []) {
+      if (address.family === "IPv4" && !address.internal) console.log(`collab viewer (LAN, ${name}): http://${address.address}:${PORT}`);
+    }
+  }
 });

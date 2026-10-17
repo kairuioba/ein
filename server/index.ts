@@ -75,6 +75,7 @@ import { Dispatcher, dispatchSettings } from "./dispatch.ts";
 import { TaskFolderStore } from "./task-folders.ts";
 import { buildTaskRetro } from "./task-retro.ts";
 import { buildContextShare, type ContextSource } from "./context-share.ts";
+import { InboxStore } from "./inbox-store.ts";
 import type { DispatchRun } from "../shared/dispatch-types.ts";
 import { DEPARTMENT_COLORS } from "../shared/org-types.ts";
 import { UnattendedBots } from "./unattended-state.ts";
@@ -2339,11 +2340,30 @@ const dispatcher = new Dispatcher({
     }
   },
   broadcastRoutes: (routes) => broadcast({ kind: "dispatch.routes", routes }),
+  needsYou: (input) => {
+    const folder = input.runId ? taskFolders?.byRun(input.runId) : undefined;
+    try {
+      inbox.add({
+        kind: input.kind,
+        ...(folder ? { taskId: folder.id } : {}),
+        runId: input.runId,
+        ...(input.subtaskId ? { subtaskId: input.subtaskId } : {}),
+        ...(input.attemptId ? { attemptId: input.attemptId } : {}),
+        title: input.title,
+        reason: input.reason,
+        ...(input.evidence?.length ? { evidence: input.evidence } : {}),
+      });
+      broadcast({ kind: "inbox", items: inbox.list(), counts: inbox.counts() });
+    } catch (error) {
+      console.error("inbox: could not record an item", error);
+    }
+  },
   settings: () => dispatchSettings(cfg.dispatch),
   maxBots: MAX_WORKSPACE_BOTS,
 });
 dispatcher.load();
 taskFolders = new TaskFolderStore(DATA_DIR);
+const inbox = new InboxStore(DATA_DIR);
 taskFolders.seedFromRuns(dispatcher.list(), 12, (run) => taskLeadForRun(run));
 setTimeout(() => dispatcher.resumeAll(), 3_000).unref?.();
 // an engine throttling a worker (429s the driver retries) feeds the
@@ -5583,6 +5603,36 @@ const server = createServer(async (req, res) => {
     // Live Team Map metadata. Prompts and replies never leave their
     // transcripts: this projection carries only ids, status relationships,
     // optional delegation labels, and timestamps.
+    // ── 「需要你」收件箱 ─────────────────────────────────────────────
+    if (path === "/api/inbox" && method === "GET") {
+      return json(res, 200, { items: inbox.list("open"), counts: inbox.counts() });
+    }
+    const inboxMatch = path.match(/^\/api\/inbox\/([\w-]+)\/(seen|resolve)$/);
+    if (inboxMatch && method === "POST") {
+      const body = (await readBody(req)) ?? {};
+      const item = inbox.byId(inboxMatch[1]!);
+      if (!item) return json(res, 404, { error: "no such inbox item" });
+      if (inboxMatch[2] === "seen") {
+        inbox.seen(item.id);
+        broadcast({ kind: "inbox", items: inbox.list(), counts: inbox.counts() });
+        return json(res, 200, { item: inbox.byId(item.id), counts: inbox.counts() });
+      }
+      const action = body.action;
+      if (action !== "approve" && action !== "reject" && action !== "abandon") {
+        return json(res, 400, { error: "action must be approve, reject or abandon" });
+      }
+      if (typeof body.expectedAttemptId === "string" && item.attemptId && body.expectedAttemptId !== item.attemptId) {
+        return json(res, 409, { error: "there is a newer attempt — refresh before deciding", code: "STALE_ATTEMPT" });
+      }
+      if (action === "reject" && typeof body.note !== "string") {
+        return json(res, 400, { error: "reject needs a note" });
+      }
+      const resolved = inbox.resolve(item.id, action, typeof body.note === "string" ? body.note : undefined);
+      if ("error" in resolved) return json(res, 400, resolved);
+      broadcast({ kind: "inbox", items: inbox.list(), counts: inbox.counts() });
+      return json(res, 200, { item: resolved, counts: inbox.counts() });
+    }
+
     // ── 任务文件夹：侧栏最外层「任务」 ─────────────────────────────────
     if (path === "/api/task-folders") {
       if (!taskFolders) return json(res, 503, { error: "task folders are not ready yet" });

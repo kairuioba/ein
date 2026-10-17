@@ -30,6 +30,7 @@ import { join } from "node:path";
 
 import { t } from "../shared/i18n.ts";
 import { handoffLine, parseHandoff } from "./agent-handoff.ts";
+import { evaluateGate } from "./review-gate.ts";
 import { reasonLabel } from "./reason-labels.ts";
 import { profileFor, type Capability } from "../shared/model-profiles.ts";
 import { assessTask, effortFor, type Effort, type Recommendation, type RecommendationPolicy, type TaskProfile } from "../shared/model-recommender.ts";
@@ -37,6 +38,7 @@ import { DEFAULT_ORG_RULES, type OrgEventKind, type OrgRules } from "../shared/o
 import { writeFileAtomic } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
 import { newId, type ModelSelection } from "./contracts.ts";
+import type { AcceptanceCriterion } from "../shared/dispatch-types.ts";
 import {
   diagnoseRun,
   MIN_REVIEW_WINDOW_MS,
@@ -99,6 +101,8 @@ export interface DispatchBot {
   chiefOfStaff?: boolean;
   /** the one task this bot currently belongs to (absent = idle pool) */
   currentTaskId?: string;
+  /** the folder its turn runs in (artifact checks resolve paths here) */
+  cwd?: string;
   modelSelection: ModelSelection;
 }
 
@@ -159,6 +163,8 @@ export interface DispatchHost {
    * pure dispatcher tests can stay host-free. */
   claimBot?(botId: string, taskId: string): boolean;
   releaseBot?(botId: string, taskId?: string): void;
+  /** Put something in the owner's inbox (gate escalation / final sign-off). */
+  needsYou?(item: { kind: "gate_failed" | "signoff" | "question" | "failed_exhausted"; runId: string; subtaskId?: string; attemptId?: string; title: string; reason: string; evidence?: string[] }): void;
   /** Start a turn; rejects when the bot cannot start (busy, missing, no engine). */
   startTurn(botId: string, text: string, opts: DispatchTurnOptions): Promise<void>;
   interrupt(botId: string, threadId: string): Promise<void>;
@@ -198,6 +204,7 @@ export interface ValidPlanSubtask {
   difficulty?: number;
   dependsOn: string[];
   acceptance?: string;
+  criteria?: AcceptanceCriterion[];
   boundaries?: string;
   deliverable?: string;
   reviewer?: string;
@@ -246,6 +253,26 @@ export function validatePlan(input: PlanInput, maxSubtasks: number): { goal: str
     if (Number.isFinite(difficulty)) subtask.difficulty = Math.min(5, Math.max(1, Math.round(difficulty)));
     const acceptance = text(item.acceptance, 1_000);
     if (acceptance) subtask.acceptance = acceptance;
+    const criteriaRaw = Array.isArray(item.criteria) ? item.criteria : [];
+    const criteria: AcceptanceCriterion[] = criteriaRaw
+      .map((entry, index) => {
+        if (!entry || typeof entry !== "object") return null;
+        const record = entry as Record<string, unknown>;
+        const description = text(record.text ?? record.description, 300);
+        if (!description) return null;
+        const kind = record.kind === "deterministic" ? "deterministic" : "subjective";
+        const check = text(record.check, 40);
+        return {
+          id: text(record.id, 24) || `c${index + 1}`,
+          text: description,
+          required: record.required !== false,
+          kind: kind as AcceptanceCriterion["kind"],
+          ...(check ? { check } : {}),
+        };
+      })
+      .filter((entry): entry is AcceptanceCriterion => entry !== null)
+      .slice(0, 7);
+    if (criteria.length) subtask.criteria = criteria;
     const boundaries = text(item.boundaries, 1_000);
     if (boundaries) subtask.boundaries = boundaries;
     const deliverable = text(item.deliverable, 600);
@@ -890,6 +917,7 @@ export class Dispatcher {
             }
           : {}),
         ...(item.acceptance ? { acceptance: item.acceptance } : {}),
+        ...(item.criteria?.length ? { criteria: item.criteria } : {}),
         ...(item.boundaries ? { boundaries: item.boundaries } : {}),
         ...(item.deliverable ? { deliverable: item.deliverable } : {}),
         // every subtask has someone who verifies it: the plan's chief by default
@@ -1239,10 +1267,25 @@ export class Dispatcher {
       else delete subtask.handoff;
       subtask.finishedAt = Date.now();
       delete subtask.error;
+      // the code, not the worker's self-report, decides whether this passes
+      const gate = evaluateGate({ subtask, cwd: bot?.cwd });
+      subtask.gate = gate;
       this.host.activity(
         run.sourceThreadId,
         t("@{name} finished “{title}” ({done}/{total})", { name: bot?.name ?? "?", title: subtask.title, done: finishedCount(), total: run.subtasks.length }),
       );
+      if (gate.status !== "pass") {
+        this.host.needsYou?.({
+          kind: "gate_failed",
+          runId: run.id,
+          subtaskId: subtask.id,
+          ...(subtask.currentAttemptId ? { attemptId: subtask.currentAttemptId } : {}),
+          title: subtask.title,
+          reason: gate.reason ?? t("This subtask finished but its acceptance criteria could not be confirmed."),
+          evidence: gate.criteria.map((verdict) => `${verdict.id}: ${verdict.status}`),
+        });
+        this.host.activity(run.sourceThreadId, t("“{title}” finished but needs your decision before it counts as accepted", { title: subtask.title }), false);
+      }
       this.rebalance(run);
     } else {
       // an ok turn's reason is just how it ended ("end_turn"), not a failure
@@ -1604,6 +1647,9 @@ export class Dispatcher {
     dissolveSquads(run, now);
     this.touch(run);
     this.recordRetro(run);
+    if (status === "done") {
+      this.host.needsYou?.({ kind: "signoff", runId: run.id, title: clip(run.goal, 60), reason: t("The task is finished — confirm the final delivery.") });
+    }
     // the task is over: its employees go back to the department pool, but
     // their conversations (and the task window) stay with this task
     for (const botId of new Set(run.subtasks.map((subtask) => subtask.assigneeBotId))) {

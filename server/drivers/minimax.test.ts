@@ -5,7 +5,13 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { recordEvents } from "../testing/events.ts";
-import { decodeMinimaxConfig, loadLocalMiniMaxConfig, MinimaxDriver } from "./minimax.ts";
+import {
+  decodeMinimaxConfig,
+  loadLocalMiniMaxConfig,
+  MinimaxDriver,
+  parseMinimaxModels,
+  settleMinimaxModels,
+} from "./minimax.ts";
 
 describe("MinimaxDriver", () => {
   const saved = {
@@ -37,15 +43,74 @@ describe("MinimaxDriver", () => {
     vi.restoreAllMocks();
   });
 
-  it("offers only current official text models", () => {
+  it("ships MiniMax's current text models, flagged so its custom-only picker shows them", () => {
     expect(MinimaxDriver.models).toEqual({
       default: "MiniMax-M3",
       options: [
-        { id: "MiniMax-M3", label: "MiniMax M3", contextWindow: 1_000_000 },
-        { id: "MiniMax-M2.7", label: "MiniMax M2.7", contextWindow: 204_800 },
-        { id: "MiniMax-M2.7-highspeed", label: "MiniMax M2.7 Highspeed", contextWindow: 204_800 },
+        { id: "MiniMax-M3", label: "MiniMax M3", custom: true, contextWindow: 1_000_000 },
+        { id: "MiniMax-M3.1-Flash-Preview", label: "MiniMax M3.1 Flash Preview", custom: true, contextWindow: 1_000_000 },
+        { id: "MiniMax-M2.7", label: "MiniMax M2.7", custom: true, contextWindow: 204_800 },
+        { id: "MiniMax-M2.7-highspeed", label: "MiniMax M2.7 Highspeed", custom: true, contextWindow: 204_800 },
+        { id: "MiniMax-M2.5", label: "MiniMax M2.5", custom: true },
+        { id: "MiniMax-M2.5-highspeed", label: "MiniMax M2.5 Highspeed", custom: true },
       ],
     });
+    expect(MinimaxDriver.metadata.access).toBe("custom");
+  });
+
+  it("keeps chat models from GET /v1/models, in MiniMax's order", () => {
+    expect(
+      parseMinimaxModels({
+        object: "list",
+        data: [
+          { id: "MiniMax-M4", object: "model", created: 1790000000, owned_by: "minimax" },
+          { id: "MiniMax-M3", object: "model" },
+          { id: "speech-3.0-hd", object: "model" },
+          { id: "MiniMax-Hailuo-03", object: "model" },
+          { id: "MiniMax-M3", object: "model" },
+        ],
+      }),
+    ).toEqual([
+      { id: "MiniMax-M4", label: "MiniMax M4", custom: true },
+      { id: "MiniMax-M3", label: "MiniMax M3", custom: true, contextWindow: 1_000_000 },
+    ]);
+    expect(parseMinimaxModels({ error: "nope" })).toEqual([]);
+  });
+
+  it("lists the key's live models after a background refresh, honoring the mmx default", async () => {
+    const dir = join(home, ".mmx");
+    mkdirSync(dir);
+    writeFileSync(join(dir, "config.json"), JSON.stringify({ api_key: "live-key", default_text_model: "MiniMax-M2.7" }));
+    const requests: Array<{ url: string; auth: string | null }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      requests.push({ url: String(input), auth: new Headers(init?.headers).get("authorization") });
+      return new Response(JSON.stringify({ object: "list", data: [{ id: "MiniMax-M4" }, { id: "MiniMax-M2.7" }] }), { status: 200 });
+    }));
+    const instance = await MinimaxDriver.create({
+      instanceId: "minimax-live",
+      displayName: "MiniMax",
+      enabled: true,
+      config: MinimaxDriver.defaultConfig(),
+      environment: { EIN_PROBE_LIVE_MODELS: "1" },
+    });
+    try {
+      // nothing is fetched until the picker asks
+      expect(requests).toEqual([]);
+      expect(instance.models.default).toBe("MiniMax-M2.7");
+      await instance.refreshModels?.();
+      await settleMinimaxModels("https://api.minimax.io/v1", "live-key");
+      await instance.refreshModels?.();
+      expect(requests[0]).toEqual({ url: "https://api.minimax.io/v1/models", auth: "Bearer live-key" });
+      expect(instance.models).toEqual({
+        default: "MiniMax-M2.7",
+        options: [
+          { id: "MiniMax-M4", label: "MiniMax M4", custom: true },
+          { id: "MiniMax-M2.7", label: "MiniMax M2.7", custom: true, contextWindow: 204_800 },
+        ],
+      });
+    } finally {
+      await instance.dispose();
+    }
   });
 
   it("normalizes custom API roots", () => {

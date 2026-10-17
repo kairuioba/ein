@@ -10,6 +10,9 @@
 //   subtask → done                       → report (it handed its result in)
 //   a specialist joins a running run     → people.added
 //
+// People added to a running run as a squad (中途加人) are announced by the
+// dispatcher itself, with the squad's name (Dispatcher.amend), not here again.
+//
 // Seed it with the runs already on disk at boot, so a restart never replays
 // a run's history as if it were new.
 import type { DispatchRun, RunStatus, SubtaskStatus } from "../../shared/dispatch-types.ts";
@@ -41,7 +44,7 @@ interface RunSnap {
 const goalOf = (run: DispatchRun) => firstLine(run.goal, 40) || t("Untitled run");
 
 const createdBots = (run: DispatchRun) => [
-  ...new Set(run.subtasks.filter((subtask) => subtask.createdBot).map((subtask) => subtask.assigneeBotId)),
+  ...new Set(run.subtasks.filter((subtask) => subtask.createdBot && !subtask.squad).map((subtask) => subtask.assigneeBotId)),
 ];
 
 function snapshot(run: DispatchRun, announced: Set<string>): RunSnap {

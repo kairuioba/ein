@@ -137,6 +137,16 @@ describe("RunWatcher", () => {
     expect(events).toEqual([expect.objectContaining({ kind: "people.added", title: "Chief added 1 person: Copywriter" })]);
   });
 
+  it("leaves people added as a squad to the dispatcher's own announcement", () => {
+    const watcher = new RunWatcher();
+    const run = makeRun();
+    watcher.diff(run, ctx);
+    // 中途加人: the dispatcher already wrote "Added 1 people to … (Squad B)"
+    run.subtasks[0]!.assigneeBotId = "new2";
+    Object.assign(run.subtasks[0]!, { createdBot: true, squad: "Squad B" });
+    expect(watcher.diff(run, ctx)).toEqual([]);
+  });
+
   it("says nothing when a run is canceled", () => {
     const watcher = new RunWatcher();
     const run = makeRun();

@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Recommendation } from "../shared/model-recommender.ts";
 import { DEFAULT_ORG_RULES } from "../shared/org-types.ts";
 import { handleDispatchApi } from "./dispatch-api.ts";
+import { RunWatcher, type OrgEventInput } from "./org/run-events.ts";
 import {
   Dispatcher,
   dispatchSettings,
@@ -1326,6 +1327,22 @@ describe("Dispatcher", () => {
       expect(squad.review!.speedAfter).toBeGreaterThan(squad.review!.speedBefore);
       expect(host.chips.some((chip) => chip.label.startsWith("Review of Squad B"))).toBe(true);
       expect(host.events).toContainEqual(expect.objectContaining({ kind: "report", runId: run.id, severity: "info" }));
+    });
+
+    it("announces one addition once on the company timeline", async () => {
+      const run = await busyRun();
+      // index.ts: dispatcher events go to the timeline, broadcasts through the run watcher
+      const watcher = new RunWatcher();
+      watcher.seed([run]);
+      const watched: OrgEventInput[] = [];
+      host.broadcast = (changed) => {
+        watched.push(...watcher.diff(changed, { botName: (id) => host.bot(id)?.name, botSection: (id) => host.bot(id)?.section, maxAttempts: 2 }));
+      };
+      const result = dispatcher.amend(run.id, 2, { by: "owner" });
+      if ("error" in result) throw new Error(result.error);
+      const added = [...host.events, ...watched].filter((event) => event.kind === "people.added");
+      expect(added).toHaveLength(1);
+      expect(added[0]!.title).toContain("Squad B");
     });
 
     it("dissolves the squad of a run a restart finishes", async () => {

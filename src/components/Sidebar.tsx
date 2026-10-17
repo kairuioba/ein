@@ -124,6 +124,7 @@ import { phoneSettingsAction, SidebarPhoneButton } from "./SidebarPhoneButton";
 import { SidebarSectionHeader } from "./SidebarSectionHeader";
 import { InboxPanel } from "./InboxPanel";
 import { ProjectOfficePage } from "@/pages/office/ProjectOfficePage";
+import { AttentionBadge } from "./AttentionBadge";
 import { TaskFolderList } from "./TaskFolderList";
 import type { TaskFolderView } from "../../shared/task-folders";
 import { useInbox } from "@/lib/inbox";
@@ -2063,13 +2064,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
             nav="approval-inbox"
             icon={<BellDot size={18} />}
             label={t("Needs you")}
-            meta={
-              approvalInbox.counts.unseen > 0 ? (
-                <span className="inline-flex h-5 shrink-0 items-center rounded-full px-2 text-[11.5px] font-bold text-white" style={{ background: AMBER }}>
-                  {t("Needs you {count}", { count: approvalInbox.counts.unseen })}
-                </span>
-              ) : undefined
-            }
+            meta={<AttentionBadge onOpen={() => setInboxOpen(true)} />}
             badge={dot("bg-warning")}
             selected={inboxOpen}
             iconOnly={iconOnly}

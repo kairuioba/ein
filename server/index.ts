@@ -90,6 +90,9 @@ import { pipelineHeadline } from "./evolution-pipeline.ts";
 import { ApprovalAuditStore, inboxDecisionAudit } from "./approval-audit.ts";
 import { attentionCounts, classifyInboxQueue } from "./attention-inbox.ts";
 import { buildNeedsOwner } from "./needs-owner.ts";
+import { buildStandup } from "./standup.ts";
+import { buildWeeklyRetro } from "./weekly-retro.ts";
+import { ackHandoff, handoffCard, resendHandoff } from "./handoff-actions.ts";
 import type { DispatchRun } from "../shared/dispatch-types.ts";
 import { DEPARTMENT_COLORS } from "../shared/org-types.ts";
 import { UnattendedBots } from "./unattended-state.ts";
@@ -5937,7 +5940,51 @@ const server = createServer(async (req, res) => {
     if (path === "/api/office/brief" && method === "GET") {
       const running = (dispatcher.list() ?? []).filter((run) => run.status === "running" || run.status === "synthesizing").length;
       const metrics = buildOwnerMetrics({ items: inbox.list("all"), retros: dispatcher.retros(50), waitingProjects: running });
-      return json(res, 200, { brief: buildMorningBrief({ metrics, waitingProjects: running }) });
+      const weekly = buildWeeklyRetro({ retros: dispatcher.retros(50), inboxItems: inbox.list("all"), evolutionProposals: evolution.list("all") });
+      return json(res, 200, { brief: buildMorningBrief({ metrics, waitingProjects: running }), weekly });
+    }
+
+    // ── 站会摘要（纯代码，不调模型）────────────────────────────────
+    if (path === "/api/standup" && method === "GET") {
+      return json(res, 200, { standup: buildStandup({ runs: dispatcher.list(), inboxItems: inbox.list("all") }) });
+    }
+
+    // ── 交接回执：老板代收/退回/重发（owner 操作）──────────────────────
+    const handoffMatch = path.match(/^\/api\/dispatch\/runs\/([\w-]+)\/subtasks\/([\w-]+)\/handoff\/(ack|resend)$/);
+    if (handoffMatch && method === "POST") {
+      const run = dispatcher.get(handoffMatch[1]!);
+      const subtask = run?.subtasks.find((entry) => entry.id === handoffMatch[2]);
+      if (!run || !subtask) return json(res, 404, { error: "no such run or subtask" });
+      const body = (await readBody(req)) ?? {};
+      const clearStuck = () => {
+        for (const item of inbox.list("open")) {
+          if (item.kind === "handoff_stuck" && item.subtaskId === subtask.id) inbox.resolve(item.id, "abandon", "the owner handled the handoff");
+        }
+      };
+      if (handoffMatch[3] === "ack") {
+        const result = ackHandoff({
+          handoff: subtask.handoff,
+          subtaskId: subtask.id,
+          action: body.action === "return" ? "return" : "receive",
+          actor: "owner",
+          ...(body.reason && typeof body.reason === "object" ? { reason: body.reason } : {}),
+          ...(typeof body.round === "number" ? { round: body.round } : {}),
+          ...(typeof body.expectedVersion === "number" ? { expectedVersion: body.expectedVersion } : {}),
+        });
+        if (!result.ok) {
+          const status = result.code === "missing_reason" ? 422 : result.code === "missing_handoff" ? 404 : 409;
+          return json(res, status, { error: result.code, from: result.from, to: result.to });
+        }
+        dispatcher.updateHandoff(run.id, subtask.id, { ...subtask.handoff!, ack: result.ack });
+        clearStuck();
+        broadcast({ kind: "inbox", items: inbox.list(), counts: inbox.counts() });
+        return json(res, 200, { ok: true, noop: result.noop, ack: result.ack, card: handoffCard({ subtaskId: subtask.id, title: subtask.title, handoff: subtask.handoff }) });
+      }
+      const resent = resendHandoff({ handoff: subtask.handoff, subtaskId: subtask.id, actor: "owner" });
+      if (!resent.ok) return json(res, 409, { error: resent.code, from: resent.from });
+      dispatcher.updateHandoff(run.id, subtask.id, resent.handoff);
+      clearStuck();
+      return json(res, 200, { ok: true, round: resent.round, card: handoffCard({ subtaskId: subtask.id, title: subtask.title, handoff: resent.handoff }) });
     }
 
     // ── 老板时间账本：决策延迟 / 返工率 / 待处理 ─────────────────────

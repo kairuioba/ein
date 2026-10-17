@@ -1283,6 +1283,17 @@ export class Dispatcher {
     return changed;
   }
 
+  /** Write a handoff receipt back (owner receive/return/resend) and persist. */
+  updateHandoff(runId: string, subtaskId: string, handoff: NonNullable<DispatchSubtask["handoff"]>): NonNullable<DispatchSubtask["handoff"]> | undefined {
+    const run = this.get(runId);
+    const subtask = run?.subtasks.find((entry) => entry.id === subtaskId);
+    if (!run || !subtask) return undefined;
+    subtask.handoff = handoff;
+    this.touch(run);
+    this.host.broadcast(run);
+    return handoff;
+  }
+
   /** Fold an independent reviewer's verdict into the gate (the reviewer is
    * evidence; the code still decides). Returns the updated gate, if any. */
   applyReview(runId: string, subtaskId: string, gate: NonNullable<DispatchSubtask["gate"]>): NonNullable<DispatchSubtask["gate"]> | undefined {

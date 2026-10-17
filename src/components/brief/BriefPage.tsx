@@ -20,6 +20,7 @@ import { clip, clock } from "@/lib/workbench";
 import { EMPTY_BRIEF, EMPTY_ORG, EMPTY_USAGE, getLastSeen, markSeen, refreshApi, useBrief, useDecisions, useOrg, useUsageSummary } from "@/state/org-api";
 import { useEvolution } from "@/lib/evolution";
 import { api, useStore, type Bot } from "@/state/store";
+import { useNeedsOwnerTotal } from "@/lib/inbox";
 import type { Brief, BriefDepartment, InboxItem, OrgEvent } from "../../../shared/org-types";
 
 import { DecisionMark, DiamondMark, HealthDot, StatusGlyph, useElementSize, useNow, useStoredState } from "../workbench/parts";
@@ -488,6 +489,8 @@ function NeedsYou({
   const { dispatch } = useStore();
   const [answered, setAnswered] = useState<Record<string, string>>({});
   const items = inboxOrder(brief.needsYou);
+  // 「需要你」用统一口径（/api/needs-owner 合并收件箱与公司层）；接口失败回退本列表
+  const unifiedNeedsYou = useNeedsOwnerTotal();
   // answering follows where the question lives (see answerRoute)
   const answer = (item: InboxItem, text: string) => {
     const lastAsker = item.chain?.length ? item.chain[item.chain.length - 1]!.botId : item.botId;
@@ -526,7 +529,7 @@ function NeedsYou({
     <section aria-label={t("Needs you")} className="flex min-w-0 flex-col gap-2.5 pt-1.5">
       <div className="flex h-5 items-center gap-2 whitespace-nowrap">
         <DiamondMark size={12} />
-        <b className="text-[15.5px]">{t("Needs you · {count}", { count: items.length })}</b>
+        <b className="text-[15.5px]">{t("Needs you · {count}", { count: unifiedNeedsYou ?? items.length })}</b>
         {items.length > 0 && <span className="ml-auto text-[12px] text-ink-secondary/70">{t("About {count} min to clear", { count: handlingMinutes(items) })}</span>}
       </div>
       {items.length === 0 && (

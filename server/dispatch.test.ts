@@ -1113,6 +1113,24 @@ describe("Dispatcher", () => {
       expect(dispatcher.get(top.run.id)).toMatchObject({ status: "done", report: "落地页已上线" });
     });
 
+    it("keeps a lead planning for the chief to the company's hiring rule", async () => {
+      writeOrg({ chiefBotId: "boss", rules: { chiefMay: { newSpecialist: false } } });
+      const top = orgPlan([{ id: "page", title: "落地页", brief: "做发布会落地页", role: "前端工程师" }]);
+      if ("error" in top) throw new Error(top.error);
+      await flush();
+      const leadTurn = host.workerTurns()[0]!;
+      // nobody in 技术部 edits video: the lead may not hire where the chief may not
+      const refused = dispatcher.submitPlan("tech", leadTurn.threadId, {
+        goal: "落地页",
+        subtasks: [{ id: "video", title: "宣传视频", brief: "剪一条 30 秒视频", role: "视频剪辑师" }],
+      });
+      expect(refused).toMatchObject({ error: expect.stringContaining("company rules") });
+      expect(host.created).toHaveLength(0);
+      // its own people it can still plan with
+      const own = dispatcher.submitPlan("tech", leadTurn.threadId, { goal: "落地页", subtasks: [{ id: "build", title: "页面开发", brief: "写页面", role: "前端" }] });
+      expect("error" in own).toBe(false);
+    });
+
     it("keeps a lead's subtask waiting on its team across a restart", async () => {
       writeOrg({ chiefBotId: "boss" });
       const top = orgPlan([{ id: "page", title: "落地页", brief: "做落地页", role: "前端工程师" }]);

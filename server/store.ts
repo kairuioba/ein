@@ -1515,7 +1515,20 @@ export class Store {
     return task;
   }
 
-  /** A task ended: keep its window readable but mark it closed so nothing
+  /** Bind a conversation to the task folder that owns it (written once). */
+  bindTaskFolder(threadId: string, folderId: string): void {
+    for (const bot of this.bots) {
+      const task = bot.tasks?.find((entry) => entry.threadId === threadId);
+      if (!task) continue;
+      if (task.folderId) return;
+      task.folderId = folderId;
+      this.saveBots();
+      this.emit({ type: "bot", botId: bot.id });
+      return;
+    }
+  }
+
+    /** A task ended: keep its window readable but mark it closed so nothing
    * new is started in it. The conversation is never moved or deleted. */
   closeTask(threadId: string): void {
     for (const bot of this.bots) {

@@ -2362,6 +2362,7 @@ const dispatcher = new Dispatcher({
     if (run.parentRunId) return;
     try {
       const folder = taskFolders?.ensureForRun(run, taskLeadForRun(run), run.sourceThreadId);
+      if (folder?.conversationId) store.bindTaskFolder(folder.conversationId, folder.id);
       // done and cancelled are terminal: their windows become read-only.
       // failed stays open because the owner may retry or continue in it.
       if (run.status === "done" || run.status === "canceled") {
@@ -5719,6 +5720,7 @@ const server = createServer(async (req, res) => {
       if (!window) return json(res, 500, { error: "could not open a task window" });
       const folder = taskFolders.create({ title, leadBotId, conversationId: window.threadId });
       if ("error" in folder) return json(res, 400, folder);
+      store.bindTaskFolder(window.threadId, folder.id);
       const tasks = taskFolderViews();
       broadcast({ kind: "task-folders", tasks });
       return json(res, 200, { task: tasks.find((task) => task.id === folder.id), conversationId: window.threadId, botId: chiefId });
@@ -5751,6 +5753,7 @@ const server = createServer(async (req, res) => {
         ...(requestId ? { forkRequestId: requestId } : {}),
       });
       if ("error" in folder) return json(res, 400, folder);
+      store.bindTaskFolder(window.threadId, folder.id);
       // reference the source task's approach (bounded, read-only), never copy
       // its transcript: reuse the same builder as an explicit context share
       const rendered = buildContextShare(contextSourcesForFolders([source.id]));

@@ -18,11 +18,13 @@ import {
   Pin,
   PinOff,
   RefreshCw,
+  Lock,
   Webhook,
   X,
 } from "lucide-react";
 import { WorkingDots } from "@/components/WorkingIndicator";
 import {
+  api,
   useStore,
   formatTime,
   messageVersions,
@@ -31,6 +33,7 @@ import {
   type Bot,
   type InstanceInfo,
   type Message,
+  type Task,
 } from "@/state/store";
 import { EngineSetup } from "./EngineSetup";
 import { BotAvatar } from "./Avatar";
@@ -851,6 +854,7 @@ export function ChatView({ bot }: { bot: Bot }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const logRef = useRef<HTMLDivElement>(null);
   const composerDockRef = useRef<HTMLDivElement>(null);
+  const activeTask = bot.tasks?.find((task) => task.threadId === bot.threadId);
   // No useStreaming() here: the 1:1 view never shows streamed text (the reply
   // pops in when it settles), and subscribing re-rendered this whole view —
   // header, composer, cards — on every token frame of every reply.
@@ -1292,6 +1296,9 @@ export function ChatView({ bot }: { bot: Bot }) {
               selected one. ArrowUp-to-edit stays gated on busy because editing
               rewinds the thread, which a live turn forbids (the server 409s it). */}
           <div ref={composerDockRef} className="absolute inset-x-0 bottom-0 z-[2]">
+            {activeTask?.closedAt ? (
+              <ClosedTaskBar task={activeTask} />
+            ) : (
             <Composer
               key={bot.threadId}
               bot={bot}
@@ -1302,6 +1309,7 @@ export function ChatView({ bot }: { bot: Bot }) {
               onEditLast={lastUserMessage && !bot.busy ? () => setEditingId(lastUserMessage.id) : undefined}
               notice={state.error || stripFailure ? strips : undefined}
             />
+            )}
           </div>
         </div>
       </main>
@@ -1314,5 +1322,59 @@ export function ChatView({ bot }: { bot: Bot }) {
         />
       )}
     </>
+  );
+}
+
+/** A finished task's window: read-only, with the one meaningful action —
+ * start a new task that references this one's approved conclusions. */
+function ClosedTaskBar({ task }: { task: Task }) {
+  const { dispatch } = useStore();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const fork = async () => {
+    if (!task.folderId) {
+      setError(t("This conversation is not linked to a task yet."));
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const created = (await api(`/api/tasks/${task.folderId}/fork`, {
+        method: "POST",
+        body: JSON.stringify({ clientRequestId: crypto.randomUUID() }),
+      })) as { botId: string; conversationId: string };
+      dispatch({ type: "select", id: created.botId });
+      dispatch({ type: "switchTask", botId: created.botId, threadId: created.conversationId });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="px-3 pb-3">
+      <div className="rounded-[16px] bg-raised px-4 py-3 shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_60%,transparent)]">
+        <div className="flex items-center gap-2 text-[13px] font-semibold text-ink">
+          <Lock size={14} className="text-ink-secondary" />
+          {t("This task is finished — it no longer takes messages")}
+        </div>
+        <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">
+          {t("Finished on {date}. The conversation stays readable; start a new task that carries over its approved conclusions (not the chat log).", {
+            date: task.closedAt ? new Date(task.closedAt).toLocaleDateString() : "",
+          })}
+        </p>
+        <div className="mt-2.5 flex items-center gap-2">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void fork()}
+            className="inline-flex h-9 items-center rounded-[10px] bg-select px-3.5 text-[12.5px] font-semibold text-white disabled:opacity-50"
+          >
+            {busy ? t("Opening…") : t("Based on this, start a new task")}
+          </button>
+        </div>
+        {error && <p className="mt-1.5 text-[11.5px] text-danger">{error}</p>}
+      </div>
+    </div>
   );
 }

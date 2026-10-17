@@ -201,6 +201,10 @@ export interface Task {
   cwd?: string | null;
   /** when this task last received a message (from the server) */
   lastActivityAt?: number;
+  /** the task folder this conversation belongs to (never moves) */
+  folderId?: string;
+  /** set when the task ended: the window stays readable, no new work */
+  closedAt?: number;
 }
 
 export interface TaskUsage {

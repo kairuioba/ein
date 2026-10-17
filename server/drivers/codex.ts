@@ -387,9 +387,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         for (const p of rpcPending.values()) p.reject(new Error("turn settled"));
         rpcPending.clear();
         active.delete(threadId);
-        // anything still waiting for (or riding) a turn/start never reached
-        // the model
-        const undelivered = [...live.folded, ...early];
+        // A turn/start that was sent carries its folded steers to the model,
+        // so a successful turn delivered them. A failed turn did not: requeue
+        // them in the catch below, and report them here only when it is final.
+        const undelivered = ok ? [...early] : [...live.folded, ...early];
         live.folded = [];
         early = [];
         emit({
@@ -707,9 +708,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           // thread rather than the current one.
           ...(turn.effort ? { effort: turn.effort } : {}),
         });
-        // codex names the turn in turn/start's result ({turn:{id}}); an
-        // older app-server that does not leaves steering to the queue
-        live.folded = [];
+        // Keep `live.folded` until the attempt settles: if this turn/start is
+        // the one a transient failure kills, the steers it carried must ride
+        // the retried turn/start too (they never reached the model).
         learnTurnId(live, startedTurn?.turn?.id);
         releaseWaiters(live);
       } catch (e) {

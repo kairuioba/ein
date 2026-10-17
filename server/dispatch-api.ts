@@ -58,6 +58,13 @@ export async function handleDispatchApi(
     return true;
   }
 
+  if (method === "GET" && path === "/api/dispatch/retros") {
+    // the self-improvement loop reads these: hard facts about finished runs
+    const limit = Number(url.searchParams.get("limit")) || 20;
+    json(res, 200, { retros: dispatcher.retros(limit) });
+    return true;
+  }
+
   if (path === "/api/dispatch/routes") {
     if (method === "PUT") {
       const body = await deps.readBody(req);

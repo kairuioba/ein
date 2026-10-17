@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ensureDirs, NATIVE_DIR } from "../config.ts";
 import type { ProviderInstance } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
-import { GrokDriver } from "./grok.ts";
+import { GrokDriver, STATIC_XAI_MODELS, xaiCatalogFromModels } from "./grok.ts";
 
 const SSE_BODY = (text: string) =>
   [
@@ -48,7 +48,9 @@ describe("GrokDriver turns (fake fetch)", () => {
     calls = 0;
     // SAFETY: the stub only returns real Response objects, the sole member
     // of fetch's return type this driver consumes.
-    globalThis.fetch = (async () => {
+    globalThis.fetch = (async (url: string | URL) => {
+      // the background model-list ask answers on its own, outside the script
+      if (String(url).endsWith("/models")) return new Response(JSON.stringify({ data: [] }), { status: 200 });
       const step = script.shift();
       calls++;
       if (!step || step.sse !== undefined) return sseResponse(step?.sse ?? SSE_BODY("done from fake grok"));
@@ -94,7 +96,7 @@ describe("GrokDriver turns (fake fetch)", () => {
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line) as { dir: string; msg: { model?: string } });
-    expect(entries.find((entry) => entry.dir === "out")?.msg.model).toBe("grok-4");
+    expect(entries.find((entry) => entry.dir === "out")?.msg.model).toBe("grok-4.7");
   });
 
   it("auto-retries transient 429/5xx responses, then completes once", async () => {
@@ -151,7 +153,8 @@ describe("GrokDriver turns (fake fetch)", () => {
       },
     });
     // SAFETY: a real Response built from a live stream, same as above.
-    globalThis.fetch = (async () => {
+    globalThis.fetch = (async (url: string | URL) => {
+      if (String(url).endsWith("/models")) return new Response(JSON.stringify({ data: [] }), { status: 200 });
       calls++;
       return new Response(failingStream, { status: 200, headers: { "content-type": "text/event-stream" } });
     }) as typeof fetch;
@@ -186,5 +189,49 @@ describe("GrokDriver turns (fake fetch)", () => {
     script = [];
     await create();
     await expect(instance.adapter.respondToRequest("t-x", "r", { behavior: "allow" })).resolves.toBe("unavailable");
+  });
+});
+
+// Regression: the API engine offered grok-4, grok-4-fast and grok-3-mini long
+// after xAI retired them, and never the models the key could actually use.
+describe("the xAI model list", () => {
+  it("keeps chat models from /models, newest first, and prefers the current flagship as default", () => {
+    const catalog = xaiCatalogFromModels({
+      data: [
+        { id: "grok-4.5", created: 1751900000 },
+        { id: "grok-imagine-image-2.0", created: 1759000000 },
+        { id: "grok-4.7", created: 1758400000 },
+        { id: "grok-4.3", created: 1746000000 },
+        { id: "grok-imagine-video-1.5", created: 1759100000 },
+      ],
+    });
+    expect(catalog?.options.map((option) => option.id)).toEqual(["grok-4.7", "grok-4.5", "grok-4.3"]);
+    expect(catalog?.options[0]).toEqual({ id: "grok-4.7", label: "Grok 4.7" });
+    expect(catalog?.default).toBe("grok-4.7");
+    expect(xaiCatalogFromModels({ data: [] })).toBeNull();
+    expect(xaiCatalogFromModels("nope")).toBeNull();
+  });
+
+  it("shows the key's list once xAI answers", async () => {
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: string | URL) =>
+      String(url).endsWith("/models")
+        ? new Response(JSON.stringify({ data: [{ id: "grok-5", created: 1760000000 }, { id: "grok-4.7", created: 1758400000 }] }), { status: 200 })
+        : new Response("unexpected", { status: 500 })) as typeof fetch;
+    try {
+      const instance = await GrokDriver.create({
+        instanceId: "grok-live",
+        displayName: "Grok",
+        environment: { XAI_API_KEY: "xai-fake" },
+        enabled: true,
+        config: { url: "https://fake.xai.invalid/v1", apiKeyEnv: "XAI_API_KEY" },
+      });
+      expect(instance.models).toEqual(STATIC_XAI_MODELS);
+      for (let i = 0; i < 50 && instance.models === STATIC_XAI_MODELS; i += 1) await new Promise((r) => setTimeout(r, 10));
+      expect(instance.models.options.map((option) => option.id)).toEqual(["grok-5", "grok-4.7"]);
+      await instance.dispose();
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
   });
 });

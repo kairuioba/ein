@@ -32,6 +32,7 @@
 | M | 任务复盘只落盘 + API，工作台/简报还没有展示入口 | 待做（自我迭代阶段 1 的 UI 部分） | 待办 |
 | L | 派单计划缺少结构化的边界/交付物/验收人字段（实测发现） | 已修：计划 schema + 员工提示词 + 汇总要求 + UI 都带 `boundaries` / `deliverable` / `reviewer` | `fix/dispatch-plan-fields` `9a7cadd`（待新构建） |
 | P | 派单自动创建的员工默认「不自动批准」，只读工具也会弹审批卡；长任务夜里跑会卡在等人（实测卡了 ~15 分钟后自动拒绝） | 已修：派单创建的专员默认 autoApprove=true（危险/对外操作仍会停下问人）；待新构建验证 | `fix/dispatch-worker-autoapprove`（待构建） |
+| Q | 工作台/侧栏是「全公司一张图」，任务一多就乱，看不出部门属于哪个任务 | 已设计：任务式工作台（任务文件夹 → 总负责人 → 任务内部门 → 成员；工作台只看一个任务），见 `docs/task-centric-workbench.md`；按阶段实施 | 待实施 |
 | O | 侧栏机器人有蓝色未读/完成提示，点进去却跳到空白「新任务」，要看已完成的任务还得去右侧任务选择器 | 已修：任务记录 `lastActivityAt`，侧栏点击时切到「有动静的那个任务」（未读/最新活动优先），不再落到空白任务 | `fix/bot-activity-navigation`（待新构建） |
 | N | 超长任务（数天–数周、24/7）的上下文与交接 | 设计已写：`docs/long-horizon-tasks.md`（五层上下文、Handoff 协议、定时对表、上下文装配器、恢复与停损）；建议从阶段 A（Charter + State Doc + checkpoint 接口 + 提示词注入）开始 | 待老板确认后实现 |
 | D | WorkBuddy 环境切换后的模型刷新提示 | `international/internal/ioa` 切换后清单要重新探测（现在 6 小时/失败 2 分钟） | 切换环境时立即触发一次后台探测，并在选择器显示「正在刷新」 |

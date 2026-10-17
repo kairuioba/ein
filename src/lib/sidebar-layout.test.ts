@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  SIDEBAR_REVEAL_MARGIN,
+  sidebarRevealScrollTop,
   BOT_CHATS_SECTION_ID,
   BOTS_SECTION_ID,
   CHANNELS_SECTION_ID,
@@ -155,5 +157,32 @@ describe("sidebar section ordering", () => {
       work,
       PINNED_SECTION_ID,
     ]);
+  });
+});
+
+describe("sidebarRevealScrollTop", () => {
+  const view = { top: 267, bottom: 731 };
+
+  it("leaves a row that is already in sight alone", () => {
+    expect(sidebarRevealScrollTop(view, { top: 275, bottom: 323 }, 0)).toBeNull();
+    expect(sidebarRevealScrollTop(view, { top: 691, bottom: 731 }, 120)).toBeNull();
+  });
+
+  it("scrolls a new bot filed below the fold up into sight", () => {
+    // 1280x800: the new bot landed at 785-825 under a list ending at 731
+    expect(sidebarRevealScrollTop(view, { top: 785, bottom: 825 }, 0)).toBe(825 - 731 + SIDEBAR_REVEAL_MARGIN);
+  });
+
+  it("brings a partly hidden row fully into sight", () => {
+    expect(sidebarRevealScrollTop(view, { top: 700, bottom: 740 }, 50)).toBe(50 + 9 + SIDEBAR_REVEAL_MARGIN);
+  });
+
+  it("scrolls back up to a row above the fold, never past the top", () => {
+    expect(sidebarRevealScrollTop(view, { top: 200, bottom: 248 }, 300)).toBe(300 - 67 - SIDEBAR_REVEAL_MARGIN);
+    expect(sidebarRevealScrollTop(view, { top: 262, bottom: 310 }, 3)).toBe(0);
+  });
+
+  it("lines up the top of a row taller than the list", () => {
+    expect(sidebarRevealScrollTop(view, { top: 800, bottom: 1400 }, 0)).toBe(800 - 267 - SIDEBAR_REVEAL_MARGIN);
   });
 });

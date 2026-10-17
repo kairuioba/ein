@@ -1,5 +1,5 @@
 import { track } from "@/lib/analytics";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type SetStateAction } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type SetStateAction } from "react";
 import { ArrowUp, Check, Clock, Gauge, Hand, Paperclip, ShieldCheck, Sparkles, Square, Users } from "lucide-react";
 import { useStore, visibleMessages, type Bot, type Group, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
@@ -278,8 +278,11 @@ export function Composer({
 
   useEffect(() => setHighlight(0), [mention?.start, mention?.query, slash?.start, slash?.query]);
 
-  // one line at rest, then grow with the draft — hard cap at six lines
-  useEffect(() => {
+  // one line at rest, then grow with the draft — hard cap at six lines.
+  // Sized before paint: the transcript's end padding follows the dock in
+  // the same frame, so a new line never covers the last message, not even
+  // for the frame an effect would take.
+  useLayoutEffect(() => {
     const el = inputRef.current;
     if (!el) return;
     const line = parseFloat(getComputedStyle(el).lineHeight) || 24;

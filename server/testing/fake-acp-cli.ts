@@ -41,6 +41,14 @@
 //                        core.ts has something to catch
 //   FAKE_ACP_USAGE_ROOT  put the prompt result's usage at the root instead of
 //                        under _meta (what opencode 1.18.18 actually does)
+//   FAKE_ACP_STREAM      UI work: milliseconds between chunks. The happy turn's
+//                        and chief-plan's plain reply text grows a long
+//                        multi-paragraph markdown answer (lists, a table, a
+//                        code block) sent as many small agent_message_chunk
+//                        notifications, like a real model streaming.
+//                        FAKE_ACP_STREAM_CHUNK sets the chunk size in
+//                        characters (default 4). Unset, every mode is byte-
+//                        identical to before.
 //
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
 import { spawn } from "node:child_process";
@@ -224,6 +232,65 @@ function driveMcp(entry: McpEntry, calls: Array<{ name: string; args: (prev: str
     });
     write({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05" } });
   });
+}
+
+// FAKE_ACP_STREAM: a slow, realistic answer for chat-window work. Off (NaN)
+// unless the variable is set, which keeps every scripted mode unchanged.
+const streamDelayMs = Number(process.env.FAKE_ACP_STREAM ?? "");
+const streaming = Number.isFinite(streamDelayMs) && streamDelayMs >= 0 && process.env.FAKE_ACP_STREAM !== undefined;
+const STREAM_REPLY = [
+  "## 发布会准备进度",
+  "",
+  "我把手上的事情过了一遍，下面是目前的状态和接下来要做的事。整体节奏没有问题，但有两处需要你拍板，我放在最后。",
+  "",
+  "### 已经完成",
+  "",
+  "1. **竞品价格表**：五家竞品的旗舰款价格、上新节奏和渠道折扣都整理好了，放在资料库的「市场部 / 竞品」目录下。",
+  "2. **主视觉初稿**：设计部交了两版 KV，一版偏科技感，一版偏生活方式，配色都按品牌规范走。",
+  "3. **落地页框架**：前端把首屏、卖点区和预约表单搭起来了，移动端也适配过一轮。",
+  "",
+  "### 正在进行",
+  "",
+  "- 新闻稿写手在改第二稿，重点补充了续航和售后政策，预计今晚交。",
+  "- 社媒写手准备了小红书和微博各三条预热文案，等主视觉定稿后配图。",
+  "- 测试在跑落地页的表单提交和埋点，目前发现一个预约按钮在窄屏下被遮挡的问题，已经派给前端 3。",
+  "",
+  "| 事项 | 负责人 | 状态 | 截止 |",
+  "| --- | --- | --- | --- |",
+  "| 新闻稿第二稿 | 新闻稿写手 | 进行中 | 今晚 22:00 |",
+  "| 预热文案配图 | 设计师 | 等主视觉 | 周三 |",
+  "| 落地页上线 | 阿杰 | 测试中 | 周四 |",
+  "| 嘉宾合同 | 合同审查 | 待审 | 周四 |",
+  "",
+  "落地页预约接口的调用方式如下，前端和测试都按这个对齐：",
+  "",
+  "```ts",
+  "const res = await fetch(\"/api/reserve\", {",
+  "  method: \"POST\",",
+  "  headers: { \"content-type\": \"application/json\" },",
+  "  body: JSON.stringify({ phone, sku: \"flagship-2026\", channel }),",
+  "});",
+  "if (!res.ok) throw new Error(`reserve failed: ${res.status}`);",
+  "```",
+  "",
+  "### 需要你决定",
+  "",
+  "第一，旗舰款定价是 699 还是 799。市场分析师的建议是 799，理由是竞品均价在 780 左右，而且我们的续航优势明显；但小文担心 799 会影响首发转化。第二，发布会当天是否开放直播回放，这会影响合规官对嘉宾合同的审查口径。",
+  "",
+  "最后一句：以上就是完整的进度，两件事你定了之后我马上安排下去。",
+].join("\n");
+
+/** FAKE_ACP_STREAM: `text` as many small chunks, `streamDelayMs` apart. */
+function streamText(text: string, done: () => void) {
+  const size = Math.max(1, Number(process.env.FAKE_ACP_STREAM_CHUNK) || 4);
+  let at = 0;
+  const tick = () => {
+    if (at >= text.length) return done();
+    out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: text.slice(at, at + size) } } } });
+    at += size;
+    setTimeout(tick, streamDelayMs);
+  };
+  tick();
 }
 
 function playTurn() {
@@ -497,6 +564,10 @@ function handle(msg: any) {
         const reply = promptText.includes("[Ein dispatch finished]")
           ? `SYNTHESIS: ${promptText.includes("RESULT:Competitor research") && promptText.includes("RESULT:Launch copy") ? "both results present" : "missing results"}`
           : `RESULT:${/Your subtask: (.+)/.exec(promptText)?.[1] ?? firstLine.slice(0, 60)}`;
+        if (streaming) {
+          streamText(`${reply}\n\n${STREAM_REPLY}`, complete);
+          return;
+        }
         out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: reply } } } });
         complete();
         return;
@@ -575,6 +646,10 @@ function handle(msg: any) {
             out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: `delegate error: ${(e as Error).message}` } } } });
             complete();
           });
+        return;
+      }
+      if (streaming && mode === "happy") {
+        streamText(STREAM_REPLY, complete);
         return;
       }
       if (mode === "interleave") playInterleaveTurn();

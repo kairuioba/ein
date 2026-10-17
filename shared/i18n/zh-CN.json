@@ -1364,6 +1364,7 @@
   "International": "国际版",
   "Interrupt": "打断",
   "Interrupted by a restart": "因重启而中断",
+  "Interrupted by repeated restarts": "连续多次被重启打断，已停止自动重试",
   "Invalid Android coordinates": "无效的 Android 坐标",
   "Invalid Android input": "无效的 Android 输入",
   "Invalid JSON webhook body": "Webhook 请求体不是有效的 JSON",

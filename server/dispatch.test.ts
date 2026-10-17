@@ -20,6 +20,7 @@ import {
   readOrgSnapshot,
   roleSimilarity,
   uniqueName,
+  isCurrentAttempt,
   validatePlan,
   type DispatchBot,
   type DispatchHost,
@@ -158,6 +159,16 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 const settle = async () => {
   for (let i = 0; i < 5; i += 1) await flush();
 };
+
+describe("attempt identity", () => {
+  it("only the current attempt of the current boot may write a result", () => {
+    const subtask = { currentAttemptId: "a2", currentAttemptBootId: "boot-2" };
+    expect(isCurrentAttempt(subtask, "a2", "boot-2")).toBe(true);
+    expect(isCurrentAttempt(subtask, "a1", "boot-2")).toBe(false); // retried
+    expect(isCurrentAttempt(subtask, "a2", "boot-1")).toBe(false); // previous boot
+    expect(isCurrentAttempt({}, undefined, "boot-1")).toBe(true); // legacy rows
+  });
+});
 
 describe("plan validation", () => {
   it("accepts a DAG and normalizes fields", () => {
@@ -440,6 +451,28 @@ describe("Dispatcher", () => {
     const synthesis = host.turns.find((entry) => entry.continuation)?.text ?? "";
     expect(synthesis).toContain("三段文案");
     expect(synthesis).toContain("handoff: done");
+  });
+
+  it("marks a running attempt from a previous boot as interrupted and clears its id", async () => {
+    const result = submit([{ id: "a", title: "文案", brief: "写文案", role: "文案策划" }]);
+    expect("error" in result).toBe(false);
+    if ("error" in result) return;
+    await settle();
+    const before = dispatcher.get(result.run.id)!.subtasks[0]!;
+    expect(before.status).toBe("running");
+    expect(before.currentAttemptId).toBeTruthy();
+    // a new process reads the same runs file: the old attempt can never write
+    const restarted = new Dispatcher(host, dir);
+    restarted.load();
+    const after = restarted.get(result.run.id)!.subtasks[0]!;
+    expect(after.status).toBe("pending");
+    expect(after.currentAttemptId).toBeUndefined();
+    expect(after.interruptCount).toBe(1);
+    expect(after.error).toContain("restart");
+    // loading again does not count the same interruption twice
+    const again = new Dispatcher(host, dir);
+    again.load();
+    expect(again.get(result.run.id)!.subtasks[0]!.interruptCount).toBe(1);
   });
 
   it("records a retrospective when a run settles", async () => {

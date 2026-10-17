@@ -330,6 +330,20 @@ export function roleCore(role: string): string {
 /** How well `profile` (a bot's title, description and name) fits `role`:
  * 0.85 when the role's core appears verbatim, otherwise the share of the
  * core's tokens the profile contains. */
+/** One process boot. A running attempt from a previous boot is stale: its
+ * late completion must never overwrite the retried one. */
+export const DISPATCH_BOOT_ID = newId();
+
+/** Is this event still allowed to write the subtask? Exported for tests. */
+export function isCurrentAttempt(
+  subtask: { currentAttemptId?: string; currentAttemptBootId?: string },
+  attemptId: string | undefined,
+  bootId: string,
+): boolean {
+  if (!attemptId) return true;
+  return subtask.currentAttemptId === attemptId && subtask.currentAttemptBootId === bootId;
+}
+
 export function roleSimilarity(role: string, profile: string): number {
   const core = roleCore(role);
   const haystack = profile.toLowerCase();
@@ -444,7 +458,7 @@ export class Dispatcher {
   /** runs this boot closed because their report turn did not survive it */
   private restartFinishes: DispatchRun[] = [];
   /** worker thread → the subtask its turn is doing */
-  private readonly watch = new Map<string, { runId: string; subtaskId: string }>();
+  private readonly watch = new Map<string, { runId: string; subtaskId: string; attemptId?: string }>();
   /** chief's thread → the run whose consolidated-report turn runs there */
   private readonly synthesisWatch = new Map<string, string>();
   private readonly host: DispatchHost;
@@ -502,8 +516,17 @@ export class Dispatcher {
           this.settleFromChild(run, subtask, child, true);
           continue;
         }
-        subtask.status = "pending";
-        subtask.error = t("Interrupted by a restart");
+        subtask.interruptCount = (subtask.interruptCount ?? 0) + 1;
+        delete subtask.currentAttemptId;
+        delete subtask.currentAttemptBootId;
+        if (subtask.interruptCount >= 3) {
+          subtask.status = "failed";
+          subtask.error = t("Interrupted by repeated restarts");
+          subtask.finishedAt = now;
+        } else {
+          subtask.status = "pending";
+          subtask.error = t("Interrupted by a restart");
+        }
       }
     }
     this.saveRuns();
@@ -1147,6 +1170,12 @@ export class Dispatcher {
     const run = this.get(ticket.runId);
     const subtask = run?.subtasks.find((entry) => entry.id === ticket.subtaskId);
     if (!run || !subtask || subtask.status !== "running") return;
+    if (!isCurrentAttempt(subtask, ticket.attemptId, DISPATCH_BOOT_ID)) {
+      // A late result from an attempt that was retried, switched or lost to a
+      // restart. It must not overwrite the current attempt's outcome.
+      console.error(`dispatch: dropped a stale result for ${subtask.id} (attempt ${ticket.attemptId ?? "?"})`);
+      return;
+    }
     if (reason?.trim() === "rate_limited") {
       this.noteRateLimit(subtask);
       subtask.throttledAttempts = (subtask.throttledAttempts ?? 0) + 1;
@@ -1358,7 +1387,13 @@ export class Dispatcher {
     subtask.startedAt = Date.now();
     delete subtask.finishedAt;
     delete subtask.childRunId;
-    this.watch.set(threadId, { runId: run.id, subtaskId: subtask.id });
+    // The attempt id is persisted BEFORE the turn starts: a result that
+    // arrives after a retry/restart carries an older id and is dropped.
+    const attemptId = newId();
+    subtask.currentAttemptId = attemptId;
+    subtask.currentAttemptBootId = DISPATCH_BOOT_ID;
+    this.watch.set(threadId, { runId: run.id, subtaskId: subtask.id, attemptId });
+    this.touch(run);
     const chief = this.host.bot(run.chiefBotId);
     const lead = this.mayPlan(run, subtask);
     this.host.activity(run.sourceThreadId, t("Dispatched “{title}” to @{name}", { title: subtask.title, name: bot.name }));

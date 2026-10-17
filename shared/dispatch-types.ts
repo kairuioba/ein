@@ -134,6 +134,13 @@ export interface DispatchSubtask {
   error?: string;
   /** the structured answer the worker sent back (parsed from its reply) */
   handoff?: DispatchHandoff;
+  /** id of the attempt currently allowed to write this subtask's result;
+   * a late event from an older attempt is dropped instead of overwriting */
+  currentAttemptId?: string;
+  /** the process boot that started that attempt (restart = stale) */
+  currentAttemptBootId?: string;
+  /** how many restarts interrupted this subtask; >=3 gives up */
+  interruptCount?: number;
   /** when the latest attempt started */
   startedAt?: number;
   /** when it settled (done, failed, skipped or canceled) */

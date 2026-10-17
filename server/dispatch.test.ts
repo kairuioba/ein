@@ -300,6 +300,23 @@ describe("Dispatcher", () => {
     expect(host.created[0]?.modelSelection).toEqual({ instanceId: "codex", model: "gpt-5.5" });
   });
 
+  it("stops hiring at a department's headcount and shares the work with the people it has", () => {
+    const org = (headcount: number) => writeFileSync(join(dir, "org.json"), JSON.stringify({ departments: [{ section: "市场部", headcount }] }));
+    // 市场部 is the Chief plus one writer: a quota of 2 leaves no seat for a specialist
+    org(2);
+    const shared = submit([{ id: "data", title: "竞品数据分析", brief: "整理竞品对比表", role: "数据分析师" }]);
+    if ("error" in shared) throw new Error(shared.error);
+    expect(host.created).toHaveLength(0);
+    expect(shared.run.subtasks[0]!.assigneeBotId).toBe("writer");
+    // nobody left to share it with: the plan is refused, and says it is the quota
+    host.bot("writer")!.hidden = true;
+    org(1);
+    expect(submit([{ id: "data2", title: "竞品数据分析", brief: "整理竞品对比表", role: "数据分析师" }])).toMatchObject({
+      error: expect.stringContaining("headcount"),
+    });
+    expect(host.created).toHaveLength(0);
+  });
+
   it("recommends a model and an effort for every subtask, and runs at the effort its difficulty calls for", async () => {
     host.bot("writer")!.modelSelection = { instanceId: "claude", model: "sonnet" };
     const result = submit([
@@ -946,6 +963,24 @@ describe("Dispatcher", () => {
       expect("error" in orgPlan([{ id: "video", title: "发布会视频", brief: "剪一条 30 秒视频", role: "视频剪辑师" }])).toBe(false);
     });
 
+    it("binds a chief's own create_bot to the hiring rule and the department headcount", () => {
+      writeOrg({ chiefBotId: "boss", rules: { chiefMay: { newSpecialist: false } } });
+      expect(dispatcher.createSpecialist("boss", { name: "视频", title: "视频剪辑师", instructions: "剪视频" })).toMatchObject({
+        error: expect.stringContaining("company rules"),
+      });
+      expect(host.created).toHaveLength(0);
+      // the rule is on: 技术部 holds three people, and its quota allows one more
+      writeOrg({ chiefBotId: "boss", rules: { chiefMay: { newSpecialist: true } }, departments: [{ section: "技术部", headcount: 4 }] });
+      expect(dispatcher.createSpecialist("tech", { name: "前端 2", title: "前端", instructions: "写页面" })).toMatchObject({ section: "技术部" });
+      expect(host.created).toHaveLength(1);
+      expect(dispatcher.createSpecialist("tech", { name: "前端 3", title: "前端", instructions: "写页面" })).toMatchObject({
+        error: expect.stringContaining("headcount"),
+      });
+      expect(host.created).toHaveLength(1);
+      // the 主 Bot has no section, so no department quota applies to it
+      expect("error" in dispatcher.createSpecialist("boss", { name: "翻译 2", title: "翻译", instructions: "翻译" })).toBe(false);
+    });
+
     it("lets a lead plan its part with its own team; the subtask finishes with the lead's report", async () => {
       writeOrg({ chiefBotId: "boss" });
       const top = orgPlan([{ id: "page", title: "落地页", brief: "做发布会落地页", role: "前端工程师" }]);
@@ -1190,6 +1225,65 @@ describe("Dispatcher", () => {
       expect(sub("qa").assigneeBotId).toBe("tech");
     });
 
+    it("lets the workbench's 加人 reach the department's plan when the company plan has nothing left to hand out", async () => {
+      writeOrg({ chiefBotId: "boss" });
+      const top = orgPlan([
+        { id: "page", title: "落地页", brief: "做发布会落地页", role: "前端工程师" },
+        { id: "qa", title: "上线检查", brief: "检查落地页", assignee: "技术部" },
+      ]);
+      if ("error" in top) throw new Error(top.error);
+      await flush();
+      const leadTurn = host.workerTurns().find((turn) => turn.botId === "tech")!;
+      // the department's plan has not-started work of its own: a page under
+      // construction and a review waiting on it
+      const child = dispatcher.submitPlan("tech", leadTurn.threadId, {
+        goal: "落地页",
+        subtasks: [
+          { id: "build", title: "页面开发", brief: "写页面", role: "前端" },
+          { id: "review", title: "自查", brief: "检查页面", role: "前端", depends_on: ["build"] },
+        ],
+      });
+      if ("error" in child) throw new Error(child.error);
+      // the company plan itself has only department work: the direct call says so
+      expect(dispatcher.amend(top.run.id, 1, { by: "owner" })).toMatchObject({ error: expect.stringContaining("leads staff") });
+      // what the workbench calls does not stop there: the newcomers join the
+      // department's plan, where the not-started work is
+      const amend = async (runId: string, add: unknown) => {
+        let status = 0;
+        let payload: any;
+        await handleDispatchApi(
+          "POST",
+          `/api/dispatch/runs/${runId}/amend`,
+          new URL(`http://localhost/api/dispatch/runs/${runId}/amend`),
+          {} as IncomingMessage,
+          {} as ServerResponse,
+          {
+            dispatcher,
+            readBody: async () => ({ add }),
+            json: (_res, code, value) => {
+              status = code;
+              payload = value;
+            },
+            teamMapSnapshot: () => null,
+            ownsThread: () => true,
+            botName: (id) => host.bot(id)?.name,
+            modelLabel: () => "Claude · Sonnet",
+          },
+          () => host.settings(),
+        );
+        return { status, payload };
+      };
+      const added = await amend(top.run.id, 1);
+      expect(added).toMatchObject({ status: 200, payload: { ok: true, added: expect.any(Array), moved: ["review"] } });
+      expect(added.payload.added).toHaveLength(1);
+      const newcomer = added.payload.added[0] as string;
+      // the newcomer joins the department, not the company plan
+      expect(host.bot(newcomer)).toMatchObject({ section: "技术部" });
+      expect(dispatcher.get(child.run.id)!.subtasks.find((entry) => entry.id === "review")!.assigneeBotId).toBe(newcomer);
+      expect(dispatcher.get(child.run.id)!.squads?.[0]?.botIds).toEqual([newcomer]);
+      expect(dispatcher.get(top.run.id)!.subtasks.find((entry) => entry.id === "qa")!.assigneeBotId).toBe("tech");
+    });
+
     it("keeps a lead's subtask waiting on its team across a restart", async () => {
       writeOrg({ chiefBotId: "boss" });
       const top = orgPlan([{ id: "page", title: "落地页", brief: "做落地页", role: "前端工程师" }]);
@@ -1282,6 +1376,22 @@ describe("Dispatcher", () => {
       expect(moved).toBeGreaterThan(0);
       expect(pricier.suggestion!.costCny).toBeCloseTo(moved * 3.6 * 0.35, 1);
       expect(pricier.suggestion!.withinBudget).toBe(true);
+    });
+
+    it("stops newcomers at the department's headcount", async () => {
+      const run = await busyRun();
+      // 市场部 holds its Chief and both writers: a quota of 3 leaves no seat
+      const org = (headcount: number) =>
+        writeFileSync(join(dir, "org.json"), JSON.stringify({ departments: [{ section: "市场部", headcount }] }));
+      org(3);
+      expect(dispatcher.amend(run.id, 2, { by: "owner" })).toMatchObject({ error: expect.stringContaining("headcount") });
+      expect(run.squads).toBeUndefined();
+      // one seat left: one newcomer joins, the rest of the work stays with the team
+      org(4);
+      const result = dispatcher.amend(run.id, 2, { by: "owner" });
+      if ("error" in result) throw new Error(result.error);
+      expect(result.added).toHaveLength(1);
+      expect(host.bot(result.added[0]!)!.section).toBe("市场部");
     });
 
     it("hands only not-started subtasks to a new squad in the same run", async () => {
@@ -1439,6 +1549,9 @@ describe("Dispatcher", () => {
       const after = reloaded.get(run.id)!;
       expect(after.status).toBe("done");
       expect(after.squads![0]!.endedAt).toEqual(expect.any(Number));
+      // the restart finished this run: its 已完成 still has to reach the timeline
+      expect(reloaded.takeRestartFinished().map((entry) => entry.id)).toEqual([run.id]);
+      expect(reloaded.takeRestartFinished()).toEqual([]);
       // a dissolved squad gets no speed review afterwards
       const chips = host.chips.length;
       reloaded.checkReviews(after.squads![0]!.reviewAt + 1);

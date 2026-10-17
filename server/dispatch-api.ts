@@ -95,10 +95,12 @@ export async function handleDispatchApi(
       return true;
     }
     if (verb === "amend") {
-      // the owner's call from the workbench always goes through
+      // the owner's call from the workbench always goes through; when the
+      // company plan's remaining work sits in departments' own plans, the
+      // newcomers join those plans instead of being turned away
       const body = (await deps.readBody(req)) ?? {};
       await deps.refreshEngines?.();
-      const result = dispatcher.amend(runId!, Number(body.add), { by: "owner" });
+      const result = dispatcher.amendFromWorkbench(runId!, Number(body.add));
       json(res, "error" in result ? 400 : 200, result);
       return true;
     }

@@ -70,6 +70,7 @@ import * as composio from "./composio.ts";
 import { chiefOfStaffSystemPrompt } from "./chief-of-staff.ts";
 import { reasonLabel } from "./reason-labels.ts";
 import { Dispatcher, dispatchSettings } from "./dispatch.ts";
+import { UnattendedBots } from "./unattended-state.ts";
 import { handleDispatchApi } from "./dispatch-api.ts";
 import { handleOrgApi, isOrgApiPath, type OrgApiDeps } from "./org/api.ts";
 import { OrgEventLog } from "./org/events.ts";
@@ -690,7 +691,7 @@ function askBotAndWait(targetBotId: string, message: string, depth: number, from
     const timer = setTimeout(() => finish({ status: "timeout", text }), ASK_BOT_TIMEOUT_MS);
     startTurn(targetBotId, message, {
       commsDepth: depth + 1,
-      unattended: isUnattended(fromBotId),
+      unattended: unattended.is(fromBotId),
       onDispatchError: (reason) => finish({ status: "error", text: `(couldn't start that bot: ${reason})` }),
     }).catch((err) =>
       finish({ status: "error", text: `(couldn't start that bot: ${err instanceof Error ? err.message : String(err)})` }),
@@ -1387,41 +1388,9 @@ bus.subscribe((event: RuntimeEvent) => {
 });
 
 // Bots currently working with nobody at the keyboard — a webhook turn, or a
-// turn a webhook-driven bot handed to a teammate. Auto mode is a decision
-// someone made for turns they were present for, so these don't inherit it:
-// the guard behind auto mode is a pattern list, not a security boundary, and
-// it must not stand in for a human at 3am.
-//
-// Keyed by BOT rather than thread because a bot runs one turn at a time, so
-// the identity is exact, and because the peer-comms paths know who is asking
-// but not always from which thread. Idle marks expire rather than clearing on
-// turn.completed: bus subscribers fire in registration order, and the
-// delegation drain runs AFTER the main fold — clearing there would blank the
-// flag before the hop that needs to read it. A busy bot never ages out, and a
-// stale mark only ever means "ask a human", so this fails closed.
-const unattendedBots = new Map<string, number>();
-const UNATTENDED_TTL_MS = 30 * 60_000;
-
-function markUnattended(botId: string) {
-  unattendedBots.set(botId, Date.now());
-}
-function clearUnattended(botId: string) {
-  unattendedBots.delete(botId);
-}
-function isUnattended(botId?: string | null): boolean {
-  if (!botId) return false;
-  const at = unattendedBots.get(botId);
-  if (at === undefined) return false;
-  // A long-running turn is still unattended even if its next approval comes
-  // more than 30 minutes after the previous one. Only an idle bot may age
-  // out; every positive read refreshes the inactivity window.
-  if (Date.now() - at > UNATTENDED_TTL_MS && !store.bot(botId)?.busy) {
-    unattendedBots.delete(botId);
-    return false;
-  }
-  unattendedBots.set(botId, Date.now());
-  return true;
-}
+// turn such a bot handed on (see server/unattended-state.ts for the marks and
+// why an idle one ages out).
+const unattended = new UnattendedBots((botId) => store.bot(botId)?.busy === true);
 let routines: RoutineManager | null = null;
 let calendarCalls: CalendarCallManager | null = null;
 const localVmOwnerBusy = (botId: string) => store.bot(botId)?.busy === true;
@@ -1573,9 +1542,9 @@ bus.subscribe((event: RuntimeEvent) => {
       // whole point of asking is that a person decides — and anything that
       // looks destructive stops even in auto mode.
       const asker = bot ?? (speaker ? store.bot(speaker.botId) : undefined);
-      const unattended = permission && asker && event.requestId ? isUnattended(asker.id) : false;
+      const unattendedApproval = permission && asker && event.requestId ? unattended.is(asker.id) : false;
       const verdict = permission && asker && event.requestId
-        ? autoVerdict(asker, event.tool, event.summary, { unattended, scope: event.approvalScope })
+        ? autoVerdict(asker, event.tool, event.summary, { unattended: unattendedApproval, scope: event.approvalScope })
         : null;
       if (verdict?.approve && asker && event.requestId) {
         const settled = verdict.approve;
@@ -1702,7 +1671,7 @@ bus.subscribe((event: RuntimeEvent) => {
         shouldReview({
           source: verdict?.source,
           mode: reviewMode,
-          unattended: Boolean(unattended),
+          unattended: Boolean(unattendedApproval),
           approvalScope: event.approvalScope,
         })
       ) {
@@ -1737,7 +1706,7 @@ bus.subscribe((event: RuntimeEvent) => {
         decision: "card-shown",
         source: !permission ? "question" : verdict ? verdict.source : "no-grant",
         rule: verdict?.rule,
-        unattended: unattended || undefined,
+        unattended: unattendedApproval || undefined,
       });
       // Notify from HERE, not from a separate subscriber on request.opened:
       // this is the branch where a card actually reached a human. Anything
@@ -2083,7 +2052,7 @@ const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, text,
     };
     return startTurn(toBotId, text, {
       commsDepth,
-      unattended: isUnattended(store.botByThread(sourceThreadId)?.id),
+      unattended: unattended.is(store.botByThread(sourceThreadId)?.id),
       // startTurn schedules provider/integration setup after marking the bot
       // busy. Those asynchronous setup failures do not emit turn.completed,
       // so clear the watch and report them through this callback too.
@@ -2165,7 +2134,7 @@ const dispatcher = new Dispatcher({
       ...(opts.mayPlan ? { dispatchOnly: true } : {}),
       ...(opts.continuation ? { cardContinuation: true } : {}),
       // dispatched work inherits the planner's unattended window, like delegations
-      unattended: isUnattended(store.botByThread(opts.sourceThreadId ?? opts.threadId)?.id),
+      unattended: unattended.is(store.botByThread(opts.sourceThreadId ?? opts.threadId)?.id),
       // setup runs after startTurn resolves and never emits turn.completed on
       // failure: report it so the subtask settles instead of running forever
       onDispatchError: (message, info) => opts.onError?.(info?.cancelled ? "interrupted" : message),
@@ -2483,10 +2452,10 @@ async function startTurn(
   }
   if (bot.busy) throw Object.assign(new Error("the bot is already working — interrupt it first"), { status: 409 });
   const threadId = opts?.threadId ?? bot.threadId;
-  // a webhook turn, or one inherited from a bot already running unattended
-  if (opts?.automationSource === "webhook" || opts?.unattended) markUnattended(bot.id);
-  // a person typing into this bot ends the unattended window immediately
-  else if (opts?.automationSource === undefined && !opts?.commsDepth && !opts?.cardContinuation) clearUnattended(bot.id);
+  // a person typing into this bot ends the unattended window immediately;
+  // the mark for an unattended turn is set only once the turn passes every
+  // start check (below), so a rejected start leaves no state behind
+  if (opts?.automationSource === undefined && !opts?.commsDepth && !opts?.cardContinuation) unattended.clear(bot.id);
   const task = store.taskByThread(bot.id, threadId);
   if (!task) throw Object.assign(new Error(t("no such task")), { status: 404 });
   const commsDepth = opts?.commsDepth ?? 0;
@@ -2608,6 +2577,9 @@ async function startTurn(
     .filter(Boolean)
     .join(" ");
 
+  // the turn is accepted: a webhook turn, or one inherited from a bot
+  // already running unattended, is now unattended for real
+  if (opts?.automationSource === "webhook" || opts?.unattended) unattended.mark(bot.id);
   // busy flips immediately so the composer locks; the dispatch itself runs
   // in the background — box provisioning can take ~90s and must never
   // hang the HTTP request
@@ -3034,6 +3006,7 @@ async function startTurn(
         opts?.onDispatchError?.(e.message, { cancelled: true });
         if (ownsLatestGeneration && store.bot(bot.id)?.busy) {
           store.setActivity(bot.id, "idle");
+          unattended.settle(bot.id);
           retryDelegationsWaitingOn(bot.id);
         }
         if (ownsLatestGeneration) {
@@ -3051,6 +3024,8 @@ async function startTurn(
         tool: { name: `error: ${message.slice(0, 160)}`, ok: false },
       });
       store.setActivity(bot.id, "idle");
+      // the turn never dispatched: no unattended window survives it
+      unattended.settle(bot.id);
       retryDelegationsWaitingOn(bot.id);
       opts?.onDispatchError?.(message);
       // a dispatch failure never emits turn.completed, so the settle-driven
@@ -4641,6 +4616,9 @@ const orgLayer = new OrgLayer(
   { expiryMs: Number(process.env.OMB_UNATTENDED_EXPIRY_MS) || undefined },
 );
 const orgApiDeps: OrgApiDeps = { json, readBody, events: orgEvents, org: orgLayer };
+// dispatch's boot closed runs whose report turn did not survive the restart:
+// now that the company layer exists, its timeline says they finished
+orgLayer.onRestartFinished(dispatcher.takeRestartFinished());
 // the report cadence: the daily brief at its time, progress every N hours while work runs
 if (!process.env.VITEST) orgLayer.startCadence();
 
@@ -5268,7 +5246,7 @@ const server = createServer(async (req, res) => {
         if (!connectorThread(chief.id, fromThreadId)) {
           return json(res, 403, { error: "source conversation does not belong to sender" });
         }
-        if (!chief.chiefOfStaff) {
+        if (!chief.chiefOfStaff && !dispatcher.isOrgChief(chief.id)) {
           return json(res, 403, { error: "only a section's Chief of Staff can create operator bots" });
         }
         if (store.bots.length >= MAX_WORKSPACE_BOTS) {
@@ -5294,16 +5272,10 @@ const server = createServer(async (req, res) => {
         if (duplicate) {
           return json(res, 409, { error: `@${duplicate.name} already exists in this section; use list_bots` });
         }
-        const created = store.createBot(
-          {
-            name,
-            title: role,
-            description: instructions,
-            modelSelection: { ...chief.modelSelection },
-            section: chief.section,
-          },
-          { seedMessages: false },
-        );
+        // the same hiring limits as the dispatcher's own specialists: the
+        // company's 新增专员 rule and the department's 编制 (server/dispatch.ts)
+        const created = dispatcher.createSpecialist(chief.id, { name, title: role, instructions });
+        if ("error" in created) return json(res, 409, { error: created.error });
         const safeBot = store.patchBot(created.id, {
           composio: false,
           autoApprove: false,
@@ -7325,7 +7297,7 @@ const server = createServer(async (req, res) => {
                   { status: 409 },
                 );
               }
-              clearUnattended(current.id);
+              unattended.clear(current.id);
               const message = store.appendMessage(threadId, {
                 role: "user",
                 kind: "text",

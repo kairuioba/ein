@@ -139,6 +139,35 @@ describe("people states", () => {
     ]);
     expect(briefed.get("内容部")).toMatchObject({ done: 3, total: 7, health: "yellow", status: "三段卖点 17:20 交" });
   });
+
+  it("counts the fallback numbers the way the brief counts its own", () => {
+    const dayStart = new Date(NOW).setHours(0, 0, 0, 0);
+    // a run that settled yesterday is history; today's failed/blocked work stays in view
+    const yesterday = run([subtask("old", "a", "done", { finishedAt: dayStart - MIN })], {
+      id: "r-old",
+      status: "done",
+      createdAt: dayStart - 3 * 60 * MIN,
+      updatedAt: dayStart - MIN,
+    });
+    const today = run(
+      [
+        subtask("done", "a", "done", { finishedAt: NOW - MIN }),
+        subtask("failed", "b", "failed", { finishedAt: NOW }),
+        subtask("skipped", "lead", "skipped"),
+        subtask("canceled", "a", "canceled"),
+        // a department's plan is a container: its team's subtasks are the work
+        subtask("container", "lead", "running", { childRunId: "r-child" }),
+      ],
+      { id: "r-today", updatedAt: NOW },
+    );
+    const child = run([subtask("build", "a", "running")], { id: "r-child", parentRunId: "r-today", updatedAt: NOW });
+    const runs = [yesterday, today, child];
+    const map = states(runs);
+    const stats = departmentStats([{ section: "内容部", botIds: ["lead", "a", "b"] }], runs, map, undefined, NOW);
+    // yesterday isn't in today's picture, blocked and failed work counts, the
+    // container isn't counted next to the team's own subtasks
+    expect(stats.get("内容部")).toMatchObject({ done: 1, total: 4 });
+  });
 });
 
 describe("floor plan", () => {

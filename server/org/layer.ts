@@ -17,7 +17,7 @@ import type { OrgEventLog } from "./events.ts";
 import { ApprovalExpiry, type UnattendedApproval } from "./expiry.ts";
 import { collectInbox, escalationLadder, isDecisionCard, questionOf } from "./inbox.ts";
 import { LibraryError, LibraryStore } from "./library.ts";
-import { RunWatcher, type OrgEventInput } from "./run-events.ts";
+import { RunWatcher, runFinishedEvent, type OrgEventInput } from "./run-events.ts";
 import { DEFAULT_USD_TO_CNY, summarizeUsage, UsageLedger } from "./usage.ts";
 import { botThreads, firstLine, groupThreads, round2, sectionOf, startOfDay, startOfWeek, workThreads, type OrgBot, type OrgCard, type OrgGroup, type OrgMessage } from "./util.ts";
 
@@ -60,6 +60,8 @@ export class OrgLayer {
   readonly library: LibraryStore;
   private readonly host: OrgHost;
   private readonly runWatch = new RunWatcher();
+  /** runs a restart closed, already announced (so a second call is not news) */
+  private readonly restartAnnounced = new Set<string>();
   private readonly expiry = new ApprovalExpiry();
   /** test seam: expire after this many ms instead of the rule's minutes */
   private readonly expiryMs: number | undefined;
@@ -263,10 +265,7 @@ export class OrgLayer {
         maxAttempts: this.host.maxAttempts(),
       });
       if (events.some((event) => event.kind === "run.started")) {
-        this.decisions.linkRun(run, (decision) =>
-          decision.source.threadId === run.sourceThreadId ||
-          (decision.source.kind === "group" && this.groupForThread(run.sourceThreadId)?.id === decision.source.id),
-        );
+        this.decisions.linkRun(run, (decision) => this.decisionFollowedBy(decision, run));
       }
       const decisionId = this.decisions.decisionForRun(run.id);
       for (const event of events) this.emit(decisionId !== undefined ? { ...event, decisionId } : event);
@@ -274,6 +273,40 @@ export class OrgLayer {
     } catch (error) {
       console.error("org: could not record a dispatch change", error);
     }
+  }
+
+  /** Runs a restart closed on the report turn's behalf: the broadcast that
+   * would have said 已完成 never happened, so the timeline says it here. Call
+   * it once the dispatcher is wired (server/index.ts), with takeRestartFinished(). */
+  onRestartFinished(runs: readonly DispatchRun[]): void {
+    try {
+      for (const run of runs) {
+        if (this.restartAnnounced.has(run.id)) continue;
+        this.restartAnnounced.add(run.id);
+        const event = runFinishedEvent(run, { botName: (id) => this.bot(id)?.name, botSection: (id) => this.sectionOfBot(id) });
+        if (!event) continue;
+        const decisionId = this.decisions.decisionForRun(run.id);
+        this.emit(decisionId !== undefined ? { ...event, decisionId } : event);
+        this.decisions.syncRun(run);
+      }
+    } catch (error) {
+      console.error("org: could not record a restart's dispatch finish", error);
+    }
+  }
+
+  /** Is this run the follow-up of that decision? The same conversation (or
+   * the same room) links it, and so does a participant's plan: work started
+   * right after a meeting's 决议, by someone who sat in it, is that decision's
+   * action items even when the owner asked in a 1:1 chat. */
+  private decisionFollowedBy(decision: OrgDecision, run: DispatchRun): boolean {
+    if (decision.source.threadId === run.sourceThreadId) return true;
+    if (decision.source.kind !== "group") return false;
+    const roomId = decision.source.id;
+    if (this.groupForThread(run.sourceThreadId)?.id === roomId) return true;
+    const room = this.host.groups().find((group) => group.id === roomId);
+    if (!room) return false;
+    const people = new Set([run.chiefBotId, ...run.subtasks.map((subtask) => subtask.assigneeBotId)]);
+    return room.memberIds.some((id) => people.has(id));
   }
 
   /** The owner answered an options card: record the decision (决议 #n) and
@@ -294,7 +327,16 @@ export class OrgLayer {
       const thread = this.host.messages(threadId);
       const index = thread.findIndex((entry) => entry.id === messageId);
       const leadUp = thread.slice(Math.max(0, index - (group ? 30 : 8)), Math.max(0, index)).map((entry) => entry.text ?? "");
-      const basis = basisFromTexts([...leadUp, card.title, card.subtitle, ...card.options], this.library.list());
+      // isolation reaches the 决议 record too: a title from an isolated
+      // department must not leak into a decision the rest of the company reads
+      const isolated = new Set(this.org().departments.filter((dep) => dep.isolated).map((dep) => dep.section));
+      const audience = group
+        ? new Set(group.memberIds.map((id) => sectionOf(this.bot(id)?.section)))
+        : new Set([sectionOf(owner?.section)]);
+      const citable = this.library
+        .list()
+        .filter((doc) => !doc.section || !isolated.has(doc.section) || (audience.size === 1 && audience.has(doc.section)));
+      const basis = basisFromTexts([...leadUp, card.title, card.subtitle, ...card.options], citable);
       const decision = this.decisions.create({
         title,
         options: card.options,

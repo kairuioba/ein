@@ -8,7 +8,8 @@ import { describe, expect, it } from "vitest";
 import type { DispatchRun, InboxItem } from "../../shared/dispatch-types";
 import type { TaskFolderView } from "../../shared/task-folders";
 import type { EvolutionProposal } from "../lib/evolution";
-import { applyServerFrame, sseRefreshTargets, type SseStoreCaches } from "./store";
+import { INBOX_SNOOZE_MS, dueInboxItems, isSnoozed, snoozeUntil } from "../lib/inbox";
+import { applyServerFrame, initialState, sseFullRefreshPaths, sseRefreshTargets, type SseStoreCaches } from "./store";
 
 const folder = (id: string, title = id): TaskFolderView => ({
   id,
@@ -150,6 +151,51 @@ describe("sseRefreshTargets", () => {
     expect(sseRefreshTargets({ kind: "inbox", items: [], counts: { needsYou: 0, unseen: 0, byTask: {} } })).toEqual([]);
     expect(sseRefreshTargets({ kind: "message" })).toEqual([]);
     expect(sseRefreshTargets({})).toEqual([]);
+  });
+});
+
+describe("store broadcast caches and reconnect refresh", () => {
+  it("patches the task-folders and inbox caches on the real initial state", () => {
+    const withTasks = applyServerFrame(initialState, { kind: "task-folders", tasks: [folder("t1")] });
+    expect(withTasks).not.toBe(initialState);
+    expect(withTasks.taskFolders?.map((task) => task.id)).toEqual(["t1"]);
+
+    const withInbox = applyServerFrame(withTasks, {
+      kind: "inbox",
+      items: [inboxItem("i1")],
+      counts: { needsYou: 1, unseen: 1, byTask: { t1: 1 } },
+    });
+    expect(withInbox.inbox?.counts.needsYou).toBe(1);
+    expect(withInbox.inbox?.items.map((item) => item.id)).toEqual(["i1"]);
+
+    // the same snapshot again does not rebuild (idempotent live fold)
+    expect(applyServerFrame(withInbox, { kind: "task-folders", tasks: [folder("t1")] })).toBe(withInbox);
+  });
+
+  it("pulls the broadcast caches once when the stream opens or reconnects", () => {
+    expect(sseFullRefreshPaths).toEqual(["/api/task-folders", "/api/inbox"]);
+  });
+});
+
+describe("inbox snooze (frontend temporary rule)", () => {
+  it("snoozes for 24h from seenAt until the server sends snoozeUntil", () => {
+    const seenAt = 1_000_000;
+    expect(snoozeUntil({ seenAt })).toBe(seenAt + INBOX_SNOOZE_MS);
+    expect(snoozeUntil({ seenAt, snoozeUntil: seenAt + 60_000 })).toBe(seenAt + 60_000);
+    expect(snoozeUntil({})).toBeNull();
+  });
+
+  it("comes back after expiry, and resolved items never snooze", () => {
+    const now = 10_000_000;
+    expect(isSnoozed({ seenAt: now - 1_000 }, now)).toBe(true);
+    expect(isSnoozed({ seenAt: now - INBOX_SNOOZE_MS - 1 }, now)).toBe(false);
+    expect(isSnoozed({ seenAt: now, resolvedAt: now }, now)).toBe(false);
+    const items = [
+      { id: "snoozed", seenAt: now - 1_000 },
+      { id: "due", seenAt: now - INBOX_SNOOZE_MS - 1 },
+      { id: "resolved", seenAt: now, resolvedAt: now },
+    ];
+    expect(dueInboxItems(items, now).map((item) => item.id)).toEqual(["due"]);
   });
 });
 

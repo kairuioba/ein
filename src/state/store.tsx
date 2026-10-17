@@ -451,6 +451,12 @@ export interface AppState {
   groups: Group[];
   instances: InstanceInfo[];
   config: ConfigStatus | null;
+  /** SSE-maintained broadcast caches (the polled hooks stay as fallback) */
+  taskFolders: readonly TaskFolderView[] | null;
+  inbox: {
+    items: readonly InboxItem[];
+    counts: { needsYou: number; unseen: number; byTask: Record<string, number> };
+  } | null;
   /** selected chat — a bot id OR a group id */
   selectedId: string;
   activeView: AppView;
@@ -653,6 +659,11 @@ export function sseRefreshTargets(frame: ServerSseFrame): string[] {
       return [];
   }
 }
+
+/** Pulled once whenever the event stream opens (including reconnects): the
+ * frames missed while the socket was down would otherwise wait for the 5s
+ * polls. Failures fall back to those polls unchanged. */
+export const sseFullRefreshPaths = ["/api/task-folders", "/api/inbox"] as const;
 
 export type Action =
   | {
@@ -1448,6 +1459,8 @@ export const initialState: AppState = {
   groups: [],
   instances: [],
   config: null,
+  taskFolders: null,
+  inbox: null,
   selectedId: "",
   activeView: "chat",
   routines: [],
@@ -2090,6 +2103,32 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         for (const target of batch) void refreshApi(target);
       }, 250);
     };
+    // A stream that just (re)opened may have missed frames: pull the two
+    // broadcast caches once and nudge the polled caches. The 5s polls stay as
+    // the fallback when any of this fails.
+    const refreshBroadcastCaches = () => {
+      void (async () => {
+        const [tasks, inboxFeed] = await Promise.allSettled([
+          api("/api/task-folders"),
+          api("/api/inbox"),
+        ]);
+        if (!alive) return;
+        if (tasks.status === "fulfilled") {
+          rawDispatch({ type: "sseFrame", frame: { kind: "task-folders", tasks: tasks.value?.tasks ?? [] } });
+        }
+        if (inboxFeed.status === "fulfilled") {
+          const data = (inboxFeed.value ?? {}) as {
+            items?: InboxItem[];
+            counts?: { needsYou: number; unseen: number; byTask: Record<string, number> };
+          };
+          rawDispatch({
+            type: "sseFrame",
+            frame: { kind: "inbox", items: data.items ?? [], counts: data.counts ?? { needsYou: 0, unseen: 0, byTask: {} } },
+          });
+        }
+      })();
+      for (const target of sseFullRefreshPaths) void refreshApi(target);
+    };
     const loadAll = async (): Promise<boolean> => {
       const chat = () =>
         api("/api/bots").then(({ bots, groups, computerControl }) => {
@@ -2340,7 +2379,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
     };
     const stopLive = openLiveEvents({
-      onOpen: () => rawDispatch({ type: "connected", value: true }),
+      onOpen: () => {
+        rawDispatch({ type: "connected", value: true });
+        // also covers the initial open: the snapshot above does not carry
+        // these two caches, and the stream may have moved on meanwhile.
+        refreshBroadcastCaches();
+      },
       onError: () => rawDispatch({ type: "connected", value: false }),
       onSnapshotRequired: () => {
         clearTimeout(hydrationFallback);

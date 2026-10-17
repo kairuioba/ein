@@ -14,6 +14,54 @@ export interface OwnerTimeMetrics {
 }
 
 const DAY = 24 * 60 * 60 * 1000;
+/** The owner's calendar runs in China time by default (server clocks can be UTC). */
+export const DEFAULT_OWNER_TIME_ZONE = "Asia/Shanghai";
+
+/** Offset of `timeZone` from UTC at instant `now`, in ms (negative west of UTC). */
+function zoneOffsetMs(now: number, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).formatToParts(new Date(now));
+  const value = (type: Intl.DateTimeFormatPartTypes): number =>
+    Number(parts.find((part) => part.type === type)?.value);
+  const asUtc = Date.UTC(value("year"), value("month") - 1, value("day"), value("hour") % 24, value("minute"), value("second"));
+  return asUtc - Math.floor(now / 1000) * 1000;
+}
+
+/** Turn a local wall-clock instant back into epoch ms (one offset refinement
+ * so a DST change at the boundary cannot land on the wrong side). */
+function fromWallClock(wall: number, timeZone: string): number {
+  let offset = zoneOffsetMs(wall - DAY / 2, timeZone);
+  let utc = wall - offset;
+  const refined = zoneOffsetMs(utc, timeZone);
+  if (refined !== offset) {
+    offset = refined;
+    utc = wall - offset;
+  }
+  return utc;
+}
+
+/** Local midnight for the owner's timezone (default Asia/Shanghai), not UTC
+ * or the server host's zone. */
+export function ownerDayStart(now: number, timeZone = DEFAULT_OWNER_TIME_ZONE): number {
+  const wall = now + zoneOffsetMs(now, timeZone);
+  return fromWallClock(Math.floor(wall / DAY) * DAY, timeZone);
+}
+
+/** Local Monday 00:00 of the week `now` falls in, in the owner's timezone. */
+export function ownerWeekStart(now: number, timeZone = DEFAULT_OWNER_TIME_ZONE): number {
+  const dayStart = ownerDayStart(now, timeZone);
+  const wallDayStart = dayStart + zoneOffsetMs(dayStart, timeZone);
+  const weekday = (new Date(wallDayStart).getUTCDay() + 6) % 7; // Monday = 0
+  return fromWallClock(wallDayStart - weekday * DAY, timeZone);
+}
 
 const percentile = (values: number[], p: number): number | null => {
   if (!values.length) return null;
@@ -26,11 +74,14 @@ export function buildOwnerMetrics(input: {
   items: InboxItem[];
   retros: DispatchRetro[];
   now?: number;
+  /** the owner's timezone for today/week boundaries (default Asia/Shanghai) */
+  timeZone?: string;
   waitingProjects?: number;
 }): OwnerTimeMetrics {
   const now = input.now ?? Date.now();
-  const dayStart = new Date(now).setHours(0, 0, 0, 0);
-  const weekStart = dayStart - 6 * DAY;
+  const timeZone = input.timeZone ?? DEFAULT_OWNER_TIME_ZONE;
+  const dayStart = ownerDayStart(now, timeZone);
+  const weekStart = ownerWeekStart(now, timeZone);
   const resolved = input.items.filter((item) => typeof item.resolvedAt === "number" && typeof item.createdAt === "number");
   const latencies = resolved.map((item) => Math.max(0, item.resolvedAt! - item.createdAt));
   const open = input.items.filter((item) => !item.resolvedAt);

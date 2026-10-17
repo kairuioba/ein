@@ -21,6 +21,22 @@ describe("attention gate", () => {
     expect(classify(sample, { approvals: 6, autoApprovedToday: 20 })).toMatchObject({ kind: "inbox" });
   });
 
+  it("keeps snoozed cards in the inbox and never pushes them", () => {
+    const snoozed = make({ status: "snoozed", irreversible: true, hasSafeDefault: false, risk: "critical" });
+    expect(classify(snoozed)).toMatchObject({ kind: "inbox" });
+    expect(classify(snoozed).reasons.join(" ")).toContain("snoozed");
+    // open vs snoozed is the only difference: the same critical card pushes
+    expect(classify(make({ irreversible: true, hasSafeDefault: false, risk: "critical" })).kind).toBe("push");
+  });
+
+  it("stops pushing once the daily push budget is spent (critical may still push)", () => {
+    const card = make({ irreversible: true, hasSafeDefault: false, risk: "high" });
+    expect(classify(card, { pushesToday: 2, pushCap: 3 }).kind).toBe("push");
+    expect(classify(card, { pushesToday: 3, pushCap: 3 }).kind).toBe("inbox");
+    expect(classify(card, { pushesToday: 3, pushCap: 3 }).reasons.join(" ")).toContain("budget");
+    expect(classify(make({ irreversible: true, hasSafeDefault: false, risk: "critical" }), { pushesToday: 3, pushCap: 3 }).kind).toBe("push");
+  });
+
   it("archives stale suggestions with no downstream", () => {
     expect(classify(make({ suggestion: true, waitAgeMs: 25 * 60 * 60 * 1000 })).kind).toBe("archive");
     expect(classify(make({ suggestion: true, waitAgeMs: 25 * 60 * 60 * 1000, blockedDownstream: 2 })).kind).toBe("inbox");

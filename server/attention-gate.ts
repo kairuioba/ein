@@ -19,6 +19,8 @@ export interface AttentionCard {
   slaMs?: number;
   /** 有多少条下游在等这张卡 */
   blockedDownstream?: number;
+  /** owner pressed "later": visible in the inbox, never a push (default open) */
+  status?: "open" | "snoozed";
   /** 同一动作类型 + 项目的历史（用于自动批准规则） */
   actionType?: string;
   projectId?: string;
@@ -53,6 +55,12 @@ const highImpact = (card: AttentionCard): boolean => Boolean(card.irreversible) 
 /** 每天 ≤3 次推送；预算耗尽后只有 critical 还能推。 */
 export function classify(card: AttentionCard, history: AttentionHistory = {}): { kind: AttentionClass; reasons: string[] } {
   const reasons: string[] = [];
+  // A snoozed card is the owner's explicit "not now": it stays visible in the
+  // inbox but must never interrupt (and never be auto-approved behind it).
+  if (card.status === "snoozed") {
+    reasons.push("snoozed by the owner → inbox only, never a push");
+    return { kind: "inbox", reasons };
+  }
   const cap = history.autoApprovalCap ?? 20;
   const reversible = isReversible(card);
   const historyClean = (history.approvals ?? 0) >= AUTO_MANUAL_MIN && (history.rejections ?? 0) === 0 && !history.reverted;

@@ -665,6 +665,27 @@ describe("Dispatcher", () => {
     expect(dispatcher.get(result.run.id)!.subtasks[0]!.status).toBe("failed");
   });
 
+  it("ends the run when a retried subtask's bot is gone, instead of leaving its dependents waiting", async () => {
+    host.settingsValue = dispatchSettings({ autoSynthesize: false });
+    host.add({ id: "w2", name: "设计", title: "视觉设计师", section: "市场部" });
+    const result = submit([
+      { id: "a", title: "第一步", brief: "做", role: "文案策划" },
+      { id: "b", title: "第二步", brief: "按文案画海报", role: "视觉设计师", depends_on: ["a"] },
+    ]);
+    if ("error" in result) throw new Error(result.error);
+    await flush();
+    host.bots_ = host.bots_.filter((bot) => bot.id !== "writer");
+    dispatcher.onBotDeleted("writer");
+    const run = dispatcher.get(result.run.id)!;
+    expect(run.subtasks.map((subtask) => subtask.status)).toEqual(["failed", "skipped"]);
+    expect(run.status).toBe("failed");
+    // the owner retries the first step anyway: it cannot start, so the second never will
+    dispatcher.retry(run.id, "a");
+    await flush();
+    expect(run.subtasks.map((subtask) => subtask.status)).toEqual(["failed", "skipped"]);
+    expect(run.status).toBe("failed");
+  });
+
   it("never drops a run still in progress to make room for finished ones", async () => {
     host.settingsValue = dispatchSettings({ requireApproval: true });
     const waiting = submit([{ id: "a", title: "文案", brief: "写", role: "文案策划" }], "等你批的计划");

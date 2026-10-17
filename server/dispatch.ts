@@ -1026,24 +1026,7 @@ export class Dispatcher {
     const run = this.get(runId);
     if (!run) return;
     if (run.status === "running") {
-      // dependents of a failed/canceled subtask can never run
-      let changed = true;
-      while (changed) {
-        changed = false;
-        for (const subtask of run.subtasks) {
-          if (subtask.status !== "pending") continue;
-          const blocked = subtask.dependsOn.some((dep) => {
-            const status = run.subtasks.find((entry) => entry.id === dep)?.status;
-            return status === "failed" || status === "canceled" || status === "skipped";
-          });
-          if (blocked) {
-            subtask.status = "skipped";
-            subtask.error = t("Skipped because a subtask it depends on did not finish");
-            subtask.finishedAt = Date.now();
-            changed = true;
-          }
-        }
-      }
+      skipBlocked(run);
       const settings = this.host.settings();
       const cap = Math.max(settings.maxConcurrent, run.maxConcurrent ?? 0);
       let running = run.subtasks.filter((subtask) => this.inTurn(subtask)).length;
@@ -1063,6 +1046,9 @@ export class Dispatcher {
         this.startSubtask(run, subtask, bot);
         running += 1;
       }
+      // one that could not even start just now (its bot is gone) fails its
+      // dependents in this pass too, or the run would wait on them forever
+      skipBlocked(run);
       if (run.subtasks.every((subtask) => isSettled(subtask.status))) {
         const anyDone = run.subtasks.some((subtask) => subtask.status === "done");
         if (anyDone && settings.autoSynthesize) {
@@ -1607,6 +1593,27 @@ function isSettled(status: SubtaskStatus): boolean {
 
 function isFinished(status: RunStatus): boolean {
   return status === "done" || status === "failed" || status === "canceled";
+}
+
+/** Dependents of a failed, canceled or skipped subtask can never run. */
+function skipBlocked(run: DispatchRun): void {
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const subtask of run.subtasks) {
+      if (subtask.status !== "pending") continue;
+      const blocked = subtask.dependsOn.some((dep) => {
+        const status = run.subtasks.find((entry) => entry.id === dep)?.status;
+        return status === "failed" || status === "canceled" || status === "skipped";
+      });
+      if (blocked) {
+        subtask.status = "skipped";
+        subtask.error = t("Skipped because a subtask it depends on did not finish");
+        subtask.finishedAt = Date.now();
+        changed = true;
+      }
+    }
+  }
 }
 
 /** The parts of a subtask's pick that differ from the bot's own settings,

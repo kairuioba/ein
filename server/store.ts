@@ -237,6 +237,9 @@ export interface TaskRecord {
    * a folder that moved under a live session would break resume. `null`
    * = pinned to the default (home); absent = not pinned yet. */
   cwd?: string | null;
+  /** when this task last received a message; the sidebar uses it to open the
+   * conversation that actually has the news instead of an empty newer task */
+  lastActivityAt?: number;
 }
 
 export interface TaskUsage {
@@ -1011,6 +1014,17 @@ export class Store {
     return path.reverse();
   }
 
+  /** Record activity on whichever task (not only the active one) received a
+   * message. In-memory only: the next bot broadcast carries it to clients. */
+  private touchTask(threadId: string, at: number): void {
+    for (const bot of this.bots) {
+      const task = bot.tasks?.find((entry) => entry.threadId === threadId);
+      if (!task) continue;
+      task.lastActivityAt = at;
+      return;
+    }
+  }
+
   appendMessage(threadId: string, message: Omit<Message, "id" | "at"> & { at?: number }): Message {
     const t = this.thread(threadId);
     const full: Message = { id: newId(), at: Date.now(), parentId: t.activeLeafId, ...redactBotAuthored(message) };
@@ -1024,6 +1038,7 @@ export class Store {
       }
     }
     this.emit({ type: "message", threadId, message: full });
+    this.touchTask(threadId, full.at);
     // The first-run quiz is not a live ask. Talking past it hides it so the
     // transcript is just the greeting plus what they said. Cards with a
     // requestId are permission/question prompts and stay until answered.
@@ -1053,6 +1068,7 @@ export class Store {
       }
     }
     this.emit({ type: "message", threadId, message: full });
+    this.touchTask(threadId, full.at);
     // announced after the insert so no client ever sees two siblings
     // claiming the same parent
     for (const child of children) this.patchMessage(threadId, child.id, { parentId: full.id });

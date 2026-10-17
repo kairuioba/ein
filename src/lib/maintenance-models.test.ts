@@ -4,6 +4,7 @@ import {
   groupMaintenanceModels,
   isCloudGptModel,
   parseSelectionKey,
+  preferredMaintenanceChoice,
   selectionKey,
 } from "./maintenance-models";
 import type { InstanceInfo } from "@/state/store";
@@ -56,5 +57,27 @@ describe("maintenance desk model groups", () => {
     expect(parseSelectionKey(key)).toEqual({ instanceId: "workbuddy", modelId: "glm-5.3" });
     expect(parseSelectionKey("")).toBeNull();
     expect(parseSelectionKey("workbuddy")).toBeNull();
+  });
+});
+
+describe("maintenance desk initial model", () => {
+  const ready = [
+    instance("grok", "grokAgent", "Grok", [{ id: "grok-4.7", label: "Grok 4.7" }]),
+    instance("codex", "codex", "Codex", [{ id: "gpt-6.1-sol", label: "gpt-6.1-sol (OpenAI)" }]),
+  ];
+
+  it("starts on the maintenance bot's saved engine and model", () => {
+    const choice = preferredMaintenanceChoice(ready, { instanceId: "codex", model: "gpt-6.1-sol" });
+    expect(choice?.instance.instanceId).toBe("codex");
+    expect(choice?.model.id).toBe("gpt-6.1-sol");
+  });
+
+  it("falls back to the first ready engine when nothing is saved", () => {
+    expect(preferredMaintenanceChoice(ready)?.instance.instanceId).toBe("grok");
+  });
+
+  it("falls back when the saved engine or model is no longer ready", () => {
+    expect(preferredMaintenanceChoice(ready, { instanceId: "claude", model: "sonnet" })?.instance.instanceId).toBe("grok");
+    expect(preferredMaintenanceChoice(ready, { instanceId: "codex", model: "gone" })?.instance.instanceId).toBe("grok");
   });
 });

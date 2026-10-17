@@ -14,6 +14,7 @@ import { SectionHeader, SettingRow } from "./parts";
 import {
   groupMaintenanceModels,
   parseSelectionKey,
+  preferredMaintenanceChoice,
   selectionKey,
   type ModelChoice,
 } from "@/lib/maintenance-models";
@@ -117,21 +118,17 @@ export function MaintenanceSection() {
 
   const groups = groupMaintenanceModels(ready);
   const parsed = parseSelectionKey(choiceKey);
-  const selected: ModelChoice | undefined =
-    (parsed &&
-      (() => {
+  const picked: ModelChoice | undefined = parsed
+    ? (() => {
         const instance = ready.find((entry) => entry.instanceId === parsed.instanceId);
         const model = instance?.models.options.find((option) => option.id === parsed.modelId);
         return instance && model ? { instance, model } : undefined;
-      })()) ??
-    (ready[0]
-      ? {
-          instance: ready[0],
-          model:
-            ready[0].models.options.find((option) => option.id === ready[0].models.default) ??
-            ready[0].models.options[0]!,
-        }
-      : undefined);
+      })()
+    : undefined;
+  // start on the maintenance bot's own saved model: otherwise the first ready
+  // engine shows up selected and "Save" would move the bot to it
+  const savedModel = state.bot ? store.bots.find((entry) => entry.id === state.bot!.id)?.modelSelection : undefined;
+  const selected: ModelChoice | undefined = picked ?? preferredMaintenanceChoice(ready, savedModel);
   const channel: Channel = state.channel ?? "stable";
   const repoNote = state.repo?.ok
     ? `${state.repo.branch ?? "?"} · ${state.repo.commit ?? ""} ${state.repo.subject ?? ""}${state.repo.dirty ? ` · ${t("uncommitted changes")}` : ""}`

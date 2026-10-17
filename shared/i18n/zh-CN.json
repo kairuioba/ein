@@ -660,6 +660,7 @@
   "Connected {from} → {to}": "已接通 {from} → {to}",
   "Connecting live view…": "正在连接实时画面…",
   "Connecting to the bot server…": "正在连接 Bot 服务器…",
+  "Connecting to the project office…": "正在连接协同工作台…",
   "Connecting viewer": "正在连接查看器",
   "Connection details": "连接详情",
   "Connection {status}": "连接状态：{status}",
@@ -1334,6 +1335,7 @@
   "Hold Control + Option to talk · Say a member’s name to direct the turn · Space interrupts · Esc hangs up": "按住 Control + Option 说话 · 说出成员名字可指定由谁回应 · 空格键打断 · Esc 挂断",
   "Hold Control + Option to talk · Space interrupts · Esc hangs up": "按住 Control + Option 说话 · 空格键打断 · Esc 挂断",
   "Home": "主屏幕",
+  "Honest boundary: the gate checks form and facts only; the model reviewer is not connected yet.": "诚实边界：验收目前只检查形式和事实，模型评审员还没接入。",
   "Host": "主持",
   "Hosted connected apps": "连接应用托管模式",
   "Hosted connected apps are not available yet. Add your own Composio key in Settings → Connections to connect apps now.": "连接应用托管模式暂未开放。在“设置 → 连接”里填写你自己的 Composio 密钥，现在就能连接应用。",
@@ -4336,6 +4338,5 @@
   "← in": "← 收到",
   "→ out": "→ 发出",
   "⌘↩ to send": "⌘↩ 发送",
-  "✕ removes a step": "点 ✕ 删掉一步",
-  "Connecting to the project office…": "正在连接协同工作台…"
+  "✕ removes a step": "点 ✕ 删掉一步"
 }

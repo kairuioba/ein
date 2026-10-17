@@ -2171,6 +2171,11 @@ function workerPrompt(
     '{"handoff":{"status":"done|partial|blocked","summary":"one line: what you delivered","evidence":["file/link/test output"],"artifacts":["where the result lives"],"decisions":[{"what":"...","why":"..."}],"assumptions":["..."],"openQuestions":["..."],"risks":[{"risk":"...","impact":"...","next":"..."}],"nextStep":"the first thing whoever picks this up should do","acceptanceMet":true}}',
     '```',
     "`summary`, `status` and `nextStep` matter most; keep the whole block short. The person who receives this reads the envelope, not your process.",
+    'Minimal example of the last lines of your reply:',
+    '```json',
+    '{"handoff":{"status":"done","summary":"wrote the three paragraphs","nextStep":"review them","acceptanceMet":true}}',
+    '```',
+    "The last thing in your reply must be that block — nothing after it.",
   ]
     .filter((line) => line !== "")
     .join("\n");

@@ -83,6 +83,7 @@ describe("acceptance gate", () => {
       subtask: { ...base, criteria: [{ id: "c1", text: "产物存在", required: true, kind: "deterministic", check: "artifacts" }], handoff: { status: "done", summary: "三段", artifacts: ["missing.md"] } },
       cwd: dir,
     });
-    expect(bad.status).toBe("fail");
+    // a declared-but-missing artifact is a human question, not a proven failure
+    expect(bad.status).toBe("needs_human");
   });
 });

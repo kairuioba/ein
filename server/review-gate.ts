@@ -40,8 +40,10 @@ function artifactCheck(handoff: DispatchHandoff | undefined, cwd: string | undef
     const full = isAbsolute(path) ? path : resolve(cwd, path);
     return !existsSync(full);
   });
+  // text-only models often "declare" artifacts they never wrote; a missing
+  // path is a human question, not a proven failure
   return missing.length
-    ? { name: "artifacts", ok: false, detail: `missing: ${missing.slice(0, 3).join(", ")}` }
+    ? { name: "artifacts", ok: false, unverifiable: true, detail: `missing: ${missing.slice(0, 3).join(", ")}` }
     : { name: "artifacts", ok: true, detail: `${artifacts.length} artifact(s) present` };
 }
 
@@ -75,6 +77,17 @@ export function evaluateGate(input: GateInput): SubtaskGate {
     return { status: "pass", criteria: [], deterministic: [], reason: "no acceptance criteria", at: input.now ?? Date.now(), provisional: true };
   }
   const deterministic = deterministicChecks(input.subtask, input.cwd);
+  // a reply without the envelope is never a pass; it needs a human
+  if (input.subtask.handoff?.synthetic) {
+    return {
+      status: "needs_human",
+      criteria: criteria.map((criterion) => ({ id: criterion.id, status: "unverifiable" as const, evidence: "worker replied without the handoff envelope" })),
+      deterministic,
+      reason: "the worker did not use the handoff envelope",
+      at: input.now ?? Date.now(),
+      provisional: true,
+    };
+  }
   const failedChecks = deterministic.filter((check) => !check.ok);
   const hardFailures = failedChecks.filter((check) => !check.unverifiable);
   const handoff = input.subtask.handoff;

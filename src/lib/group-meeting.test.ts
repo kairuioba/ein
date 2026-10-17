@@ -48,10 +48,9 @@ describe("parseAgenda", () => {
   });
 
   it("keeps a plain bulletin as one part with no topic, and ignores empty ones", () => {
-    expect(parseAgenda("周五 19:30 新品发布会 · 全套材料")).toMatchObject({
-      topic: undefined,
-      parts: [{ value: "周五 19:30 新品发布会" }, { value: "全套材料" }],
-    });
+    const plain = parseAgenda("周五 19:30 新品发布会 · 全套材料");
+    expect(plain).toMatchObject({ parts: [{ value: "周五 19:30 新品发布会" }, { value: "全套材料" }] });
+    expect(plain?.topic).toBeUndefined();
     expect(parseAgenda("  \n ")).toBeNull();
     expect(parseAgenda(undefined)).toBeNull();
   });

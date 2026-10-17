@@ -1,12 +1,11 @@
 // The menu bar speaks the app's language, with each platform's own Chinese
 // wording, and routes renderer-owned items through menu:command.
-import { createRequire } from "node:module";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { applicationMenuTemplate, menuLabel } from "./app-menu.mjs";
-
-const require = createRequire(import.meta.url);
-const i18n = require("./i18n.cjs");
+// Imported the way app-menu.mjs imports it, so both share one module (and one
+// current locale): under Vitest a require() here can be a separate copy.
+import * as i18n from "./i18n.cjs";
 
 const build = (overrides = {}) =>
   applicationMenuTemplate({

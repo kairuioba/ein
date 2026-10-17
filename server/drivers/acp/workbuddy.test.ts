@@ -1,6 +1,6 @@
 // WorkBuddy (codebuddy --acp) driver: argv, model discovery, sign-in check,
 // and one full turn through the shared ACP runtime against the fake CLI.
-import { chmodSync, mkdtempSync, readFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,6 +18,7 @@ import {
   probeFingerprint,
   probeWorkBuddy,
   probeWorkBuddyModels,
+  readCodeBuddyModels,
   workbuddyCatalog,
   workbuddyEnvironment,
   workbuddyIsAuthenticated,
@@ -64,6 +65,62 @@ describe("WorkBuddy model discovery", () => {
     const catalog = workbuddyCatalog([{ id: "glm-4.6", label: "GLM 4.6" }]);
     expect(catalog.default).toBe(WORKBUDDY_DEFAULT_MODEL);
     expect(catalog.options.map((option) => option.id)).toEqual([WORKBUDDY_DEFAULT_MODEL, "glm-4.6"]);
+  });
+
+  it("adds the user's models.json models as Custom and honours its allow-list", () => {
+    const advertised = [
+      { id: "hunyuan-t1", label: "Hunyuan T1" },
+      { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro" },
+      { id: "glm-5.2", label: "GLM 5.2" },
+    ];
+    const local = {
+      models: [
+        { id: "my-gpt", name: "My GPT", endpoint: true },
+        { id: "deepseek-v4-pro", name: "DeepSeek via proxy", endpoint: true },
+        { id: "glm-5.2", name: "GLM (renamed)", endpoint: false },
+      ],
+      available: null,
+    };
+    expect(workbuddyCatalog(advertised, local).options).toEqual([
+      { id: WORKBUDDY_DEFAULT_MODEL, label: "WorkBuddy default" },
+      { id: "hunyuan-t1", label: "Hunyuan T1" },
+      { id: "deepseek-v4-pro", label: "DeepSeek via proxy", custom: true },
+      { id: "glm-5.2", label: "GLM (renamed)" },
+      { id: "my-gpt", label: "My GPT", custom: true },
+    ]);
+    // availableModels: only these, applied after the merge, "default" kept
+    const trimmed = workbuddyCatalog(advertised, { ...local, available: ["my-gpt", "glm-5.2", "kimi-k3"] });
+    expect(trimmed.options.map((option) => option.id)).toEqual([WORKBUDDY_DEFAULT_MODEL, "glm-5.2", "my-gpt", "kimi-k3"]);
+  });
+
+  it("reads ~/.codebuddy/models.json and ignores a missing or broken one", () => {
+    const home = mkdtempSync(join(tmpdir(), "omb-codebuddy-models-"));
+    try {
+      expect(readCodeBuddyModels({ HOME: home })).toEqual({ models: [], available: null });
+      mkdirSync(join(home, ".codebuddy"), { recursive: true });
+      writeFileSync(
+        join(home, ".codebuddy", "models.json"),
+        JSON.stringify({
+          models: [
+            { id: "gpt-4o", name: "GPT-4o", vendor: "OpenAI", url: "https://api.openai.com/v1/chat/completions", apiKey: "${OPENAI_API_KEY}" },
+            { id: "deepseek-v4-flash" },
+            { name: "no id" },
+          ],
+          availableModels: ["gpt-4o", " "],
+        }),
+      );
+      expect(readCodeBuddyModels({ HOME: home })).toEqual({
+        models: [
+          { id: "gpt-4o", name: "GPT-4o", endpoint: true },
+          { id: "deepseek-v4-flash", endpoint: false },
+        ],
+        available: ["gpt-4o"],
+      });
+      writeFileSync(join(home, ".codebuddy", "models.json"), "{ nope");
+      expect(readCodeBuddyModels({ HOME: home })).toEqual({ models: [], available: null });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("probes the models a session advertises without sending a prompt", async () => {

@@ -17,11 +17,15 @@
 // advertises (ACP `models.availableModels` or a `model` config option). The
 // probe runs in the background, its result is cached on disk, and the picker
 // always offers "default" — the CLI's own choice — so a fresh install works
-// before the first probe lands.
+// before the first probe lands. On top of that, the user's own
+// ~/.codebuddy/models.json is read on every refresh, as the CLI itself merges
+// it (workbuddy.ai/docs/cli/models): its added models appear as Custom at
+// once, and its `availableModels` allow-list trims the picker like the CLI's
+// own dropdown.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { t } from "../../../shared/i18n.ts";
@@ -126,13 +130,76 @@ export function parseAdvertisedModels(sessionResult: unknown): Array<{ id: strin
   return [...seen].map(([id, label]) => ({ id, label }));
 }
 
-/** The picker catalog: "default" first, then whatever the account advertises. */
-export function workbuddyCatalog(advertised: Array<{ id: string; label: string }>): ModelCatalog {
-  const options = [
-    { id: WORKBUDDY_DEFAULT_MODEL, label: t("WorkBuddy default") },
-    ...advertised.filter((model) => model.id !== WORKBUDDY_DEFAULT_MODEL),
-  ];
-  return { default: WORKBUDDY_DEFAULT_MODEL, options };
+export interface CodeBuddyModelsFile {
+  /** `models[]`: models the user added, or built-ins they re-pointed or renamed. */
+  models: Array<{ id: string; name?: string; endpoint: boolean }>;
+  /** `availableModels`: when non-empty, the only ids the CLI's dropdown shows. */
+  available: string[] | null;
+}
+
+/** The user-level ~/.codebuddy/models.json. A missing or malformed file is
+ * simply empty — the CLI keeps working without one. */
+export function readCodeBuddyModels(env: Record<string, string | undefined>): CodeBuddyModelsFile {
+  const empty: CodeBuddyModelsFile = { models: [], available: null };
+  let raw: { models?: unknown; availableModels?: unknown };
+  try {
+    raw = JSON.parse(readFileSync(join(env.HOME || env.USERPROFILE || homedir(), ".codebuddy", "models.json"), "utf8"));
+  } catch {
+    return empty;
+  }
+  if (!raw || typeof raw !== "object") return empty;
+  const models: CodeBuddyModelsFile["models"] = [];
+  for (const entry of Array.isArray(raw.models) ? raw.models : []) {
+    if (!entry || typeof entry !== "object") continue;
+    const row = entry as { id?: unknown; name?: unknown; url?: unknown };
+    const id = typeof row.id === "string" ? row.id.trim() : "";
+    if (!id || models.some((model) => model.id === id)) continue;
+    models.push({
+      id,
+      ...(typeof row.name === "string" && row.name.trim() ? { name: row.name.trim() } : {}),
+      endpoint: typeof row.url === "string" && row.url.trim().length > 0,
+    });
+  }
+  const available = Array.isArray(raw.availableModels)
+    ? raw.availableModels.filter((id): id is string => typeof id === "string" && id.trim().length > 0).map((id) => id.trim())
+    : [];
+  return { models, available: available.length ? available : null };
+}
+
+/** The picker catalog: "default" first, then whatever the account advertises,
+ *  then the user's own models.json models (Custom), trimmed to the
+ *  `availableModels` allow-list when there is one — the CLI applies it after
+ *  merging, and so does this. */
+export function workbuddyCatalog(
+  advertised: Array<{ id: string; label: string }>,
+  local: CodeBuddyModelsFile = { models: [], available: null },
+): ModelCatalog {
+  const own = new Map(local.models.map((model) => [model.id, model]));
+  const rows: ModelCatalog["options"] = [];
+  for (const model of advertised) {
+    if (model.id === WORKBUDDY_DEFAULT_MODEL || rows.some((row) => row.id === model.id)) continue;
+    const mine = own.get(model.id);
+    rows.push({
+      id: model.id,
+      label: mine?.name ?? model.label,
+      // a built-in re-pointed at the user's own endpoint is their model now
+      ...(mine?.endpoint ? { custom: true as const } : {}),
+    });
+  }
+  for (const model of local.models) {
+    if (model.id === WORKBUDDY_DEFAULT_MODEL || rows.some((row) => row.id === model.id)) continue;
+    rows.push({ id: model.id, label: model.name ?? model.id, custom: true });
+  }
+  let shown = rows;
+  if (local.available) {
+    const allowed = local.available;
+    shown = rows.filter((row) => allowed.includes(row.id));
+    // an allowed built-in the probe has not reported yet is still the user's choice
+    for (const id of allowed) {
+      if (id !== WORKBUDDY_DEFAULT_MODEL && !shown.some((row) => row.id === id)) shown.push({ id, label: id });
+    }
+  }
+  return { default: WORKBUDDY_DEFAULT_MODEL, options: [{ id: WORKBUDDY_DEFAULT_MODEL, label: t("WorkBuddy default") }, ...shown] };
 }
 
 let cacheLoaded = false;
@@ -279,7 +346,7 @@ function scheduleProbe(env: Record<string, string | undefined>, config: Pick<Acp
 
 function resolveModels(env: Record<string, string | undefined>, config: AcpConfig): ModelCatalog {
   scheduleProbe(env, config);
-  return workbuddyCatalog(knownState(probeFingerprint(env, config.cli))?.models ?? []);
+  return workbuddyCatalog(knownState(probeFingerprint(env, config.cli))?.models ?? [], readCodeBuddyModels(env));
 }
 
 /** An API key counts as signed in. Otherwise the last probe decides; before

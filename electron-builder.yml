@@ -13,15 +13,16 @@ protocols:
 # --publish never, and must be uploaded to the GitHub release alongside the
 # artifacts — a release missing latest.yml leaves every Windows install
 # stranded on its installed version.
-# Chinese edition: no update feed. With upstream's feed the app would
-# "update" itself to the English release. To ship updates to your team, point
-# this at your own releases repository and upload latest-mac.yml and the .zip
-# files with each release (see README.zh-CN.md):
-#   publish:
-#     - provider: github
-#       owner: <your-org>
-#       repo: <your-releases-repo>
-publish: null
+# 一念 Ein: the PUBLIC releases repository kairuioba/ein-releases (the source
+# repository stays private). .github/workflows/release-ein.yml builds every
+# version and uploads the installers, the ZIPs and latest-mac.yml/latest.yml
+# there. An ad-hoc signed Mac build cannot use Squirrel.Mac; it updates by
+# swapping its own bundle (electron/bundle-updater.mjs) from the same feed.
+publish:
+  - provider: github
+    owner: kairuioba
+    repo: ein-releases
+    releaseType: release
 
 directories:
   buildResources: build

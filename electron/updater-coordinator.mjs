@@ -1,6 +1,13 @@
 import { t } from "./i18n.cjs";
 
-export function createUpdaterCoordinator(updater, setState) {
+/**
+ * @param {object} [options]
+ * @param {boolean} [options.autoDownload] download a version as soon as a
+ *   check finds it
+ * @param {boolean} [options.installAfterManualCheck] when the check that
+ *   found it was one you asked for, restart into it once downloaded
+ */
+export function createUpdaterCoordinator(updater, setState, options = {}) {
   let checkOperation = null;
   let downloadOperation = null;
   let installOperation = null;
@@ -37,6 +44,10 @@ export function createUpdaterCoordinator(updater, setState) {
   updater.on("update-available", (info) => {
     if (checkOwnsState()) {
       setState({ status: "available", version: info?.version, message: undefined });
+    }
+    if (options.autoDownload) {
+      const install = Boolean(options.installAfterManualCheck && checkOperation?.manual);
+      queueMicrotask(() => void download({ install }));
     }
   });
   updater.on("update-not-available", () => {
@@ -89,11 +100,16 @@ export function createUpdaterCoordinator(updater, setState) {
     return operation.promise;
   }
 
-  function download() {
+  function download({ install: installAfter = false } = {}) {
     if (checkOperation) checkOperation.supersededByDownload = true;
-    if (downloadOperation) return downloadOperation.promise;
+    if (downloadOperation) {
+      // a check you asked for while a background download runs: finish it,
+      // then restart into it
+      if (installAfter) downloadOperation.install = true;
+      return downloadOperation.promise;
+    }
 
-    const operation = { downloadedInfo: null, failed: false, promise: null };
+    const operation = { downloadedInfo: null, failed: false, promise: null, install: installAfter };
     downloadOperation = operation;
     // Own the state before the request goes out: the first "download-progress"
     // can be seconds away (connection setup, redirects), and until then the
@@ -105,6 +121,7 @@ export function createUpdaterCoordinator(updater, setState) {
         .then((result) => {
           if (!operation.failed && operation.downloadedInfo) {
             setState({ status: "downloaded", version: operation.downloadedInfo?.version });
+            if (operation.install) queueMicrotask(() => install());
           }
           return result;
         })

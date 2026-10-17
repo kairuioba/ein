@@ -1,0 +1,238 @@
+# 一念 Ein releases.
+#
+# Builds the Mac installers (Apple silicon arm64 + Intel x64) and the Windows
+# installer for one version and publishes them to the PUBLIC repository
+# kairuioba/ein-releases. Every installed copy checks that repository for
+# updates (electron-builder.yml `publish`), so the source repository can
+# stay private.
+#
+#   1. bump "version" in package.json and push
+#   2. git tag v<version> && git push origin v<version>
+#      (or run this workflow by hand from the Actions tab)
+#
+# Needs the EIN_RELEASES_TOKEN secret: a fine-grained token with Contents
+# read and write on kairuioba/ein-releases. It only uploads; installed apps
+# never see it.
+#
+# Mac: ad-hoc signed unless the Developer ID secrets of package-mac-zh.yml
+# are present. An ad-hoc build updates itself by swapping its own bundle
+# (electron/bundle-updater.mjs), so latest-mac.yml and the ZIPs must be in
+# every release next to the DMGs. People approve the very first launch once
+# in System Settings → Privacy & Security → “Open Anyway”.
+name: Release 一念 Ein
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Commit/tag/branch to build (defaults to the branch this is run from)"
+        required: false
+        type: string
+      windows:
+        description: "Also build the Windows installer"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-ein-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RELEASES_REPO: kairuioba/ein-releases
+
+jobs:
+  mac:
+    name: macOS arm64 + x64
+    runs-on: macos-14
+    timeout-minutes: 90
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      signing: ${{ steps.signing.outputs.mode }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Version (a tag must match package.json)
+        id: version
+        run: |
+          v=$(node -p "require('./package.json').version")
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME}" != "v$v" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match package.json version $v"
+            exit 1
+          fi
+
+      - name: Clean generated output
+        run: rm -rf dist dist-server dist-native release
+
+      - name: Choose the signing mode
+        id: signing
+        env:
+          MAC_CERT_P12_BASE64: ${{ secrets.MAC_CERT_P12_BASE64 }}
+          APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+        run: |
+          if [ -n "$MAC_CERT_P12_BASE64" ]; then
+            echo "mode=developer-id" >> "$GITHUB_OUTPUT"
+            [ -n "$APPLE_API_KEY_P8_BASE64" ] && echo "notarize=true" >> "$GITHUB_OUTPUT" || echo "notarize=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=adhoc" >> "$GITHUB_OUTPUT"
+            echo "notarize=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No Developer ID secrets: ad-hoc signed build (it updates itself by swapping its bundle)."
+          fi
+
+      - name: Import the Developer ID certificate into a throwaway keychain
+        if: steps.signing.outputs.mode == 'developer-id'
+        env:
+          MAC_CERT_P12_BASE64: ${{ secrets.MAC_CERT_P12_BASE64 }}
+          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/release.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          echo "$MAC_CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -P "$MAC_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain
+          rm "$RUNNER_TEMP/cert.p12"
+
+      - name: Package both architectures (Developer ID)
+        if: steps.signing.outputs.mode == 'developer-id'
+        run: pnpm package:mac
+
+      - name: Package both architectures (ad-hoc signature)
+        if: steps.signing.outputs.mode == 'adhoc'
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: pnpm package:mac -c.mac.identity=- -c.dmg.sign=false
+
+      - name: "Gate: signatures verify, both packaged servers start, the feed is ours"
+        run: |
+          for app in release/mac-arm64/*.app release/mac/*.app; do
+            codesign --verify --deep --strict "$app"
+            res="$app/Contents/Resources"
+            OMB_SMOKE_DIST="$res/server" node scripts/smoke-packaged-server.mjs \
+              || { echo "::error::packaged server in $app failed to start"; exit 1; }
+            grep -q "repo: ein-releases" "$res/app-update.yml" \
+              || { echo "::error::$app does not check kairuioba/ein-releases for updates"; cat "$res/app-update.yml"; exit 1; }
+            echo "ok: $app"
+          done
+          test -f release/latest-mac.yml || { echo "::error::latest-mac.yml was not generated"; exit 1; }
+          grep -q "arm64.*\.zip" release/latest-mac.yml || { echo "::error::latest-mac.yml lists no arm64 ZIP"; cat release/latest-mac.yml; exit 1; }
+          cat release/latest-mac.yml
+
+      - name: Notarize and staple
+        if: steps.signing.outputs.notarize == 'true'
+        env:
+          APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          echo "$APPLE_API_KEY_P8_BASE64" | base64 --decode > "$RUNNER_TEMP/notary.p8"
+          for f in release/*.dmg; do
+            out=$(xcrun notarytool submit "$f" --key "$RUNNER_TEMP/notary.p8" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER_ID" --wait 2>&1)
+            echo "$out" | tail -2
+            echo "$out" | grep -q "status: Accepted" || { echo "::error::notarization not Accepted for $f"; exit 1; }
+            xcrun stapler staple "$f"
+          done
+          rm "$RUNNER_TEMP/notary.p8"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ein-mac
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/*.blockmap
+            release/latest-mac.yml
+          if-no-files-found: error
+          retention-days: 7
+
+  windows:
+    name: Windows installer
+    if: github.event_name == 'push' || inputs.windows
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: clean build outputs
+        shell: bash
+        run: rm -rf dist dist-server release
+      - run: pnpm package:win
+      - name: "Gate: the installer and its update feed"
+        shell: bash
+        run: |
+          res=release/win-unpacked/resources
+          ls -lh release/*.exe release/*.yml
+          test -f release/latest.yml || { echo "::error::latest.yml was not generated"; exit 1; }
+          grep -q "repo: ein-releases" "$res/app-update.yml" \
+            || { echo "::error::app-update.yml does not point at kairuioba/ein-releases"; cat "$res/app-update.yml"; exit 1; }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ein-windows
+          path: |
+            release/*.exe
+            release/*.blockmap
+            release/latest.yml
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: publish to kairuioba/ein-releases
+    needs: [mac, windows]
+    if: always() && needs.mac.result == 'success' && needs.windows.result != 'failure' && needs.windows.result != 'cancelled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ secrets.EIN_RELEASES_TOKEN }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: ein-*
+          path: out
+          merge-multiple: true
+      - name: The releases repository has a first commit (a release needs one)
+        run: |
+          test -n "$GH_TOKEN" || { echo "::error::the EIN_RELEASES_TOKEN secret is missing or expired"; exit 1; }
+          if ! gh api "repos/$RELEASES_REPO/commits?per_page=1" >/dev/null 2>&1; then
+            body=$(printf '# 一念 Ein\n\n「一念起，万 Bot 动」\n\n这里只放安装包和更新文件，软件会从这里检查更新。\n' | base64 | tr -d '\n')
+            gh api -X PUT "repos/$RELEASES_REPO/contents/README.md" -f message="一念 Ein releases" -f content="$body"
+          fi
+      - name: Publish the release
+        env:
+          VERSION: ${{ needs.mac.outputs.version }}
+          SIGNING: ${{ needs.mac.outputs.signing }}
+        run: |
+          tag="v$VERSION"
+          notes="Mac：Apple 芯片（M 系列）下载 arm64.dmg，Intel 下载 x64.dmg；Windows 下载 setup.exe。装好以后软件会自己检查和安装更新。"
+          if [ "$SIGNING" = "adhoc" ]; then
+            notes="$notes"$'\n\n'"首次打开：Mac 会提示无法验证开发者，到“系统设置 → 隐私与安全性”点“仍要打开”，只需一次。请把一念拖进“应用程序”文件夹再打开，自动更新才能替换它。"
+          fi
+          ls -lh out
+          gh release view "$tag" --repo "$RELEASES_REPO" >/dev/null 2>&1 \
+            || gh release create "$tag" --repo "$RELEASES_REPO" --title "一念 Ein $VERSION" --notes "$notes" --latest
+          gh release upload "$tag" out/* --repo "$RELEASES_REPO" --clobber

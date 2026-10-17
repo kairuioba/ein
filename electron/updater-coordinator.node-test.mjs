@@ -323,3 +323,74 @@ test("an updater error event and rejected promise produce one deterministic stat
   assert.equal(errorStates(download.states).length, 1);
   assert.deepEqual(download.getState(), { status: "error", message: "download failed once" });
 });
+
+function automaticHarness() {
+  const updater = new EventEmitter();
+  updater.on("error", () => {});
+  let state = { status: "idle" };
+  const installs = [];
+  const downloads = [];
+  updater.checkForUpdates = async () => {
+    updater.emit("checking-for-update");
+    updater.emit("update-available", { version: "0.2.0" });
+    return { isUpdateAvailable: true };
+  };
+  updater.downloadUpdate = () => {
+    const pending = deferred();
+    downloads.push(pending);
+    return pending.promise.then(() => {
+      updater.emit("update-downloaded", { version: "0.2.0" });
+      return ["/tmp/Ein.app"];
+    });
+  };
+  updater.quitAndInstall = (...args) => installs.push(args);
+  const coordinator = createUpdaterCoordinator(
+    updater,
+    (patch) => {
+      state = { ...state, ...patch };
+    },
+    { autoDownload: true, installAfterManualCheck: true },
+  );
+  return { updater, coordinator, installs, downloads, getState: () => state };
+}
+
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+test("a background check downloads by itself and waits to be installed", async () => {
+  const { coordinator, installs, downloads, getState } = automaticHarness();
+  await coordinator.check();
+  await settle();
+  assert.equal(downloads.length, 1);
+  assert.equal(getState().status, "downloading");
+  downloads[0].resolve();
+  await settle();
+  await settle();
+  assert.equal(getState().status, "downloaded");
+  assert.equal(installs.length, 0);
+});
+
+test("a check you asked for downloads and restarts into the new version", async () => {
+  const { coordinator, installs, downloads, getState } = automaticHarness();
+  await coordinator.check(true);
+  await settle();
+  downloads[0].resolve();
+  await settle();
+  await settle();
+  assert.equal(installs.length, 1);
+  assert.deepEqual(installs[0], [true, true]);
+  assert.equal(getState().status, "installing");
+});
+
+test("asking while a background download runs installs once it finishes", async () => {
+  const { coordinator, installs, downloads } = automaticHarness();
+  await coordinator.check();
+  await settle();
+  assert.equal(downloads.length, 1);
+  await coordinator.check(true);
+  await settle();
+  assert.equal(downloads.length, 1, "no second download");
+  downloads[0].resolve();
+  await settle();
+  await settle();
+  assert.equal(installs.length, 1);
+});

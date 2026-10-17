@@ -1,9 +1,15 @@
 name: CI
 
+# 一念 Ein runs this in a PRIVATE repository, where macOS minutes count ten
+# times and Windows twice against the free allowance: a push to main runs the
+# Linux type check and tests only. Run it by hand (Actions → CI → Run
+# workflow) or open a pull request for every platform, the Linux package
+# and the iOS build.
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 # least privilege: CI only reads the checkout, it never writes back
 permissions:
@@ -21,7 +27,7 @@ jobs:
       matrix:
         # The harness and pure desktop capabilities stay portable across all
         # supported host platforms. POSIX-only process tests self-skip.
-        os: [macos-latest, ubuntu-latest, windows-latest]
+        os: ${{ github.event_name == 'push' && fromJSON('["ubuntu-latest"]') || fromJSON('["macos-latest", "ubuntu-latest", "windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
@@ -80,6 +86,7 @@ jobs:
 
   package-linux:
     name: package + smoke (Ubuntu 24.04 x64)
+    if: github.event_name != 'push'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -145,6 +152,7 @@ jobs:
 
   ios:
     name: Swift tests + iOS build
+    if: github.event_name != 'push'
     runs-on: macos-latest
     timeout-minutes: 20
     steps:

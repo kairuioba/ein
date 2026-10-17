@@ -315,6 +315,8 @@ export interface UpdaterState {
   /** The build has no update feed (the Chinese edition ships without one,
    * so it can never "update" itself to the upstream English release). */
   unavailable?: boolean;
+  /** The version running now. */
+  current?: string;
 }
 
 export interface CompanionAccountState {

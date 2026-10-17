@@ -82,6 +82,10 @@ const PAGE = String.raw`<!doctype html>
 </style></head>
 <body>
   <h1>一念 Ein × Claude 实时协作</h1>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 2px">
+    <a href="/mockup" style="display:inline-flex;align-items:center;gap:6px;background:#14161c;color:#fff;text-decoration:none;border-radius:999px;padding:7px 12px;font-size:12px;font-weight:600">📱 项目工作台 mockup</a>
+    <a href="/mockup/workbench-v2.html" style="display:inline-flex;align-items:center;gap:6px;background:#eef1f7;color:#14161c;text-decoration:none;border-radius:999px;padding:7px 12px;font-size:12px">手机预览地址</a>
+  </div>
   <div class="meta" id="meta"></div>
   <div id="feed"><div class="empty">等待第一轮协作…</div></div>
   <div class="refresh" id="refresh">自动刷新中</div>

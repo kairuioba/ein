@@ -9,6 +9,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { BarChart3, Check, ChevronDown, Clock, Eye, FileText, Grid2x2, Hand, History, Link2, Lock, Share, SquareArrowOutUpRight, Users } from "lucide-react";
 
 import { Button, Segmented } from "@/components/ui";
+import { EvolutionCard } from "@/components/EvolutionCard";
 import { BotTile } from "@/components/mascot/Mascot";
 import { cn } from "@/lib/cn";
 import { mascotForBot } from "@/lib/engine-mascots";
@@ -16,6 +17,7 @@ import { formatDateTime, t } from "@/lib/i18n";
 import { chiefBot } from "@/lib/org";
 import { clip, clock } from "@/lib/workbench";
 import { EMPTY_BRIEF, EMPTY_ORG, EMPTY_USAGE, getLastSeen, markSeen, refreshApi, useBrief, useDecisions, useOrg, useUsageSummary } from "@/state/org-api";
+import { useEvolution } from "@/lib/evolution";
 import { api, useStore, type Bot } from "@/state/store";
 import type { Brief, BriefDepartment, InboxItem, OrgEvent } from "../../../shared/org-types";
 
@@ -33,6 +35,8 @@ export function BriefPage() {
   const [lastSeen] = useState(getLastSeen);
   const since = range === "week" ? weekStart(now) : lastSeen;
   const { data: briefData, loaded, error } = useBrief(since);
+  // 自我进化提案：只读，卡片自己处理拍板；没有待决定提案时不占位
+  const { data: evolution } = useEvolution();
   const { data: usageData } = useUsageSummary();
   const { data: orgData } = useOrg();
   const { data: decisionData } = useDecisions();
@@ -107,6 +111,7 @@ export function BriefPage() {
         </IconButton>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto px-7 pb-6">
+        <EvolutionCard feed={evolution} />
         <div className={cn("grid items-start gap-x-10 gap-y-6", twoColumns ? "grid-cols-[minmax(0,1fr)_minmax(380px,470px)]" : "grid-cols-1")}>
           <section aria-label={t("The chief's brief")} className="flex min-w-0 flex-col gap-3 pt-1.5">
             {connected ? (

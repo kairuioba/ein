@@ -69,7 +69,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSectionDef[] = [
   {
     id: "maintenance",
     label: msg("Maintenance desk"),
-    keywords: ["developer", "dev", "channel", "release", "branch", "github", "maintenance", "开发版", "维护", "维护岗", "渠道", "发布", "分支", "备份"],
+    keywords: ["developer", "dev", "channel", "release", "branch", "maintenance", "开发版", "维护", "维护岗", "渠道", "发布", "分支", "备份"],
   },
   {
     id: "updates",

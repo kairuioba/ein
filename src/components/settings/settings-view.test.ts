@@ -57,6 +57,7 @@ describe("settings sections", () => {
       "companion",
       "usage",
       "experimental",
+      "maintenance",
       "updates",
       "about",
     ]);

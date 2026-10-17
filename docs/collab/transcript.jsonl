@@ -72,3 +72,5 @@
 {"ts":1792257565257,"kind":"conclusion","text":"第 16 轮：dev.28 已发布；任务负责人权限规则落地（chief 永不是 lead）；signoff 文案带未验收数量。剩余 backlog：ReviewerPort、补信封重试、收件箱同因合并交互、长任务实测。 --slug round-16","slug":"round-16"}
 {"ts":1792258137434,"kind":"note","text":"dev.29 真机验证：①StateDoc 接口返回完成任务的 facts（done 4/4、闸门计数、inboxOpen）与空 drift ✓；②POST /api/tasks 新建任务 leadBotId/leadName 为空（总控不再当负责人）✓；③验证后清理测试任务并恢复普通启动（1.1.4-dev.29，无调试端口）。 --slug round-17","slug":"round-17"}
 {"ts":1792258137458,"kind":"conclusion","text":"第 17 轮：dev.29 已发布并安装；StateDoc Tier0 接口、chief 不当任务负责人两项真机验证通过；今晚工作收口（dev.22→dev.29 系列构建全部绿）。剩余 backlog 记在 docs/collab/2026-10-18-session-summary.md。 --slug round-17","slug":"round-17"}
+{"ts":1792258190667,"kind":"note","text":"dev.29 冒烟：种入同一任务的 2 条收件项（signoff+gate_failed），侧栏「需要你 2」，面板显示任务标题 + 「2 项待处理」，signoff 排最前 ✓；清理数据后普通启动，inbox=0。另写了 docs/testing/3-minute-self-test.md（老板 3 分钟自测脚本）并提交。 --slug round-18","slug":"round-18"}
+{"ts":1792258190695,"kind":"conclusion","text":"第 18 轮：收件箱按任务分组在真机 dev.29 验证通过；3 分钟自测脚本交付；今晚主线收口，dev.29 为最新开发版，正式版仍 v1.1.3。 --slug round-18","slug":"round-18"}

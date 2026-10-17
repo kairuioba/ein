@@ -1218,7 +1218,11 @@ describe("Dispatcher", () => {
       // what is left now is 技术部's own: its lead staffs it, so the check says so
       const diagnosis = dispatcher.diagnose(top.run.id);
       if ("error" in diagnosis) throw new Error(diagnosis.error);
-      expect(diagnosis).toMatchObject({ verdict: "add-wont-help", reason: expect.stringContaining("leads staff") });
+      expect(diagnosis).toMatchObject({
+        verdict: "add-wont-help",
+        departmentWork: true,
+        reason: expect.stringContaining("department's own plan"),
+      });
       expect(diagnosis.remaining.find((entry) => entry.subtaskId === "qa")?.moved).toBe(false);
       expect(dispatcher.amend(top.run.id, 1, { by: "owner" })).toMatchObject({ error: expect.stringContaining("leads staff") });
       expect(dispatcher.amend(top.run.id, 1, { by: "chief", botId: "boss" })).toMatchObject({ error: expect.stringContaining("would not help") });

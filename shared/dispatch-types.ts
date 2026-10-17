@@ -223,6 +223,9 @@ export interface DispatchDiagnosis extends RunDiagnosis {
   };
   /** finished subtasks per hour so far; absent before anything finished */
   speedPerHour?: number;
+  /** what is left belongs to a department's own plan: the owner adds people
+   * to that plan from the workbench instead of the company plan */
+  departmentWork?: boolean;
 }
 
 /** POST /api/dispatch/runs/:id/amend → this. */

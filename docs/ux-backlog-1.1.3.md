@@ -15,6 +15,7 @@
 | 6 | 新建 Bot 默认落到还没填 Key 的引擎，第一条消息就失败 | 默认引擎只跳过明确报告「credential 未配置」的引擎 | `fix/default-selection-authenticated` `c5fb561`+`602920a` |
 | 7 | WorkBuddy 列表里「WorkBuddy 默认模型」占位项；要求 DeepSeek V4.1 排第一并默认 | 老板的「Ein 维护」机器人已在 `fix/workbuddy-deepseek-default` 完成（去掉占位模型、DeepSeek V4.1 Flash 置顶并默认、旧 Bot 自动迁移、ACP 回合固定真实 model id）；Lead 已复核并合并进 `review/1.1.3`，未覆盖 | `fix/workbuddy-deepseek-default` `589965b` |
 | 8 | 智能体面板里看「记忆」往下拉，文字被卡片/输入框裁切、像叠在一起 | 记忆编辑器原先有固定高度和内部滚动条，鼠标在它上面滚轮会滚到编辑器里并裁行。改成 `field-sizing: content` 随内容增高，滚动交还面板 | `fix/memory-panel-scroll` `53bfdf8` |
+| 9 | 工作台「加人」遇到部门自己的计划时，预检只说「加人没用/让主管加」，体验割裂 | 诊断为「部门自己的计划」时，预检卡片改用该措辞并直接给「加 1 人到部门计划」按钮（走 amendFromWorkbench） | `fix/workbench-department-add`（待合入） |
 
 ## 二、待办（按优先级）
 

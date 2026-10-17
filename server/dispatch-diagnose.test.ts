@@ -204,7 +204,11 @@ describe("squad plan", () => {
     // when nothing else is left to take, nobody is planned and the check says why
     const leadsOnly = run(story.subtasks.map((entry) => (entry.status === "pending" && !keep(entry) ? { ...entry, status: "done" as const, startedAt: NOW - 60 * MIN, finishedAt: NOW - 5 * MIN } : entry)));
     expect(planSquad(leadsOnly, 2, { now: NOW, maxConcurrent: 3, roleKey: roleCore, keep }, typicalDuration(leadsOnly)).people).toEqual([]);
-    expect(diagnoseRun(leadsOnly, context({ keep }))).toMatchObject({ verdict: "add-wont-help", reason: expect.stringContaining("leads staff") });
+    expect(diagnoseRun(leadsOnly, context({ keep }))).toMatchObject({
+      verdict: "add-wont-help",
+      departmentWork: true,
+      reason: expect.stringContaining("department's own plan"),
+    });
   });
 
   it("estimates nothing without a finished subtask, but still splits the work", () => {

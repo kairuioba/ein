@@ -68,3 +68,22 @@ export function parseSelectionKey(key: string): { instanceId: string; modelId: s
   const modelId = key.slice(at + 1);
   return instanceId && modelId ? { instanceId, modelId } : null;
 }
+
+/** The desk starts on the maintenance bot's own saved model when that engine
+ * and model are ready, so pressing Save cannot silently move the bot to a
+ * different engine. Otherwise it starts on the first ready engine's default. */
+export function preferredMaintenanceChoice(
+  instances: InstanceInfo[],
+  saved?: { instanceId: string; model: string } | null,
+): ModelChoice | undefined {
+  if (saved) {
+    const instance = instances.find((entry) => entry.instanceId === saved.instanceId);
+    const model = instance?.models.options.find((option) => option.id === saved.model);
+    if (instance && model) return { instance, model };
+  }
+  const first = instances[0];
+  if (!first) return undefined;
+  const model = first.models.options.find((option) => option.id === first.models.default) ?? first.models.options[0];
+  return model ? { instance: first, model } : undefined;
+}
+

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,8 +10,11 @@ import {
   classifyOpenCodeError,
   canListOpenCodeModels,
   createOpenCodeDriver,
+  discoverOpenCodeModels,
   normalizeLegacyOpenCodeModel,
   parseOpenCodeModelsOutput,
+  probeOpenCodeModels,
+  settleOpenCodeModels,
 } from "./opencode-go.ts";
 import type { ModelCatalog } from "../../contracts.ts";
 
@@ -51,6 +54,24 @@ describe("OpenCode catalog", () => {
       expect.objectContaining({ id: "ollama/qwen3", custom: true, loaded: true }),
       expect.objectContaining({ id: "lmstudio/qwen3-ipv6", custom: true, loaded: true }),
     ]);
+  });
+
+  it("serves `opencode models` from a background probe instead of waiting on the CLI", async () => {
+    chmodSync(FAKE_CLI, 0o755);
+    const environment = {
+      ...process.env,
+      EIN_PROBE_LIVE_MODELS: "1",
+      FAKE_ACP_MODELS: "opencode/x-preview-f-free,opencode-go/brand-new-model",
+    };
+    // first call: the shipped fallback, while the probe runs
+    expect((await discoverOpenCodeModels(environment, FAKE_CLI)).options.map((option) => option.id)).toEqual([
+      "opencode/x-preview-f-free",
+    ]);
+    await settleOpenCodeModels(environment, FAKE_CLI);
+    const live = await discoverOpenCodeModels(environment, FAKE_CLI);
+    expect(live.options.map((option) => option.id)).toEqual(["opencode/x-preview-f-free", "opencode-go/brand-new-model"]);
+    expect(live.options[1]).toMatchObject({ label: "Go · opencode-go/brand-new-model", contextWindow: 200_000 });
+    await expect(probeOpenCodeModels(process.env, join(tmpdir(), "no-such-opencode"))).resolves.toBeNull();
   });
 
   it("caches the anonymous model probe across authentication checks", async () => {

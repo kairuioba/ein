@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { decodeInjectId, hostApiKey, localHost, mergeLocalInject } from "../local-inject.ts";
+import { createLiveCatalog, reviveCatalog, secretId } from "../live-catalog.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 import type { ModelCatalog, ProviderErrorCode } from "../../contracts.ts";
 import { execCli } from "../../procs.ts";
@@ -22,7 +23,6 @@ const STATIC_MODELS: ModelCatalog = {
   ],
 };
 
-let lastSuccessfulCatalog: ModelCatalog | null = null;
 const MODEL_PROBE_TTL_MS = 30_000;
 const modelProbeCache = new Map<string, { expiresAt: number; result: Promise<boolean> }>();
 
@@ -153,23 +153,52 @@ function runOpenCodeModels(
 
 /** Ask the same OpenCode binary that will run ACP for its effective catalog.
  * This automatically includes Zen, Go, other connected providers, custom
- * config, and anonymous free models with the exact IDs the session accepts. */
+ * config, and anonymous free models with the exact IDs the session accepts.
+ * Null when the CLI is missing or lists nothing usable. */
+export async function probeOpenCodeModels(
+  environment: Record<string, string | undefined>,
+  cli = "opencode",
+): Promise<ModelCatalog | null> {
+  try {
+    return parseOpenCodeModelsOutput(await runOpenCodeModels(cli, environment, true));
+  } catch {
+    return null;
+  }
+}
+
+const openCodeCatalogs = createLiveCatalog<ModelCatalog>({ file: "opencode.json", revive: reviveCatalog });
+
+function openCodeFingerprint(environment: Record<string, string | undefined>, cli: string): string {
+  const home = environment.HOME || environment.USERPROFILE || "";
+  return [
+    cli,
+    environment.XDG_CONFIG_HOME || home,
+    environment.XDG_DATA_HOME || home,
+    secretId(environment.OPENCODE_API_KEY),
+  ].join("|");
+}
+
+/** The catalog the picker shows, without waiting on `opencode models` (which
+ * can take seconds while it refreshes models.dev): the last list this CLI and
+ * login reported — cached on disk, refreshed in the background — or the
+ * shipped fallback before the first answer. */
 export async function discoverOpenCodeModels(
   environment: Record<string, string | undefined>,
   cli = "opencode",
 ): Promise<ModelCatalog> {
-  try {
-    const catalog = parseOpenCodeModelsOutput(await runOpenCodeModels(cli, environment, true));
-    if (!catalog) throw new Error("OpenCode returned no usable models");
-    lastSuccessfulCatalog = catalog;
-    return catalog;
-  } catch {
-    return lastSuccessfulCatalog ?? STATIC_MODELS;
-  }
+  return (
+    openCodeCatalogs.read(openCodeFingerprint(environment, cli), () => probeOpenCodeModels(environment, cli), environment) ??
+    STATIC_MODELS
+  );
+}
+
+/** Tests: wait for the background catalog refresh for this CLI/login. */
+export function settleOpenCodeModels(environment: Record<string, string | undefined>, cli = "opencode"): Promise<void> {
+  return openCodeCatalogs.settle(openCodeFingerprint(environment, cli));
 }
 
 export function resetOpenCodeModelCache() {
-  lastSuccessfulCatalog = null;
+  openCodeCatalogs.reset();
   modelProbeCache.clear();
 }
 

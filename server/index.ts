@@ -74,6 +74,7 @@ import { reasonLabel } from "./reason-labels.ts";
 import { Dispatcher, dispatchSettings } from "./dispatch.ts";
 import { TaskFolderStore } from "./task-folders.ts";
 import { buildTaskRetro } from "./task-retro.ts";
+import { buildStateDoc } from "./state-doc.ts";
 import { buildContextShare, type ContextSource } from "./context-share.ts";
 import { InboxStore } from "./inbox-store.ts";
 import type { DispatchRun } from "../shared/dispatch-types.ts";
@@ -5831,6 +5832,15 @@ const server = createServer(async (req, res) => {
       if ("error" in saved) return json(res, 400, saved);
       broadcast({ kind: "task-folders", tasks: taskFolderViews() });
       return json(res, 200, { share: rendered, tasks: taskFolderViews() });
+    }
+    const stateMatch = path.match(/^\/api\/task-folders\/([\w-]+)\/state$/);
+    if (stateMatch && method === "GET") {
+      if (!taskFolders) return json(res, 503, { error: "task folders are not ready yet" });
+      const folder = taskFolders.byId(stateMatch[1]!);
+      if (!folder) return json(res, 404, { error: "no such task folder" });
+      const run = folder.runId ? dispatcher.get(folder.runId) : undefined;
+      const inboxOpen = inbox.list("open").filter((item) => item.taskId === folder.id).length;
+      return json(res, 200, { state: buildStateDoc({ folder, ...(run ? { run } : {}), inboxOpen }) });
     }
     const retroMatch = path.match(/^\/api\/task-folders\/([\w-]+)\/retro$/);
     if (retroMatch && method === "GET") {

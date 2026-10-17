@@ -155,6 +155,22 @@ describe("MinimaxDriver", () => {
     await instance.dispose();
   });
 
+  it("advertises mid-turn steering through the shared chat runtime", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ data: [] }), { status: 200 })));
+    const instance = await MinimaxDriver.create({
+      instanceId: "minimax-steering",
+      displayName: "MiniMax",
+      enabled: true,
+      config: MinimaxDriver.defaultConfig(),
+      environment: { MINIMAX_API_KEY: "secret" },
+    });
+    expect(instance.adapter.capabilities.queueing).toBe(true);
+    expect(typeof instance.adapter.steer).toBe("function");
+    // no live turn to steer → the harness falls back to its queue
+    await expect(instance.adapter.steer!("no-such-thread", "hello")).resolves.toBe(false);
+    await instance.dispose();
+  });
+
   it("streams content and usage with the MiniMax OpenAI contract", async () => {
     const anySignal = vi.spyOn(AbortSignal, "any");
     let request: RequestInit | undefined;

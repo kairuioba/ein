@@ -51,6 +51,7 @@ import {
   mergeLocalInject,
 } from "./local-inject.ts";
 import { appendNative } from "./native.ts";
+import { undeliveredField, withEarlySteers, type PendingSteer } from "./steer.ts";
 import { t } from "../../shared/i18n.ts";
 
 const DRIVER_KIND = "piAgent";
@@ -462,6 +463,8 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       turnId: string;
       pending: Map<string, (decision: { behavior: "allow" | "deny" | "answer"; message?: string }) => void>;
       child?: { stdin: { write: (s: string) => void } };
+      /** Put a user message into this turn (pi's RPC `steer` command). */
+      steer: (text: string, steerId?: string) => Promise<boolean>;
     }>();
 
     const emit = (event: RuntimeEvent) => {
@@ -489,6 +492,36 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       const turnId = newId();
       const pending = new Map<string, (decision: { behavior: "allow" | "deny" | "answer"; message?: string }) => void>();
       let settled = false;
+      // ── steer: a user message into this running turn ──────────────────
+      // pi's RPC mode takes a mid-turn message with its own `steer` command:
+      // delivered after the current tool batch completes and before the next
+      // model call, no new turn. A message that arrives before the opening
+      // prompt went out joins that prompt instead (nothing is running yet).
+      let finished = false;
+      let stopRequested = false;
+      let promptSent = false;
+      let early: PendingSteer[] = [];
+      // pi answers every command; FIFO because responses carry no id.
+      const steerAcks: Array<{ done: (accepted: boolean) => void; timer: NodeJS.Timeout }> = [];
+      const releaseSteerAcks = () => {
+        for (const ack of steerAcks.splice(0)) {
+          clearTimeout(ack.timer);
+          ack.done(false);
+        }
+      };
+      const awaitSteerAck = (timeoutMs = 10_000) =>
+        new Promise<boolean>((resolve) => {
+          const ack = {
+            done: (accepted: boolean) => resolve(accepted),
+            timer: setTimeout(() => {
+              const index = steerAcks.indexOf(ack);
+              if (index !== -1) steerAcks.splice(index, 1);
+              resolve(false);
+            }, timeoutMs),
+          };
+          ack.timer.unref?.();
+          steerAcks.push(ack);
+        });
 
       // Write ~/.pi/agent/models.json before creating any credential-bearing
       // MCP temp files. If model setup fails, there is nothing sensitive to
@@ -570,6 +603,26 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         child.stdin.write(JSON.stringify(obj) + "\n");
       };
 
+      /** Hand one message to pi's own steering queue. Resolves false when
+       * the turn is stopping/over or pi refuses the command, so the harness
+       * falls back to its server-side queue rather than losing the text. */
+      const steerTurn = async (text: string, steerId?: string): Promise<boolean> => {
+        if (finished || stopRequested) return false;
+        if (!promptSent) {
+          // still in the handshake: the opening prompt has not gone out, so
+          // there is nothing to steer into — it travels WITH that prompt
+          early.push({ text, steerId });
+          return true;
+        }
+        try {
+          const answered = awaitSteerAck();
+          send({ type: "steer", message: text });
+          return await answered;
+        } catch {
+          return false;
+        }
+      };
+
       /** Emit buffered assistant text as its own item, then clear it. */
       const flushAssistantText = () => {
         const text = assistantText;
@@ -581,6 +634,9 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       const settle = (ok: boolean, stopReason?: string | null, usage?: { input?: number; output?: number }) => {
         if (settled) return;
         settled = true;
+        finished = true;
+        // a steer still waiting for pi's acknowledgement never reached it
+        releaseSteerAcks();
         flushAssistantText();
         emit({
           ...base(threadId, turnId),
@@ -588,7 +644,11 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           ok,
           stopReason: stopReason ?? (ok ? "end_turn" : "failed"),
           ...(usage ? { usage: { input: usage.input ?? 0, output: usage.output ?? 0 } } : {}),
+          // accepted before the prompt went out but never folded in (the
+          // turn failed on the way) — the harness runs them next
+          ...undeliveredField(early),
         });
+        early = [];
         try {
           child.stdin.end();
         } catch {
@@ -610,6 +670,8 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       };
 
       const stop = () => {
+        stopRequested = true;
+        releaseSteerAcks();
         try {
           send({ type: "abort" });
         } catch {
@@ -622,12 +684,20 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         }
         settle(true, "cancelled");
       };
-      active.set(threadId, { stop, turnId, pending, child });
+      active.set(threadId, { stop, turnId, pending, child, steer: steerTurn });
 
       const onEvent = (evt: PiEvent) => {
         appendNative(threadId, { dir: "in", source: "pi.rpc", msg: evt });
         switch (evt.type) {
           case "response": {
+            if (evt.command === "steer") {
+              const ack = steerAcks.shift();
+              if (ack) {
+                clearTimeout(ack.timer);
+                ack.done(evt.success === true);
+              }
+              return;
+            }
             if (evt.command && responseWaiters.has(evt.command)) {
               const waiter = responseWaiters.get(evt.command)!;
               responseWaiters.delete(evt.command);
@@ -796,9 +866,13 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         }
       }
 
-      const message = turn.system ? `${turn.system}\n\n${turn.text}` : turn.text;
+      const promptText = turn.system ? `${turn.system}\n\n${turn.text}` : turn.text;
+      const message = withEarlySteers(promptText, early);
+      // from here on steering goes through pi's `steer` command
+      promptSent = true;
       try {
         send({ type: "prompt", message });
+        early = [];
       } catch {
         settle(false);
       }
@@ -873,8 +947,13 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           // xhigh/max only land on models that expose them; pi rejects an
           // unsupported level and the turn keeps the engine default.
           effortLevels: EFFORT_LEVELS,
+          // pi's RPC mode takes a mid-turn message with `steer`: it reaches
+          // the model after the current tool batch, inside the same turn
+          queueing: true,
         },
         sendTurn,
+        steer: async (threadId, text, options) =>
+          (await active.get(threadId)?.steer(text, options?.steerId)) ?? false,
         interruptTurn: async (threadId) => active.get(threadId)?.stop(),
         respondToRequest: async (threadId, requestId, decision) => {
           const entry = active.get(threadId);

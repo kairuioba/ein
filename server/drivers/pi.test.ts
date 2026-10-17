@@ -554,6 +554,97 @@ describe("PiDriver turns (fake CLI)", () => {
   });
 });
 
+describe("PiDriver steering (fake CLI)", () => {
+  let instance: ProviderInstance;
+  let recorder: EventRecorder;
+
+  const create = async (mode?: string, environment: Record<string, string> = {}) => {
+    instance = await PiDriver.create({
+      instanceId: "pi-steer",
+      displayName: "pi steer",
+      environment: { ...environment, ...(mode ? { FAKE_PI_MODE: mode } : {}) },
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: false },
+    });
+    recorder = recordEvents(instance.adapter);
+  };
+
+  beforeEach(() => {
+    ensureDirs();
+    chmodSync(FAKE_CLI, 0o755);
+  });
+  afterEach(async () => {
+    recorder?.stop();
+    await instance?.dispose();
+  });
+
+  const dumped = (dump: string): Array<Record<string, unknown>> =>
+    readFileSync(dump, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+
+  it("advertises mid-turn steering", async () => {
+    await create();
+    expect(instance.adapter.capabilities.queueing).toBe(true);
+    expect(typeof instance.adapter.steer).toBe("function");
+  });
+
+  it("sends pi's steer command into the running turn and keeps ONE turn", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omb-pi-steer-"));
+    const dump = join(dir, "steer.jsonl");
+    await create("steer", { FAKE_PI_STEER_DUMP: dump });
+    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-steer", text: "build it" });
+    // the fake ran a tool batch and now holds the turn open for a steer
+    await recorder.until((e) => e.type === "item.started" && e.turnId === turnId);
+
+    await expect(instance.adapter.steer!("t-steer", "also run the tests", { steerId: "s1" })).resolves.toBe(true);
+    const done = await recorder.until((e) => e.type === "turn.completed");
+
+    expect(done).toMatchObject({ ok: true, stopReason: "end_turn" });
+    expect((done as { undeliveredSteers?: string[] }).undeliveredSteers).toBeUndefined();
+    // one turn, not two: the message reached the model inside it
+    expect(recorder.events.filter((e) => e.type === "turn.started")).toHaveLength(1);
+    expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+    const reply = recorder.events.find((e) => e.type === "item.completed" && e.itemType === "assistant_text");
+    expect((reply as { text: string }).text).toBe("working + steered: also run the tests");
+
+    const rows = dumped(dump);
+    expect(rows).toContainEqual({ steer: "also run the tests" });
+    // pi took it inside the running turn — no second prompt went out
+    expect(rows.filter((row) => row.prompt !== undefined)).toHaveLength(1);
+    expect(rows.find((row) => row.prompt !== undefined)).toEqual({ prompt: "build it" });
+  });
+
+  it("folds a message into the opening prompt when it arrives before that prompt goes out", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omb-pi-early-"));
+    const dump = join(dir, "steer.jsonl");
+    await create(undefined, { FAKE_PI_STEER_DUMP: dump });
+    const started = instance.adapter.sendTurn({ threadId: "t-early", text: "build it" });
+    // the handshake is still running: nothing is on the wire to steer, so it
+    // must ride the opening prompt rather than be rejected
+    await expect(instance.adapter.steer!("t-early", "use the release profile")).resolves.toBe(true);
+    await started;
+    await recorder.until((e) => e.type === "turn.completed");
+
+    const rows = dumped(dump);
+    expect(rows.find((row) => row.prompt !== undefined)).toEqual({
+      prompt: "build it\n\nuse the release profile",
+    });
+    expect(rows.some((row) => row.steer !== undefined)).toBe(false);
+  });
+
+  it("returns false when no turn is running, so the harness keeps its queue", async () => {
+    await create();
+    await expect(instance.adapter.steer!("t-none", "too late")).resolves.toBe(false);
+
+    await instance.adapter.sendTurn({ threadId: "t-done", text: "hi" });
+    await recorder.until((e) => e.type === "turn.completed");
+    await expect(instance.adapter.steer!("t-done", "too late")).resolves.toBe(false);
+  });
+});
+
 describe("splitPiModel", () => {
   it("splits native provider/model composites, including slashes in the model id", () => {
     expect(splitPiModel("ollama-cloud/glm-5.2")).toEqual({ provider: "ollama-cloud", modelId: "glm-5.2" });

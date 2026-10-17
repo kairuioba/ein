@@ -944,6 +944,15 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
           // harness only injects the short-lived agents proxy when this flag
           // is true, so safe-mode turns never expose a token they cannot use.
           agentsMcp: config.fullAuto,
+          // Mid-turn steering: NOT supported, deliberately. `agy --print` is
+          // a one-shot process whose prompt is an argv value and which exits
+          // after emitting `result`; it reads no prompt from stdin and has no
+          // interactive channel, so nothing can be delivered into a running
+          // child. `--conversation <id>` can only start a NEW process after
+          // that one exits — by then the reply is already visible, so it is a
+          // queued follow-up turn, not a steer. The harness's queue is the
+          // honest fallback (see server/steer-queue.ts); this capability stays
+          // unset so the composer never promises more.
         },
         sendTurn,
         interruptTurn: async (threadId) => active.get(threadId)?.stop(),

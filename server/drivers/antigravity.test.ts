@@ -590,6 +590,12 @@ describe("Antigravity OpenMaus MCP config", () => {
       // approval channel in any mode.
       expect(fullAuto.adapter.capabilities.localComputerMcp).toBeUndefined();
       expect(acceptEdits.adapter.capabilities.localComputerMcp).toBeUndefined();
+      // Print mode is a one-shot argv process with no stdin and no channel
+      // into a running child, so it cannot accept a mid-turn steer; no
+      // capability and no steer method means the harness queues the message
+      // (the fallback every unsupported engine keeps).
+      expect(fullAuto.adapter.capabilities.queueing).toBeUndefined();
+      expect(fullAuto.adapter.steer).toBeUndefined();
     } finally {
       await fullAuto.dispose();
       await acceptEdits.dispose();

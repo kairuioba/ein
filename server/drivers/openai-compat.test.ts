@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { recordEvents } from "../testing/events.ts";
-import { OpenAICompatDriver } from "./openai-compat.ts";
+import { OpenAICompatDriver, settleOpenAICompatModels } from "./openai-compat.ts";
 
 describe("OpenAICompatDriver", () => {
   const savedUrl = process.env.OPENAI_COMPAT_URL;
@@ -53,29 +53,56 @@ describe("OpenAICompatDriver", () => {
     await inst.dispose();
   });
 
-  it("exposes a refreshed model catalog", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        new Response(
-          JSON.stringify({
-            data: [
-              { id: "vendor/model-a", name: "Model A" },
-              { id: "vendor/model-b" },
-            ],
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        ),
-      ),
-    );
+  it("advertises mid-turn steering for the API engines", async () => {
+    const inst = await OpenAICompatDriver.create({
+      instanceId: "test-steering-capability",
+      displayName: "Steering",
+      enabled: true,
+      config: { url: "https://example.test/v1", apiKeyEnv: "TEST_KEY" },
+      environment: { TEST_KEY: "secret" },
+    });
+    expect(inst.adapter.capabilities.queueing).toBe(true);
+    expect(typeof inst.adapter.steer).toBe("function");
+    await inst.dispose();
+  });
+
+  it("seeds the picker from the disk cache and probes /models in the background", async () => {
+    let releaseProbe = () => {};
+    const probeGate = new Promise<void>((resolve) => {
+      releaseProbe = resolve;
+    });
+    const fetchMock = vi.fn(async () => {
+      await probeGate;
+      return new Response(
+        JSON.stringify({
+          data: [
+            { id: "vendor/model-a", name: "Model A" },
+            { id: "vendor/model-b" },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
     const inst = await OpenAICompatDriver.create({
       instanceId: "test-models",
       displayName: "Models",
       enabled: true,
       config: { url: "https://example.test/v1", apiKeyEnv: "TEST_KEY" },
-      environment: { TEST_KEY: "secret" },
+      environment: { TEST_KEY: "secret", EIN_PROBE_LIVE_MODELS: "1" },
     });
 
+    // Creating the instance (and the first picker open) must not wait on the
+    // endpoint: the seeded catalog renders while the probe is still hanging.
+    expect(fetchMock).not.toHaveBeenCalled();
+    await inst.refreshModels?.();
+    expect(inst.models.default).toBe("meta-llama/llama-3.3-70b-instruct");
+    expect(inst.models.options.some((option) => option.id === "vendor/model-a")).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // The background answer lands on the next picker open.
+    releaseProbe();
+    await settleOpenAICompatModels("https://example.test/v1", "secret");
     await inst.refreshModels?.();
 
     // Every option carries `custom: true`: this engine advertises
@@ -88,6 +115,9 @@ describe("OpenAICompatDriver", () => {
         { id: "vendor/model-b", label: "vendor/model-b", custom: true },
       ],
     });
+    // A fresh answer is served from the cache: another open sends nothing.
+    await inst.refreshModels?.();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     await inst.dispose();
   });
 
@@ -407,6 +437,96 @@ describe("OpenAICompatDriver", () => {
     await recorder.until((e) => e.type === "turn.completed");
 
     expect(sentBody?.provider).toEqual({ order: ["fireworks"], allow_fallbacks: false });
+    recorder.stop();
+    await inst.dispose();
+  });
+
+  it("takes a mid-turn message into the running turn with one more request", async () => {
+    let releaseFirst = () => {};
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const bodies: any[] = [];
+    const sse = (body: string) =>
+      new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        bodies.push(JSON.parse(String(init?.body)));
+        if (bodies.length === 1) {
+          await firstGate;
+          return sse(
+            'data: {"choices":[{"delta":{"content":"first answer"}}]}\n' +
+              'data: {"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":2}}\n' +
+              "data: [DONE]\n",
+          );
+        }
+        return sse(
+          'data: {"choices":[{"delta":{"content":"second answer"}}]}\n' +
+            'data: {"choices":[],"usage":{"prompt_tokens":4,"completion_tokens":1}}\n' +
+            "data: [DONE]\n",
+        );
+      }),
+    );
+    const inst = await OpenAICompatDriver.create({
+      instanceId: "test-steer-turn",
+      displayName: "Steer",
+      enabled: true,
+      config: { url: "https://example.test/v1", apiKeyEnv: "TEST_KEY", model: "vendor/model" },
+      environment: { TEST_KEY: "secret" },
+    });
+    const recorder = recordEvents(inst.adapter);
+    const { turnId } = await inst.adapter.sendTurn({ threadId: "t-steer", text: "first question" });
+    expect(bodies).toHaveLength(1);
+
+    await expect(inst.adapter.steer!("t-steer", "also answer this", { steerId: "s1" })).resolves.toBe(true);
+    releaseFirst();
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+
+    // ONE turn, and one usage total across both requests
+    expect(done).toMatchObject({ ok: true, usage: { input: 14, output: 3 } });
+    expect(recorder.events.filter((e) => e.type === "turn.started")).toHaveLength(1);
+    expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+    const replies = recorder.events
+      .filter((e) => e.type === "item.completed" && e.itemType === "assistant_text")
+      .map((e) => (e as { text: string }).text);
+    expect(replies).toEqual(["first answer", "second answer"]);
+
+    // The second request sees the reply that just landed, then the user's
+    // message framed as a mid-turn interjection (steer.ts), not a new task.
+    expect(bodies[1].messages).toEqual([
+      { role: "user", content: "first question" },
+      { role: "assistant", content: "first answer" },
+      { role: "user", content: expect.stringContaining("also answer this") },
+    ]);
+    expect(bodies[1].messages[2].content).toContain("not a request to stop");
+    recorder.stop();
+    await inst.dispose();
+  });
+
+  it("hands an accepted steer back as undelivered when the turn fails first", async () => {
+    let failFirst: (error: Error) => void = () => {};
+    const firstGate = new Promise<Response>((_resolve, reject) => {
+      failFirst = reject;
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => firstGate));
+    const inst = await OpenAICompatDriver.create({
+      instanceId: "test-steer-undelivered",
+      displayName: "Undelivered",
+      enabled: true,
+      config: { url: "https://example.test/v1", apiKeyEnv: "TEST_KEY", model: "vendor/model" },
+      environment: { TEST_KEY: "secret" },
+    });
+    const recorder = recordEvents(inst.adapter);
+    const { turnId } = await inst.adapter.sendTurn({ threadId: "t-fail", text: "first" });
+
+    await expect(inst.adapter.steer!("t-fail", "correction", { steerId: "s1" })).resolves.toBe(true);
+    failFirst(new Error("upstream exploded"));
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+
+    // the harness runs undelivered steers next; they must not be lost here
+    expect(done).toMatchObject({ ok: false, stopReason: "error", undeliveredSteers: ["s1"] });
+    expect(inst.adapter.hasSession("t-fail")).toBe(false);
     recorder.stop();
     await inst.dispose();
   });

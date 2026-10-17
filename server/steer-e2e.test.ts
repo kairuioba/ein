@@ -17,6 +17,7 @@ const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLAUDE = join(SERVER_DIR, "testing", "fake-claude-cli.ts");
 const FAKE_ACP = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
 const FAKE_CODEX = join(SERVER_DIR, "testing", "fake-codex-app-server.ts");
+const FAKE_PI = join(SERVER_DIR, "testing", "fake-pi-cli.ts");
 const PORT = 18800 + Math.floor(Math.random() * 10_000);
 const BASE = `http://127.0.0.1:${PORT}`;
 const posixOnly = describe.skipIf(process.platform === "win32");
@@ -48,6 +49,7 @@ posixOnly("mid-turn steering e2e", () => {
     chmodSync(FAKE_CLAUDE, 0o755);
     chmodSync(FAKE_ACP, 0o755);
     chmodSync(FAKE_CODEX, 0o755);
+    chmodSync(FAKE_PI, 0o755);
     home = mkdtempSync(join(tmpdir(), "omb-steer-"));
     mkdirSync(join(home, ".ein"), { recursive: true });
     steerGate = join(home, "delayed-steer.gate");
@@ -64,6 +66,9 @@ posixOnly("mid-turn steering e2e", () => {
           // an app-server that names no turn cannot be steered: a message
           // while busy uses the server-side queue (approval mode parks it)
           codexOld: { driver: "codex", environment: { FAKE_CODEX_MODE: "approval" }, config: { cli: FAKE_CODEX, fullAuto: false } },
+          // pi's RPC mode takes it natively (`steer`) — the driver holds the
+          // turn open in `steer` mode until the command arrives
+          pi: { driver: "piAgent", environment: { FAKE_PI_MODE: "steer" }, config: { cli: FAKE_PI, fullAuto: false } },
         },
       }),
     );
@@ -130,6 +135,38 @@ posixOnly("mid-turn steering e2e", () => {
     },
     40_000,
   );
+
+  it("a message during a pi turn reaches pi's own steer command and keeps ONE turn", async () => {
+    const created = (await api("POST", "/api/bots")).body.bot;
+    await api("PATCH", `/api/bots/${created.id}`, {
+      modelSelection: { instanceId: "pi", model: "ollama-cloud/glm-5.2" },
+    });
+    const instances = (await api("GET", "/api/instances")).body.instances;
+    expect(instances.find((i: any) => i.instanceId === "pi").capabilities.queueing).toBe(true);
+
+    expect((await api("POST", `/api/bots/${created.id}/messages`, { text: "build it" })).status).toBe(202);
+    // the fake finished a tool batch and holds the turn: prompt is out, so a
+    // steer now goes through pi's own command rather than folding into it
+    await waitFor(
+      async () => (await getBot(created.id)).messages.some((m: any) => m.kind === "activity"),
+      "pi's tool batch",
+    );
+    const second = await api("POST", `/api/bots/${created.id}/messages`, { text: "and also this" });
+    expect(second.status).toBe(202);
+    expect(second.body.steered).toBe(true);
+
+    await waitFor(async () => (await getBot(created.id)).busy === false, "the pi turn to settle");
+    const bot = await getBot(created.id);
+    const steered = bot.messages.find((m: any) => m.text === "and also this");
+    expect(steered.steered).toBe(true);
+    // the second message reached the model INSIDE the same turn: one reply,
+    // carrying both the opening line and the steer
+    const replies = bot.messages.filter(
+      (m: any) => m.role === "bot" && m.kind === "text" && m.text.includes("steered:"),
+    );
+    expect(replies).toHaveLength(1);
+    expect(replies[0].text).toBe("working + steered: and also this");
+  }, 40_000);
 
   it("rejects a delayed steer acknowledgement after the bot is deleted", async () => {
     const created = (await api("POST", "/api/bots")).body.bot;

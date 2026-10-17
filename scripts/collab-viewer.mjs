@@ -149,7 +149,26 @@ tick();
 setInterval(tick, 2000);
 </script></body></html>`;
 
+const MOCKUPS = join(process.cwd(), "docs", "mockups");
 createServer((req, res) => {
+  // 手机可看的静态 mockup：/mockup 或 /mockup/<file>.html
+  if (req.url === "/mockup" || req.url?.startsWith("/mockup/")) {
+    const name = req.url === "/mockup" ? "workbench-v2.html" : decodeURIComponent(req.url.slice("/mockup/".length));
+    if (!/^[\w.-]+\.html$/.test(name)) {
+      res.writeHead(400, { "content-type": "text/plain; charset=utf-8" });
+      res.end("bad mockup name");
+      return;
+    }
+    try {
+      const body = readFileSync(join(MOCKUPS, name), "utf8");
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+      res.end(body);
+    } catch {
+      res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+      res.end("mockup not written yet");
+    }
+    return;
+  }
   if (req.url === "/api/data") {
     res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
     res.end(JSON.stringify({ transcript: readTranscript(), state: readState() }));

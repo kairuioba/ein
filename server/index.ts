@@ -75,6 +75,7 @@ import { Dispatcher, dispatchSettings } from "./dispatch.ts";
 import { TaskFolderStore } from "./task-folders.ts";
 import { buildTaskRetro } from "./task-retro.ts";
 import { buildStateDoc } from "./state-doc.ts";
+import { buildDecisionStack, emptyDecisionStack } from "./decision-stack.ts";
 import { buildContextShare, type ContextSource } from "./context-share.ts";
 import { InboxStore } from "./inbox-store.ts";
 import type { DispatchRun } from "../shared/dispatch-types.ts";
@@ -5649,6 +5650,23 @@ const server = createServer(async (req, res) => {
         return json(res, 200, { messageIds });
       }
       return json(res, 404, { error: "unknown internal endpoint" });
+    }
+
+    // ── 工作台首页「决策栈」 ───────────────────────────────────────────
+    // 只是投影：三份 store 快照交给纯函数（排序/风险/状态句都可测）。
+    // 首页不能因为投影失败就 500 —— 出错时返回空栈，界面仍可渲染。
+    if (path === "/api/decision-stack" && method === "GET") {
+      try {
+        const stack = buildDecisionStack({
+          items: inbox.list("open"),
+          runs: dispatcher.list(),
+          folders: taskFolders?.list() ?? [],
+        });
+        return json(res, 200, { stack });
+      } catch (error) {
+        console.error("decision stack: could not build the home projection", error);
+        return json(res, 200, { stack: emptyDecisionStack() });
+      }
     }
 
     // Live Team Map metadata. Prompts and replies never leave their

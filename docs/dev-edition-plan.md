@@ -21,7 +21,7 @@
 
 | # | 事项 | 现状 | 怎么改 |
 |---|---|---|---|
-| 1 | 开发版 / 维护岗 | 方案已定（见第三节），代码未开始 | 按第三节实现 |
+| 1 | 开发版 / 维护岗 | **已实现**（`server/maintenance.ts`、设置 → 维护岗、`release-ein.yml` 的 channel、`electron/update-channel.mjs`）；用法见 `docs/使用手册-1.1.2.md`，规则见 `docs/GitHub-版本与备份规则.md` | 第一次开发版构建后核对三个平台只在开发渠道收到 |
 | 2 | 插话：pi、Antigravity、API 类引擎（Grok API、OpenAI 兼容、MiniMax）、群聊输入框 | 仍会排队到本回合结束 | pi 的 RPC 模式有 `steer` 命令，接到 `pi.ts` 的 `steer`；API 类引擎在当前回复结束后、同一回合内立刻续一次带新消息的请求（`openai-chat.ts`）；群聊：服务端已能插话，把 `Composer.tsx` 里 `busy && group` 的本地排队分支改成：忙碌的机器人引擎 `capabilities.queueing` 为真时直接发服务端 |
 | 3 | OpenAI 兼容引擎的模型清单 | 每次打开选择器都请求一次 `/models` | 改用 `live-catalog.ts` 的后台缓存 |
 | 4 | 全部交互逐步走查 | 为省额度中途停了 | 按清单在真实客户端里走：首次启动、引擎登录卡、选模型、单聊/群聊/总控、插话、新对话与切任务、侧栏、⌘K、各设置页（尤其运行中改设置）、资料库、日历、应用、错误态；每一步截图记录 |

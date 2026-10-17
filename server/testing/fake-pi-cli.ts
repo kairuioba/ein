@@ -249,7 +249,14 @@ function handle(cmd: any) {
       // pi answers the command; then the message reaches the model inside the
       // still-running turn
       send({ type: "response", command: "steer", success: true });
-      if (mode === "steer" && typeof cmd.message === "string") finishSteerTurn(cmd.message);
+      if (mode === "steer" && typeof cmd.message === "string") {
+        // A real pi does not end the turn in the same tick as the ack: it
+        // still has a model call to run. Leaving a little room here lets the
+        // harness record the accepted steer while the turn is still open
+        // (ending it synchronously made the server-side ownership re-check
+        // race on slower CI hosts and answer 409).
+        setTimeout(() => finishSteerTurn(cmd.message as string), 120);
+      }
       return;
     case "extension_ui_response":
       if (cmd.id === "ask-1") finishPermissionTurn();

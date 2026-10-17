@@ -94,6 +94,20 @@ export class InboxStore {
     if (changed) this.save();
   }
 
+  /** A reviewer later accepted the work: close the open gate cards for this
+   * subtask without recording an owner approval. */
+  dropForSubtask(subtaskId: string, note: string): number {
+    let dropped = 0;
+    for (const item of this.items) {
+      if (item.resolvedAt || item.subtaskId !== subtaskId || item.kind !== "gate_failed") continue;
+      item.resolvedAt = Date.now();
+      item.resolution = { action: "abandon", at: item.resolvedAt, note };
+      dropped += 1;
+    }
+    if (dropped) this.save();
+    return dropped;
+  }
+
   resolve(id: string, action: "approve" | "reject" | "abandon", note?: string): InboxItem | { error: string } {
     const item = this.byId(id);
     if (!item) return { error: "no such inbox item" };

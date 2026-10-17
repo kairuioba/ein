@@ -128,3 +128,41 @@ export function evaluateGate(input: GateInput): SubtaskGate {
   }
   return { status: "pass", criteria: verdicts, deterministic, at: input.now ?? Date.now(), provisional: true };
 }
+
+
+/** Fold the independent reviewer's verdicts into the code's gate. The code is
+ * still the judge: a hard deterministic failure or a synthetic envelope can
+ * never become pass; an unusable review falls back to needs_human. */
+export function applyReviewVerdicts(
+  gate: SubtaskGate,
+  criteria: AcceptanceCriterion[],
+  review: { ok: boolean; failure?: string; model?: string; verdicts: GateCriterionVerdict[]; costUsd?: number; tokens?: number; at?: number },
+): SubtaskGate {
+  const reviewer = { ok: review.ok, ...(review.model ? { model: review.model } : {}), ...(review.failure ? { failure: review.failure } : {}), verdicts: review.verdicts, ...(review.costUsd !== undefined ? { costUsd: review.costUsd } : {}), ...(review.tokens !== undefined ? { tokens: review.tokens } : {}), at: review.at ?? Date.now() };
+  const deterministicHardFail = gate.deterministic.some((check) => !check.ok && !check.unverifiable);
+  if (deterministicHardFail || gate.status === "fail") return { ...gate, reviewer };
+  if (!review.ok) {
+    return { ...gate, status: "needs_human", reviewer, reason: gate.reason ?? `reviewer unavailable: ${review.failure ?? "unknown"}` };
+  }
+  const byId = new Map(review.verdicts.map((verdict) => [verdict.id, verdict]));
+  const merged = criteria.map((criterion) => {
+    // deterministic verdicts from the code always win over the model
+    const current = gate.criteria.find((verdict) => verdict.id === criterion.id);
+    if (criterion.kind === "deterministic" && current) return current;
+    return byId.get(criterion.id) ?? current ?? { id: criterion.id, status: "unverifiable" as const };
+  });
+  const required = new Set(criteria.filter((criterion) => criterion.required).map((criterion) => criterion.id));
+  const requiredVerdicts = merged.filter((verdict) => required.has(verdict.id));
+  const unknown = requiredVerdicts.filter((verdict) => verdict.status === "unverifiable");
+  const failed = requiredVerdicts.filter((verdict) => verdict.status === "fail");
+  if (unknown.length || failed.length) {
+    return {
+      ...gate,
+      status: "needs_human",
+      criteria: merged,
+      reviewer,
+      reason: failed.length ? "reviewer did not support a required criterion" : "reviewer was unsure about a required criterion",
+    };
+  }
+  return { ...gate, status: "pass", criteria: merged, reviewer, reason: "reviewer supported every required criterion", provisional: false };
+}

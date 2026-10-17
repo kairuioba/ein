@@ -174,6 +174,16 @@ export interface SubtaskGate {
   at: number;
   /** gate has not been judged by a reviewer yet (deterministic proxy only) */
   provisional?: boolean;
+  /** the independent reviewer's verdict for this attempt (evidence only) */
+  reviewer?: {
+    ok: boolean;
+    model?: string;
+    failure?: string;
+    verdicts: GateCriterionVerdict[];
+    costUsd?: number;
+    tokens?: number;
+    at: number;
+  };
 }
 
 /** One thing waiting on the owner. */

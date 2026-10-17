@@ -81,6 +81,9 @@ import { buildDecisionStack, emptyDecisionStack } from "./decision-stack.ts";
 import { buildProjectOffice, emptyProjectOffice } from "./office-view.ts";
 import { buildContextShare, type ContextSource } from "./context-share.ts";
 import { InboxStore } from "./inbox-store.ts";
+import { applyReviewVerdicts, criteriaFor } from "./review-gate.ts";
+import { ReviewLedger } from "./review-ledger.ts";
+import { runReview, type ReviewHost } from "./review-runner.ts";
 import { deriveSignals, EvolutionStore, proposeImprovements } from "./evolution.ts";
 import { EvolutionRunStore } from "./evolution-runs.ts";
 import { pipelineHeadline } from "./evolution-pipeline.ts";
@@ -2408,6 +2411,7 @@ const dispatcher = new Dispatcher({
     if (!share?.text?.trim()) return undefined;
     return { text: share.text, sourceTaskIds: share.fromTaskIds, tokens: share.tokens };
   },
+  review: (input) => reviewSubtask(input.runId, input.subtaskId),
   needsYou: (input) => {
     const folder = input.runId ? taskFolders?.byRun(input.runId) : undefined;
     try {
@@ -5082,6 +5086,127 @@ function isAllowedOrigin(origin: string | undefined | null): boolean {
   } catch {
     return false;
   }
+}
+
+
+// ── 独立评审员：隐藏 bot + 每次新建临时会话 + 单并发 + 90s 看门狗 ────────
+// 评审只提供证据（quote 校验后），代码（review-gate）仍是唯一裁决者。
+const REVIEWER_MARKER = "system:reviewer";
+const REVIEW_TIMEOUT_MS = 90_000;
+const REVIEW_MAX_PER_RUN = 8;
+const reviewLedger = new ReviewLedger(DATA_DIR);
+const reviewedAttempts = new Set<string>();
+const reviewCountsByRun = new Map<string, number>();
+let reviewerBotId: string | null = null;
+let reviewChain: Promise<void> = Promise.resolve();
+
+function reviewerModelSelection(): { instanceId: string; model: string } | null {
+  const chief = store.bots.find((bot) => bot.id === companyChiefId());
+  const chiefSelection = chief?.modelSelection;
+  // prefer a *different* engine than the chief/worker so it is not self-review
+  const other = registry.instances().find((instance) => instance.instanceId !== chiefSelection?.instanceId);
+  if (other) return { instanceId: other.instanceId, model: other.models.default };
+  return chiefSelection ? { instanceId: chiefSelection.instanceId, model: chiefSelection.model } : null;
+}
+
+function ensureReviewerBot(): BotRecord | undefined {
+  if (reviewerBotId) {
+    const cached = store.bot(reviewerBotId);
+    if (cached) return cached;
+    reviewerBotId = null;
+  }
+  const existing = store.bots.find((bot) => bot.description === REVIEWER_MARKER && bot.hidden);
+  if (existing) {
+    reviewerBotId = existing.id;
+    return existing;
+  }
+  const selection = reviewerModelSelection();
+  if (!selection) return undefined;
+  const created = store.createBot({ name: t("Reviewer"), title: t("Independent reviewer"), description: REVIEWER_MARKER, modelSelection: selection }, { seedMessages: false });
+  const patched = store.patchBot(created.id, { hidden: true, autoApprove: true, approvePeerComms: false, composio: false }) ?? created;
+  reviewerBotId = patched.id;
+  return patched;
+}
+
+const reviewHost: ReviewHost = {
+  async startTurn({ botId, prompt, timeoutMs }) {
+    const bot = store.bot(botId);
+    if (!bot) return { ok: false, reply: "" };
+    const task = store.createTask(botId, t("Independent review"), false);
+    if (!task) return { ok: false, reply: "" };
+    const startedAt = Date.now();
+    try {
+      await startTurn(botId, prompt, { threadId: task.threadId });
+      const deadline = startedAt + timeoutMs;
+      while (Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        if (!store.bot(botId)?.busy) break;
+      }
+      const interrupted = Boolean(store.bot(botId)?.busy);
+      if (interrupted) await engineOfThread(bot, task.threadId)?.adapter.interruptTurn(task.threadId).catch(() => undefined);
+      const reply = store
+        .messagesFor(task.threadId)
+        .filter((message) => message.role === "bot" && message.kind === "text" && message.text && message.at >= startedAt)
+        .map((message) => message.text)
+        .join("\n")
+        .trim();
+      const usage = store.taskByThread(botId, task.threadId)?.usage;
+      return { ok: Boolean(reply) && !interrupted, reply, ...(usage?.costUsd ? { costUsd: usage.costUsd } : {}) };
+    } catch (error) {
+      console.error("reviewer: turn failed", error);
+      return { ok: false, reply: "" };
+    } finally {
+      store.closeTask(task.threadId);
+    }
+  },
+};
+
+async function doReview(runId: string, subtaskId: string): Promise<void> {
+  const run = dispatcher.get(runId);
+  const subtask = run?.subtasks.find((entry) => entry.id === subtaskId);
+  if (!run || !subtask || !subtask.gate) return;
+  if (run.status !== "running" && run.status !== "synthesizing") return;
+  if (subtask.status !== "done") return;
+  const attemptKey = `${runId}:${subtaskId}:${subtask.currentAttemptId ?? ""}`;
+  if (reviewedAttempts.has(attemptKey)) return;
+  reviewedAttempts.add(attemptKey);
+  const count = reviewCountsByRun.get(runId) ?? 0;
+  if (count >= REVIEW_MAX_PER_RUN) return;
+  reviewCountsByRun.set(runId, count + 1);
+  const criteria = criteriaFor(subtask);
+  if (!criteria.length) return;
+  const bot = ensureReviewerBot();
+  if (!bot) return;
+  const review = await runReview({
+    criteria,
+    result: subtask.result ?? "",
+    ...(subtask.handoff ? { handoff: subtask.handoff } : {}),
+    ...(subtask.handoff?.artifacts ? { arts: subtask.handoff.artifacts } : {}),
+    host: reviewHost,
+    botId: bot.id,
+    timeoutMs: REVIEW_TIMEOUT_MS,
+    ledger: reviewLedger,
+    meta: { runId, subtaskId, ...(subtask.currentAttemptId ? { attemptId: subtask.currentAttemptId } : {}), model: bot.modelSelection.model },
+  });
+  const updated = applyReviewVerdicts(subtask.gate, criteria, {
+    ok: review.ok,
+    ...(review.failure ? { failure: review.failure } : {}),
+    model: bot.modelSelection.model,
+    verdicts: review.verdicts,
+    ...(review.costUsd !== undefined ? { costUsd: review.costUsd } : {}),
+    ...(review.tokens !== undefined ? { tokens: review.tokens } : {}),
+  });
+  dispatcher.applyReview(runId, subtaskId, updated);
+  if (updated.status === "pass") {
+    inbox.dropForSubtask(subtaskId, t("Confirmed by the independent reviewer"));
+    broadcast({ kind: "inbox", items: inbox.list(), counts: inbox.counts() });
+  }
+}
+
+function reviewSubtask(runId: string, subtaskId: string): void {
+  reviewChain = reviewChain
+    .then(() => doReview(runId, subtaskId))
+    .catch((error) => console.error("reviewer: failed", error));
 }
 
 const server = createServer(async (req, res) => {

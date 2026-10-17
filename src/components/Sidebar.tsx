@@ -123,7 +123,7 @@ import {
 import { phoneSettingsAction, SidebarPhoneButton } from "./SidebarPhoneButton";
 import { SidebarSectionHeader } from "./SidebarSectionHeader";
 import { InboxPanel } from "./InboxPanel";
-import { ProjectOfficePanel } from "./office/ProjectOfficePanel";
+import { ProjectOfficePage } from "@/pages/office/ProjectOfficePage";
 import { TaskFolderList } from "./TaskFolderList";
 import type { TaskFolderView } from "../../shared/task-folders";
 import { useInbox } from "@/lib/inbox";
@@ -2310,14 +2310,22 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         />
       )}
       {officeTask && (
-        <ProjectOfficePanel
-          task={officeTask}
-          onClose={() => setOfficeTask(null)}
-          onOpenConversation={(botId, threadId) => {
-            dispatch({ type: "select", id: botId });
-            dispatch({ type: "switchTask", botId, threadId });
-          }}
-        />
+        <div className="fixed inset-0 z-[70] bg-stage">
+          <ProjectOfficePage
+            folderId={officeTask.id}
+            title={officeTask.title}
+            onClose={() => setOfficeTask(null)}
+            {...(officeTask.conversationId && officeTask.conversationBotId
+              ? {
+                  onOpenConversation: () => {
+                    dispatch({ type: "select", id: officeTask.conversationBotId! });
+                    dispatch({ type: "switchTask", botId: officeTask.conversationBotId!, threadId: officeTask.conversationId! });
+                    setOfficeTask(null);
+                  },
+                }
+              : {})}
+          />
+        </div>
       )}
       <InboxPanel
         open={inboxOpen}

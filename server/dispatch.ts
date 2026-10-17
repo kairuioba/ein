@@ -168,6 +168,9 @@ export interface DispatchHost {
   /** Read-only context shared from earlier tasks (already rendered + bounded
    * by the caller). Injected at the end of the worker prompt, in a fence. */
   contextFor?(input: { runId: string; subtaskId: string; role: "worker" }): { text: string; sourceTaskIds?: string[]; tokens?: number } | undefined;
+  /** Ask an independent reviewer to judge this attempt (fire-and-forget;
+   * the reviewer folds its verdicts back through applyReview). */
+  review?(input: { runId: string; subtaskId: string; attemptId?: string }): void;
   /** Put something in the owner's inbox (gate escalation / final sign-off). */
   needsYou?(item: { kind: "gate_failed" | "signoff" | "question" | "failed_exhausted" | "handoff_stuck"; runId: string; subtaskId?: string; attemptId?: string; title: string; reason: string; evidence?: string[] }): void;
   /** Start a turn; rejects when the bot cannot start (busy, missing, no engine). */
@@ -1280,6 +1283,18 @@ export class Dispatcher {
     return changed;
   }
 
+  /** Fold an independent reviewer's verdict into the gate (the reviewer is
+   * evidence; the code still decides). Returns the updated gate, if any. */
+  applyReview(runId: string, subtaskId: string, gate: NonNullable<DispatchSubtask["gate"]>): NonNullable<DispatchSubtask["gate"]> | undefined {
+    const run = this.get(runId);
+    const subtask = run?.subtasks.find((entry) => entry.id === subtaskId);
+    if (!run || !subtask) return undefined;
+    subtask.gate = gate;
+    this.touch(run);
+    this.host.broadcast(run);
+    return gate;
+  }
+
   /** Retry a failed or canceled subtask (and let its dependents run again). */
   retry(runId: string, subtaskId: string): DispatchRun | { error: string } {
     const run = this.get(runId);
@@ -1431,6 +1446,10 @@ export class Dispatcher {
           evidence: gate.criteria.map((verdict) => `${verdict.id}: ${verdict.status}`),
         });
         this.host.activity(run.sourceThreadId, t("“{title}” finished but needs your decision before it counts as accepted", { title: subtask.title }), false);
+        // a subjective/unknown verdict can be helped by an independent reviewer
+        if (gate.status === "needs_human") {
+          this.host.review?.({ runId: run.id, subtaskId: subtask.id, ...(subtask.currentAttemptId ? { attemptId: subtask.currentAttemptId } : {}) });
+        }
       }
       this.rebalance(run);
     } else {

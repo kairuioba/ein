@@ -152,6 +152,11 @@ class FakeHost implements DispatchHost {
   claims = new Map<string, string>();
 
   inbox: Array<{ kind: string; runId: string; subtaskId?: string; title: string; reason: string }> = [];
+  reviewed: Array<{ runId: string; subtaskId: string; attemptId?: string }> = [];
+
+  review(input: { runId: string; subtaskId: string; attemptId?: string }) {
+    this.reviewed.push(input);
+  }
   sharedContext?: string;
 
   contextFor(): { text: string; sourceTaskIds?: string[]; tokens?: number } | undefined {
@@ -549,6 +554,9 @@ describe("Dispatcher", () => {
     await settle();
     expect(host.inbox.filter((item) => item.kind === "gate_failed")).toHaveLength(1);
     expect(dispatcher.get(result.run.id)!.subtasks[0]!.gate).toMatchObject({ status: "needs_human" });
+    // an independent reviewer is asked to look at unverifiable verdicts
+    expect(host.reviewed).toHaveLength(1);
+    expect(host.reviewed[0]).toMatchObject({ runId: result.run.id, subtaskId: "a" });
     // the chief's synthesis finishes the run → one sign-off item
     const synthesis = host.turns.find((entry) => entry.continuation)!;
     host.finish(dispatcher, synthesis.threadId, true, "已汇总");

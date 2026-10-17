@@ -87,3 +87,26 @@ describe("acceptance gate", () => {
     expect(bad.status).toBe("needs_human");
   });
 });
+
+import { applyReviewVerdicts } from "./review-gate.ts";
+
+describe("reviewer verdicts folded into the gate", () => {
+  const criterion = [{ id: "c1", text: "文风好", required: true, kind: "subjective" as const }];
+  const base = { status: "needs_human" as const, criteria: [{ id: "c1", status: "unverifiable" as const }], deterministic: [{ name: "result", ok: true }], at: 1, provisional: true };
+  it("passes only when every required criterion is supported", () => {
+    const gate = applyReviewVerdicts(base, criterion, { ok: true, model: "m", verdicts: [{ id: "c1", status: "pass", evidence: "quote" }] });
+    expect(gate.status).toBe("pass");
+    expect(gate.reviewer?.model).toBe("m");
+    expect(gate.provisional).toBe(false);
+  });
+  it("stays needs_human when the reviewer is unsure or unsupported", () => {
+    expect(applyReviewVerdicts(base, criterion, { ok: true, verdicts: [{ id: "c1", status: "unverifiable" }] }).status).toBe("needs_human");
+    expect(applyReviewVerdicts(base, criterion, { ok: true, verdicts: [{ id: "c1", status: "fail" }] }).status).toBe("needs_human");
+    expect(applyReviewVerdicts(base, criterion, { ok: false, failure: "timeout", verdicts: [] }).status).toBe("needs_human");
+  });
+  it("never lets the reviewer override a hard deterministic failure", () => {
+    const failed = { ...base, status: "fail" as const, deterministic: [{ name: "result", ok: false }] };
+    const gate = applyReviewVerdicts(failed, criterion, { ok: true, verdicts: [{ id: "c1", status: "pass" }] });
+    expect(gate.status).toBe("fail");
+  });
+});

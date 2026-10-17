@@ -2340,6 +2340,12 @@ const dispatcher = new Dispatcher({
     }
   },
   broadcastRoutes: (routes) => broadcast({ kind: "dispatch.routes", routes }),
+  contextFor: (input) => {
+    const folder = taskFolders?.byRun(input.runId);
+    const share = folder?.contextShares?.at(-1);
+    if (!share?.text?.trim()) return undefined;
+    return { text: share.text, sourceTaskIds: share.fromTaskIds, tokens: share.tokens };
+  },
   needsYou: (input) => {
     const folder = input.runId ? taskFolders?.byRun(input.runId) : undefined;
     try {

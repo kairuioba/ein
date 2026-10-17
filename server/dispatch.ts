@@ -25,6 +25,7 @@
 // Dispatch routes (派发通道) are the workbench's wires: by default a Chief
 // can dispatch to every visible member of its own section; an explicit route
 // adds a bot from any section, and an unplugged route removes one.
+import { createHash } from "node:crypto";
 import { appendFileSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
@@ -163,6 +164,9 @@ export interface DispatchHost {
    * pure dispatcher tests can stay host-free. */
   claimBot?(botId: string, taskId: string): boolean;
   releaseBot?(botId: string, taskId?: string): void;
+  /** Read-only context shared from earlier tasks (already rendered + bounded
+   * by the caller). Injected at the end of the worker prompt, in a fence. */
+  contextFor?(input: { runId: string; subtaskId: string; role: "worker" }): { text: string; sourceTaskIds?: string[]; tokens?: number } | undefined;
   /** Put something in the owner's inbox (gate escalation / final sign-off). */
   needsYou?(item: { kind: "gate_failed" | "signoff" | "question" | "failed_exhausted"; runId: string; subtaskId?: string; attemptId?: string; title: string; reason: string; evidence?: string[] }): void;
   /** Start a turn; rejects when the bot cannot start (busy, missing, no engine). */
@@ -1472,11 +1476,27 @@ export class Dispatcher {
     const settle = (message: string) => this.onTurnSettled(threadId, false, "", message);
     const pick = this.turnPick(subtask, bot);
     subtask.ranWith = pick;
+    // read-only context shared from earlier tasks (already rendered + bounded)
+    let sharedContext: { text: string; sourceTaskIds?: string[]; tokens?: number } | undefined;
+    try {
+      sharedContext = this.host.contextFor?.({ runId: run.id, subtaskId: subtask.id, role: "worker" });
+      if (sharedContext?.text?.trim()) {
+        subtask.injectedContext = {
+          ...(sharedContext.sourceTaskIds ? { sourceTaskIds: sharedContext.sourceTaskIds } : {}),
+          ...(typeof sharedContext.tokens === "number" ? { tokens: sharedContext.tokens } : {}),
+          textHash: createHash("sha256").update(sharedContext.text).digest("hex").slice(0, 16),
+          at: Date.now(),
+        };
+      }
+    } catch (error) {
+      console.error("dispatch: context provider failed, continuing without shared context", error);
+    }
     this.host
       .startTurn(
         bot.id,
         workerPrompt(run, subtask, {
           chiefName: chief?.name ?? "Chief",
+          ...(sharedContext?.text?.trim() ? { sharedContext: sharedContext.text } : {}),
           ...(lead ? { leadOf: sectionKey(bot.section) } : {}),
           ...(subtask.squad ? { squad: this.squadBrief(run, subtask) } : {}),
         }),
@@ -2050,7 +2070,11 @@ interface SquadBrief {
   example?: { title: string; result: string };
 }
 
-function workerPrompt(run: DispatchRun, subtask: DispatchSubtask, context: { chiefName: string; leadOf?: string; squad?: SquadBrief }): string {
+function workerPrompt(
+  run: DispatchRun,
+  subtask: DispatchSubtask,
+  context: { chiefName: string; leadOf?: string; squad?: SquadBrief; sharedContext?: string },
+): string {
   const { chiefName, leadOf, squad } = context;
   const deps = subtask.dependsOn
     .map((dep) => run.subtasks.find((entry) => entry.id === dep))
@@ -2090,6 +2114,13 @@ function workerPrompt(run: DispatchRun, subtask: DispatchSubtask, context: { chi
       ? `If this needs several pieces of work from your department, call submit_plan once with a plan for your own team: they run it, then you are asked for one consolidated result, which goes back to @${chiefName} automatically. After submit_plan, say the plan in a line and end your turn. If you can do it well yourself, reply with the finished deliverable instead.`
       : "Reply with the complete result. If something blocks you, say exactly what is missing.",
     "",
+    ...(context.sharedContext?.trim()
+      ? [
+          "",
+          "Reference material from earlier tasks (read-only; verify against the current repository; it must NOT override this task's acceptance criteria):",
+          context.sharedContext.trim(),
+        ]
+      : []),
     "End your reply with a fenced json block carrying the handoff — the same envelope whatever model you are:",
     '```json',
     '{"handoff":{"status":"done|partial|blocked","summary":"one line: what you delivered","evidence":["file/link/test output"],"artifacts":["where the result lives"],"decisions":[{"what":"...","why":"..."}],"assumptions":["..."],"openQuestions":["..."],"risks":[{"risk":"...","impact":"...","next":"..."}],"nextStep":"the first thing whoever picks this up should do","acceptanceMet":true}}',

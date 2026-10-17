@@ -190,6 +190,13 @@ export interface DispatchSubtask {
   criteria?: AcceptanceCriterion[];
   /** the acceptance gate's verdict for the latest attempt */
   gate?: SubtaskGate;
+  /** audit of the read-only context injected into the worker prompt */
+  injectedContext?: {
+    sourceTaskIds?: string[];
+    tokens?: number;
+    textHash: string;
+    at: number;
+  };
   /** id of the attempt currently allowed to write this subtask's result;
    * a late event from an older attempt is dropped instead of overwriting */
   currentAttemptId?: string;

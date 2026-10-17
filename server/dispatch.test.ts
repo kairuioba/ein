@@ -152,6 +152,11 @@ class FakeHost implements DispatchHost {
   claims = new Map<string, string>();
 
   inbox: Array<{ kind: string; runId: string; subtaskId?: string; title: string; reason: string }> = [];
+  sharedContext?: string;
+
+  contextFor(): { text: string; sourceTaskIds?: string[]; tokens?: number } | undefined {
+    return this.sharedContext ? { text: this.sharedContext, sourceTaskIds: ["old-task"], tokens: 120 } : undefined;
+  }
 
   needsYou(item: { kind: string; runId: string; subtaskId?: string; title: string; reason: string }) {
     this.inbox.push(item);
@@ -502,6 +507,28 @@ describe("Dispatcher", () => {
     const again = new Dispatcher(host, dir);
     again.load();
     expect(again.get(result.run.id)!.subtasks[0]!.interruptCount).toBe(1);
+  });
+
+  it("injects read-only context shared from earlier tasks into the worker prompt", async () => {
+    host.sharedContext = "<prior_context readonly=\"true\" source_task=\"old\">上次的做法：先写大纲</prior_context>";
+    const result = submit([{ id: "a", title: "文案", brief: "写文案", role: "文案策划" }]);
+    expect("error" in result).toBe(false);
+    if ("error" in result) return;
+    await settle();
+    const turn = host.workerTurns()[0]!;
+    expect(turn.text).toContain("Reference material from earlier tasks");
+    expect(turn.text).toContain("上次的做法：先写大纲");
+    const subtask = dispatcher.get(result.run.id)!.subtasks[0]!;
+    expect(subtask.injectedContext).toMatchObject({ sourceTaskIds: ["old-task"], tokens: 120, textHash: expect.any(String) });
+  });
+
+  it("leaves the worker prompt alone when there is no shared context", async () => {
+    const result = submit([{ id: "a", title: "文案", brief: "写文案", role: "文案策划" }]);
+    expect("error" in result).toBe(false);
+    if ("error" in result) return;
+    await settle();
+    expect(host.workerTurns()[0]!.text).not.toContain("Reference material from earlier tasks");
+    expect(dispatcher.get(result.run.id)!.subtasks[0]!.injectedContext).toBeUndefined();
   });
 
   it("routes a subtask whose criteria cannot be verified to the inbox, then asks for a final sign-off", async () => {

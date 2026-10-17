@@ -1169,6 +1169,9 @@ export class Dispatcher {
     if (!run || !subtask) return { error: t("No such subtask") };
     const note = feedback.trim();
     if (!note) return { error: t("a send-back needs a note") };
+    if ((subtask.reworkCount ?? 0) >= 3) {
+      return { error: t("This subtask was sent back too many times — approve it or abandon it instead.") };
+    }
     subtask.status = "pending";
     subtask.attempts = 0;
     subtask.reworkCount = (subtask.reworkCount ?? 0) + 1;

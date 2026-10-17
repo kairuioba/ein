@@ -81,6 +81,19 @@ export class InboxStore {
     return item;
   }
 
+  /** A newer attempt replaced this subtask: close the stale open items (the
+   * one being handled right now stays for its own resolution). */
+  supersedeForSubtask(subtaskId: string, exceptId?: string): void {
+    let changed = false;
+    for (const item of this.items) {
+      if (item.resolvedAt || item.subtaskId !== subtaskId || item.id === exceptId) continue;
+      item.resolvedAt = Date.now();
+      item.resolution = { action: "abandon", at: item.resolvedAt, note: "superseded by a newer attempt" };
+      changed = true;
+    }
+    if (changed) this.save();
+  }
+
   resolve(id: string, action: "approve" | "reject" | "abandon", note?: string): InboxItem | { error: string } {
     const item = this.byId(id);
     if (!item) return { error: "no such inbox item" };

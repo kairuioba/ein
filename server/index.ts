@@ -2196,7 +2196,12 @@ function contextSourcesForFolders(ids: readonly string[]): ContextSource[] {
     const source = taskFolders?.byId(id);
     if (!source) continue;
     const run = source.runId ? dispatcher.get(source.runId) : undefined;
-    const accepted = Boolean(run && run.status === "done" && run.subtasks.every((subtask) => subtask.status === "done" || subtask.status === "skipped"));
+    const gateClean = (subtask: { gate?: { status?: string } }) => !subtask.gate || subtask.gate.status === "pass";
+    const accepted = Boolean(
+      run &&
+        run.status === "done" &&
+        run.subtasks.every((subtask) => (subtask.status === "done" || subtask.status === "skipped") && gateClean(subtask)),
+    );
     sources.push({
       taskId: source.id,
       title: source.title,
@@ -2357,9 +2362,9 @@ const dispatcher = new Dispatcher({
     if (run.parentRunId) return;
     try {
       const folder = taskFolders?.ensureForRun(run, taskLeadForRun(run), run.sourceThreadId);
-      // only a COMPLETED task closes its windows: cancelled/failed runs stay
-      // open so the owner can retry or continue working in them
-      if (run.status === "done") {
+      // done and cancelled are terminal: their windows become read-only.
+      // failed stays open because the owner may retry or continue in it.
+      if (run.status === "done" || run.status === "canceled") {
         if (folder?.conversationId) store.closeTask(folder.conversationId);
         for (const subtask of run.subtasks) if (subtask.threadId) store.closeTask(subtask.threadId);
       }
@@ -5647,6 +5652,9 @@ const server = createServer(async (req, res) => {
       const body = (await readBody(req)) ?? {};
       const item = inbox.byId(inboxMatch[1]!);
       if (!item) return json(res, 404, { error: "no such inbox item" });
+      if (inboxMatch[2] === "resolve" && item.resolvedAt) {
+        return json(res, 409, { error: "this item was already handled — refresh", code: "ALREADY_RESOLVED" });
+      }
       if (inboxMatch[2] === "seen") {
         inbox.seen(item.id);
         broadcast({ kind: "inbox", items: inbox.list(), counts: inbox.counts() });
@@ -5666,11 +5674,15 @@ const server = createServer(async (req, res) => {
       // act on the task before dropping the item: a send-back runs the work
       // again with the owner's sentence as feedback; an approval records the
       // override of a needs_human gate
+      if (item.kind === "signoff" && action === "approve" && item.taskId && taskFolders) {
+        taskFolders.accept(item.taskId);
+      }
       if (item.kind === "gate_failed" && item.runId && item.subtaskId) {
         if (action === "reject") {
           if (!note) return json(res, 400, { error: "reject needs a note" });
           const reworked = dispatcher.rework(item.runId, item.subtaskId, note);
           if ("error" in reworked) return json(res, 400, reworked);
+          inbox.supersedeForSubtask(item.subtaskId, item.id);
         } else if (action === "approve") {
           dispatcher.acceptGate(item.runId, item.subtaskId);
         }

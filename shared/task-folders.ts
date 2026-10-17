@@ -30,6 +30,8 @@ export interface TaskFolderRecord {
   /** handoff summaries explicitly shared from earlier tasks (read-only
    * context, never the old transcript) */
   sharedFromTaskIds?: string[];
+  /** the owner explicitly accepted the final delivery (signoff) */
+  acceptedAt?: number;
   /** every rendered, budgeted context that was injected (append-only audit) */
   contextShares?: Array<{
     at: number;

@@ -67,6 +67,7 @@ export class TaskFolderStore {
               }
             : {}),
           ...(Number.isFinite(entry.archivedAt) ? { archivedAt: Number(entry.archivedAt) } : {}),
+          ...(Number.isFinite(entry.acceptedAt) ? { acceptedAt: Number(entry.acceptedAt) } : {}),
         }));
     } catch (error) {
       console.error("task folders: could not read the file, starting empty", error);
@@ -207,6 +208,17 @@ export class TaskFolderStore {
     };
     this.folders.push(folder);
     this.save();
+    return folder;
+  }
+
+  /** The owner accepted the final delivery. Idempotent; keeps the timestamp. */
+  accept(id: string): TaskFolderRecord | { error: string } {
+    const folder = this.byId(id);
+    if (!folder) return { error: "no such task folder" };
+    if (!folder.acceptedAt) {
+      folder.acceptedAt = Date.now();
+      this.save();
+    }
     return folder;
   }
 

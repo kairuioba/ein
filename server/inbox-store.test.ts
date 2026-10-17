@@ -24,6 +24,16 @@ describe("inbox", () => {
     expect(store.counts()).toMatchObject({ needsYou: 0, unseen: 0 });
   });
 
+  it("supersedes stale items for the same subtask when a send-back starts a new attempt", () => {
+    const { store } = temp();
+    const first = store.add({ kind: "gate_failed", taskId: "t1", subtaskId: "s1", attemptId: "a1", title: "文案", reason: "需要你" });
+    const second = store.add({ kind: "gate_failed", taskId: "t1", subtaskId: "s1", attemptId: "a2", title: "文案", reason: "需要你" });
+    store.supersedeForSubtask("s1", second.id);
+    expect(store.byId(first.id)?.resolvedAt).toBeTruthy();
+    expect(store.byId(second.id)?.resolvedAt).toBeUndefined();
+    expect(store.counts().needsYou).toBe(1);
+  });
+
   it("a new attempt gets its own item and survives a reload", () => {
     const dir = mkdtempSync(join(tmpdir(), "ein-inbox-"));
     const store = new InboxStore(dir);

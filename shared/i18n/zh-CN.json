@@ -3052,6 +3052,7 @@
   "This scheduled task no longer exists.": "这个定时任务已不存在。",
   "This should only take a moment.": "这只需要一点时间。",
   "This subtask finished but its acceptance criteria could not be confirmed.": "子任务已完成，但验收标准还无法确认。",
+  "This subtask was sent back too many times — approve it or abandon it instead.": "这个子任务被打回太多次了，请选择通过或放弃。",
   "This task ended on {date}. Start a new task to continue; it can use this task as a reference.": "这个任务已于 {date} 结束，不能继续对话。你可以新建任务继续，并把这个任务作为参考。",
   "This team does not have a name.": "此团队没有名称。",
   "This team file is missing its team definition.": "此团队文件缺少团队定义。",

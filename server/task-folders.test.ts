@@ -69,6 +69,20 @@ describe("task folders", () => {
     expect(store.byConversation("win-1")?.id).toBe(created.id);
   });
 
+  it("records the owner's acceptance once", () => {
+    const { store } = temp();
+    const created = store.create({ title: "任务" });
+    if ("error" in created) throw new Error(created.error);
+    const accepted = store.accept(created.id);
+    expect("error" in accepted).toBe(false);
+    if ("error" in accepted) return;
+    expect(accepted.acceptedAt).toEqual(expect.any(Number));
+    const first = accepted.acceptedAt;
+    const again = store.accept(created.id);
+    if ("error" in again) throw new Error(again.error);
+    expect(again.acceptedAt).toBe(first);
+  });
+
   it("records fork lineage and is idempotent by client request id", () => {
     const { store } = temp();
     const forked = store.create({ title: "续作", conversationId: "win-2", forkedFromTaskId: "old", forkRequestId: "req-1" });

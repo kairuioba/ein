@@ -199,6 +199,8 @@ export interface Task {
   /** folder this task's turns run in, pinned on its first turn; null =
    * legacy home-folder session; absent = not pinned yet */
   cwd?: string | null;
+  /** when this task last received a message (from the server) */
+  lastActivityAt?: number;
 }
 
 export interface TaskUsage {

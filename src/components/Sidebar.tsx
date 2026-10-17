@@ -47,6 +47,7 @@ import { skillRecorderEnabled } from "@/lib/feature-flags";
 import { nextRename } from "@/lib/rename";
 import { downloadAllBots } from "@/lib/team-files";
 import { buildDepartments, chiefBot, unassignedBots } from "@/lib/org";
+import { activityTask } from "@/lib/bot-tasks";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { TeamLibraryPanel, type TeamImportResult } from "./TeamLibraryPanel";
 import { RenameTitle } from "./RenameTitle";
@@ -348,7 +349,13 @@ function BotRow({
       : cn("gap-2 rounded-[11px] px-1.5", chief ? (compact ? "h-10" : "h-12") : compact ? "h-8" : "h-10"),
     selected ? SELECTED_FILL : ROW_HOVER,
   );
-  const select = () => dispatch({ type: "select", id: bot.id });
+  const select = () => {
+    dispatch({ type: "select", id: bot.id });
+    // the badge may be about a different task than the active one: open the
+    // conversation that actually has the news instead of a blank new task
+    const target = activityTask(bot);
+    if (target) dispatch({ type: "switchTask", botId: bot.id, threadId: target.threadId });
+  };
   const openMenuAt = (x: number, y: number) => onMenu({ botId: bot.id, x, y });
   const flag = needsYou ? (
     <Diamond size={13} label={t("Needs you")} />

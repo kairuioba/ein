@@ -160,10 +160,13 @@ export function validRef(ref: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/.test(ref) && !ref.includes("..");
 }
 
-/** The gh arguments that start a build. The workflow definition always comes
- * from main (it carries the channel switch); `ref` is the code that is built. */
+/** The gh arguments that start a build. A dev build takes the workflow
+ * definition from the branch it builds, so workflow fixes on that branch
+ * (the verify gate, packaging flags) apply immediately without waiting for a
+ * merge into main. The stable release always runs the workflow from main. */
 export function releaseArgs(channel: UpdateChannel, ref: string): string[] {
-  return ["workflow", "run", RELEASE_WORKFLOW, "-R", SOURCE_REPO, "--ref", "main", "-f", `ref=${ref}`, "-f", `channel=${channel}`, "-f", "windows=true"];
+  const workflowRef = channel === "dev" ? ref : "main";
+  return ["workflow", "run", RELEASE_WORKFLOW, "-R", SOURCE_REPO, "--ref", workflowRef, "-f", `ref=${ref}`, "-f", `channel=${channel}`, "-f", "windows=true"];
 }
 
 /** Start a dev build of `ref` (only dev-channel installs get it) or the
@@ -171,6 +174,68 @@ export function releaseArgs(channel: UpdateChannel, ref: string): string[] {
 export async function dispatchRelease(channel: UpdateChannel, ref: string, run: ToolRunner = runTool): Promise<ToolResult> {
   if (!validRef(ref)) return { ok: false, out: "invalid ref" };
   return run("gh", releaseArgs(channel, ref));
+}
+
+export interface ReleasePreflight {
+  ref: string;
+  /** the ref exists as a branch on the source repository */
+  branch: boolean;
+  /** the release workflow file exists on that ref */
+  workflow: boolean;
+  /** package.json version on that ref */
+  version?: string;
+  /** the first dev version a build from this ref would produce */
+  nextDevVersion?: string;
+  /** latest non-prerelease tag in the releases repository */
+  latestStable?: string;
+  /** the version on that ref is already the latest stable release */
+  stableAlreadyReleased?: boolean;
+}
+
+/** Everything the maintenance desk should know before it starts a build: is
+ * the branch on GitHub, does it carry the workflow, which version would the
+ * build have, and is main's version already released. Read-only gh calls. */
+export async function releasePreflight(ref: string, run: ToolRunner = runTool): Promise<ReleasePreflight> {
+  const empty: ReleasePreflight = { ref, branch: false, workflow: false };
+  if (!validRef(ref)) return empty;
+  const encoded = encodeURIComponent(ref);
+  const [branch, workflow, pkg] = await Promise.all([
+    run("gh", ["api", `repos/${SOURCE_REPO}/branches/${encoded}`, "--jq", ".name"]),
+    run("gh", ["api", `repos/${SOURCE_REPO}/contents/.github/workflows/${RELEASE_WORKFLOW}?ref=${encoded}`, "--jq", ".name"]),
+    run("gh", ["api", `repos/${SOURCE_REPO}/contents/package.json?ref=${encoded}`, "--jq", ".content"]),
+  ]);
+  const result: ReleasePreflight = {
+    ...empty,
+    branch: branch.ok && branch.out.trim() === ref,
+    workflow: workflow.ok,
+  };
+  if (pkg.ok && pkg.out.trim()) {
+    try {
+      const text = Buffer.from(pkg.out.replace(/\s+/g, ""), "base64").toString("utf8");
+      const parsed = JSON.parse(text) as { version?: unknown };
+      if (typeof parsed.version === "string" && parsed.version.trim()) {
+        result.version = parsed.version.trim();
+        const match = /^(\d+)\.(\d+)\.(\d+)/.exec(result.version);
+        if (match) result.nextDevVersion = `${match[1]}.${match[2]}.${Number(match[3]) + 1}-dev.N`;
+      }
+    } catch {
+      /* a branch whose package.json is not valid JSON still builds; only the hint is lost */
+    }
+  }
+  const releases = await run("gh", ["release", "list", "-R", RELEASES_REPO, "-L", "30", "--json", "tagName,isPrerelease"]);
+  if (releases.ok && releases.out.trim()) {
+    try {
+      const rows = JSON.parse(releases.out) as Array<{ tagName?: unknown; isPrerelease?: unknown }>;
+      const stable = rows.find((row) => row.isPrerelease === false && typeof row.tagName === "string");
+      if (stable) {
+        result.latestStable = String(stable.tagName);
+        result.stableAlreadyReleased = Boolean(result.version && result.latestStable === `v${result.version}`);
+      }
+    } catch {
+      /* hints only */
+    }
+  }
+  return result;
 }
 
 /** The maintenance bot's standing instructions (its persona, ≤ 4000 chars). */
@@ -184,7 +249,7 @@ export function maintenanceHandbook(repoPath: string): string {
     "3. 修改后跑相关测试和检查：受影响的 *.test.ts（pnpm vitest run <文件>），类型检查（pnpm typecheck 或 tsc -p tsconfig.json / tsconfig.server.json --noEmit），界面文字要有中文：node scripts/i18n-merge.mjs && node scripts/i18n-check.mjs。测试不过就继续改，不要往下走。",
     "4. 小步提交，提交信息写清楚改了什么、为什么。干活时在聊天里用中文说清楚进度：先一句复现/根因，再说改哪些文件，最后说测试结果——不要让聊天里只剩命令；命令失败先用一句人话说清原因再继续，别反复重试。",
     "5. 推送前先问老板（推送算对外发布，要批准）：git push -u origin <分支>。",
-    `6. 老板同意后发开发版：gh workflow run ${RELEASE_WORKFLOW} -R ${SOURCE_REPO} --ref main -f ref=<分支> -f channel=dev。开发版只推给开发渠道，老板在自己的客户端里核实。`,
+    `6. 老板同意后发开发版：gh workflow run ${RELEASE_WORKFLOW} -R ${SOURCE_REPO} --ref <分支> -f ref=<分支> -f channel=dev（工作流定义从该分支取，分支上的 verify/打包修复立即生效，不必等合 main）。开发版只推给开发渠道，老板在自己的客户端里核实。`,
     `7. 老板核实无误、并明确说「发布正式版」后：把分支合进 main（git switch main && git pull && git merge --no-ff <分支>），把 package.json 的 version 加一个补丁号，提交并推送 main，再运行 gh workflow run ${RELEASE_WORKFLOW} -R ${SOURCE_REPO} --ref main -f ref=main -f channel=stable。`,
     "",
     "备份与回退：",

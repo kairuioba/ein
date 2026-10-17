@@ -40,8 +40,10 @@ import {
   MAINTENANCE_SECTION,
   maintenanceHandbook,
   recentReleases,
+  releasePreflight,
   repoState,
   runTool,
+  validRef,
 } from "./maintenance.ts";
 import {
   attachmentExists,
@@ -7929,6 +7931,13 @@ const server = createServer(async (req, res) => {
         broadcast({ kind: "bot", bot: wireBot(bot) });
         return json(res, 200, { repoPath, repo, bot: { id: bot.id, name: bot.name }, channel: cfg.maintenance?.channel ?? "stable" });
       }
+      if (path === "/api/maintenance/preflight" && method === "POST") {
+        // Read-only hints for the build card: is the branch on GitHub, does it
+        // carry the workflow, which version would the build have.
+        const ref = typeof body?.ref === "string" && body.ref.trim() ? body.ref.trim() : "main";
+        if (!validRef(ref)) return json(res, 400, { error: "invalid ref" });
+        return json(res, 200, await releasePreflight(ref));
+      }
       if (path === "/api/maintenance/channel" && method === "PUT") {
         const channel = body?.channel === "dev" ? "dev" : body?.channel === "stable" ? "stable" : null;
         if (!channel) return json(res, 400, { error: "channel must be stable or dev" });
@@ -7944,7 +7953,11 @@ const server = createServer(async (req, res) => {
         const ref = channel === "stable" ? "main" : typeof body?.ref === "string" && body.ref.trim() ? body.ref.trim() : "main";
         const started = await dispatchRelease(channel, ref);
         if (!started.ok) return json(res, 502, { error: started.out || t("Could not start the build") });
-        return json(res, 202, { ok: true, channel, ref });
+        // GitHub registers the run a moment after the dispatch; wait briefly so
+        // the card can link the run instead of showing only a dry "started".
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+        const run = (await recentReleases())[0] ?? null;
+        return json(res, 202, { ok: true, channel, ref, run });
       }
       return json(res, 404, { error: "not found" });
     }

@@ -76,6 +76,7 @@ import { TaskFolderStore } from "./task-folders.ts";
 import { buildTaskRetro } from "./task-retro.ts";
 import { buildStateDoc } from "./state-doc.ts";
 import { buildOwnerMetrics } from "./owner-metrics.ts";
+import { buildMorningBrief } from "./morning-brief.ts";
 import { buildDecisionStack, emptyDecisionStack } from "./decision-stack.ts";
 import { buildProjectOffice, emptyProjectOffice } from "./office-view.ts";
 import { buildContextShare, type ContextSource } from "./context-share.ts";
@@ -5747,6 +5748,13 @@ const server = createServer(async (req, res) => {
       if ("error" in resolved) return json(res, 400, resolved);
       broadcast({ kind: "inbox", items: inbox.list(), counts: inbox.counts() });
       return json(res, 200, { item: resolved, counts: inbox.counts() });
+    }
+
+    // ── 晨报：三个数字，不调用模型 ────────────────────────────────────
+    if (path === "/api/office/brief" && method === "GET") {
+      const running = (dispatcher.list() ?? []).filter((run) => run.status === "running" || run.status === "synthesizing").length;
+      const metrics = buildOwnerMetrics({ items: inbox.list("all"), retros: dispatcher.retros(50), waitingProjects: running });
+      return json(res, 200, { brief: buildMorningBrief({ metrics, waitingProjects: running }) });
     }
 
     // ── 老板时间账本：决策延迟 / 返工率 / 待处理 ─────────────────────

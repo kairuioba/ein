@@ -5752,6 +5752,14 @@ const server = createServer(async (req, res) => {
     // 只读复盘与派单事实，生成提案并记录老板的决定；不改代码、不发版。
     if (path === "/api/evolution" && method === "GET") {
       const signals = deriveSignals({ retros: dispatcher.retros(50), runs: dispatcher.list(), now: Date.now() });
+      // reading the feed also folds any new failure pattern into a proposal:
+      // the owner should never have to press "generate" before seeing it
+      // (append is idempotent: an open proposal for the same signal is reused)
+      try {
+        evolution.append(proposeImprovements(signals));
+      } catch (error) {
+        console.error("evolution: could not fold new proposals", error);
+      }
       const proposals = evolution.list("all");
       return json(res, 200, { signals, proposals, open: proposals.filter((item) => item.status === "open").length });
     }

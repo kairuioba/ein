@@ -26,13 +26,14 @@ export interface TaskFolderRecord {
   /** handoff summaries explicitly shared from earlier tasks (read-only
    * context, never the old transcript) */
   sharedFromTaskIds?: string[];
-  /** the rendered, budgeted context that was actually injected (audit) */
-  contextShare?: {
+  /** every rendered, budgeted context that was injected (append-only audit) */
+  contextShares?: Array<{
     at: number;
     fromTaskIds: string[];
     tokens: number;
     text: string;
-  };
+    acceptedBasis?: "gate" | "proxy";
+  }>;
   createdAt: number;
   archivedAt?: number;
 }

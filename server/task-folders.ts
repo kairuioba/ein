@@ -51,7 +51,18 @@ export class TaskFolderStore {
           createdAt: Number.isFinite(entry.createdAt) ? entry.createdAt : Date.now(),
           ...(typeof entry.leadBotId === "string" && entry.leadBotId ? { leadBotId: entry.leadBotId } : {}),
           ...(typeof entry.runId === "string" && entry.runId ? { runId: entry.runId } : {}),
-          ...(entry.contextShare && typeof entry.contextShare === "object" ? { contextShare: entry.contextShare } : {}),
+          ...(Array.isArray(entry.contextShares) ? { contextShares: entry.contextShares } : {}),
+          ...((entry as TaskFolderRecord & { contextShare?: unknown }).contextShare &&
+          typeof (entry as TaskFolderRecord & { contextShare?: unknown }).contextShare === "object"
+            ? {
+                contextShares: [
+                  {
+                    ...((entry as TaskFolderRecord & { contextShare: { at: number; fromTaskIds: string[]; tokens: number; text: string } }).contextShare),
+                    acceptedBasis: "proxy" as const,
+                  },
+                ],
+              }
+            : {}),
           ...(Number.isFinite(entry.archivedAt) ? { archivedAt: Number(entry.archivedAt) } : {}),
         }));
     } catch (error) {
@@ -172,7 +183,10 @@ export class TaskFolderStore {
     const folder = this.byId(id);
     if (!folder) return { error: "no such task folder" };
     folder.sharedFromTaskIds = [...share.fromTaskIds];
-    folder.contextShare = { at: Date.now(), fromTaskIds: [...share.fromTaskIds], tokens: share.tokens, text: share.text };
+    folder.contextShares = [
+      ...(folder.contextShares ?? []),
+      { at: Date.now(), fromTaskIds: [...share.fromTaskIds], tokens: share.tokens, text: share.text, acceptedBasis: "proxy" as const },
+    ].slice(-20);
     this.save();
     return folder;
   }

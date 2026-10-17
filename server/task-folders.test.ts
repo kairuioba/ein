@@ -58,6 +58,22 @@ describe("task folders", () => {
     expect(store.create({ title: "手动任务", leadBotId: "lead-b" })).toMatchObject({ leadBotId: "lead-b" });
   });
 
+  it("keeps every context share as an append-only audit snapshot", () => {
+    const { dir, store } = temp();
+    const target = store.create({ title: "新任务" });
+    if ("error" in target) throw new Error(target.error);
+    const first = store.setContextShare(target.id, { fromTaskIds: ["t1"], tokens: 120, text: "第一版共享" });
+    expect("error" in first).toBe(false);
+    const second = store.setContextShare(target.id, { fromTaskIds: ["t1", "t2"], tokens: 90, text: "第二版共享" });
+    expect("error" in second).toBe(false);
+    if ("error" in second) return;
+    expect(second.contextShares).toHaveLength(2);
+    expect(second.contextShares?.[0]).toMatchObject({ fromTaskIds: ["t1"], text: "第一版共享", acceptedBasis: "proxy" });
+    expect(second.contextShares?.[1]).toMatchObject({ fromTaskIds: ["t1", "t2"], text: "第二版共享" });
+    const reloaded = new TaskFolderStore(dir);
+    expect(reloaded.byId(target.id)?.contextShares).toHaveLength(2);
+  });
+
   it("seeds one folder per recent top-level run and persists across reloads", () => {
     const dir = mkdtempSync(join(tmpdir(), "ein-task-folders-"));
     const runs = [

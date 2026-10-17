@@ -1044,6 +1044,18 @@ describe("Store task working folder", () => {
     expect(store.taskByThread(bot.id, bot.threadId)?.cwd).toBeNull();
   });
 
+  it("closes a finished task's window without deleting or moving it", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const task = store.createTask(bot.id, "dispatch s1", false, { folderId: "folder-a", attemptId: "attempt-1" })!;
+    store.closeTask(task.threadId);
+    expect(store.taskByThread(bot.id, task.threadId)).toMatchObject({ folderId: "folder-a", closedAt: expect.any(Number) });
+    const closedAt = store.taskByThread(bot.id, task.threadId)!.closedAt;
+    store.closeTask(task.threadId); // idempotent: a second close does not move it
+    expect(store.taskByThread(bot.id, task.threadId)!.closedAt).toBe(closedAt);
+    expect(store.taskByThread(bot.id, task.threadId)?.folderId).toBe("folder-a");
+  });
+
   it("binds a dispatched conversation to its task folder and attempt, and never moves it", () => {
     const store = new Store(selection);
     const bot = store.createBot();

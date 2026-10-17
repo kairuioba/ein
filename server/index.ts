@@ -2327,8 +2327,9 @@ const dispatcher = new Dispatcher({
     if (run.parentRunId) return;
     try {
       const folder = taskFolders?.ensureForRun(run, taskLeadForRun(run), run.sourceThreadId);
-      // the task is over: its windows stay readable (for review) but closed
-      if (run.status === "done" || run.status === "failed" || run.status === "canceled") {
+      // only a COMPLETED task closes its windows: cancelled/failed runs stay
+      // open so the owner can retry or continue working in them
+      if (run.status === "done") {
         if (folder?.conversationId) store.closeTask(folder.conversationId);
         for (const subtask of run.subtasks) if (subtask.threadId) store.closeTask(subtask.threadId);
       }
@@ -2614,6 +2615,12 @@ async function startTurn(
   if (opts?.automationSource === undefined && !opts?.commsDepth && !opts?.cardContinuation) unattended.clear(bot.id);
   const task = store.taskByThread(bot.id, threadId);
   if (!task) throw Object.assign(new Error(t("no such task")), { status: 404 });
+  if (task.closedAt) {
+    throw Object.assign(
+      new Error(t("This task ended on {date}. Start a new task to continue; it can use this task as a reference.", { date: new Date(task.closedAt).toLocaleDateString() })),
+      { status: 409, code: "TASK_CLOSED" },
+    );
+  }
   const commsDepth = opts?.commsDepth ?? 0;
   // a task takes its name from the first thing you asked it to do
   if (text.trim() && !opts?.cardContinuation) store.titleTaskFromFirstMessage(bot.id, text, threadId);
@@ -7484,8 +7491,21 @@ const server = createServer(async (req, res) => {
       // receipt after a task switch, while a genuinely new send still has to
       // target the task that is active now.
       const threadId = body.threadId ?? bot.threadId;
-      if (!store.taskByThread(bot.id, threadId)) {
+      const targetTask = store.taskByThread(bot.id, threadId);
+      if (!targetTask) {
         return json(res, 409, { error: t("the bot switched tasks before it could receive the message") });
+      }
+      if (targetTask.closedAt) {
+        // the window is read-only: continue by forking a new task that keeps
+        // the old one as reference (its approach, not its transcript)
+        return json(res, 409, {
+          error: t("This task ended on {date}. Start a new task to continue; it can use this task as a reference.", {
+            date: new Date(targetTask.closedAt).toLocaleDateString(),
+          }),
+          code: "TASK_CLOSED",
+          closedAt: targetTask.closedAt,
+          canFork: true,
+        });
       }
       const sendId = parseSendId(body.sendId);
       const replyTo = resolveReplyTarget(threadId, body.replyToId);

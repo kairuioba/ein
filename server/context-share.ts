@@ -8,8 +8,10 @@
 export interface ContextSource {
   taskId: string;
   title: string;
-  /** accepted = the task's gate passed (v1 proxy: run done + no failed leaf) */
+  /** accepted = the task's gate passed (until the gate exists this is a
+   * PROXY: run done + no failed leaf); acceptedBasis records which one */
   accepted: boolean;
+  acceptedBasis?: "gate" | "proxy";
   goal?: string;
   artifacts?: string[];
   decisions?: string[];
@@ -43,8 +45,9 @@ export function buildContextShare(sources: readonly ContextSource[]): RenderedCo
   let budget = BUDGET_TOKENS;
   for (const source of picked) {
     if (budget <= 0) break;
+    const basis = source.acceptedBasis ?? "proxy";
     const header = source.accepted
-      ? `<prior_context readonly="true" source_task="${source.taskId}" accepted="true">`
+      ? `<prior_context readonly="true" source_task="${source.taskId}" accepted="true" accepted_basis="${basis}">`
       : `<prior_context readonly="true" source_task="${source.taskId}" negative="true">`;
     const parts = [
       source.accepted ? `[outcome] ${clip(source.goal ?? source.title, 160)}` : `[negative outcome] ${clip(source.goal ?? source.title, 160)}`,

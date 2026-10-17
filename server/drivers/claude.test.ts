@@ -276,6 +276,46 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(seen.env.OMB_TTS_KEY).toBeUndefined();
   });
 
+  // Regression: a CLI signed in with a Console account, an API key or a relay
+  // token ran turns billed per use, and Ein showed it as signed in.
+  it("refuses a cloud turn when the CLI is not on the user's subscription", async () => {
+    process.env.FAKE_CLAUDE_AUTH = "console";
+    try {
+      await create();
+      const dump = join(scratch, "dump-console.json");
+      process.env.FAKE_CLAUDE_DUMP = dump;
+
+      await instance.adapter.sendTurn({ threadId: "t-console", text: "hi", model: "claude-sonnet-5-5" });
+      const done = await recorder.until((e) => e.type === "turn.completed");
+
+      expect(done).toMatchObject({ ok: false, stopReason: "auth_required" });
+      const error = recorder.events.find((e) => e.type === "runtime.error");
+      expect(error).toMatchObject({ setup: true });
+      expect((error as { message: string }).message).toContain("Console");
+      // nothing was spawned to run the turn
+      expect(existsSync(dump)).toBe(false);
+      expect(await instance.snapshot()).toMatchObject({ state: "available", authenticated: false });
+      expect((await instance.snapshot()).reason).toContain("Console");
+    } finally {
+      delete process.env.FAKE_CLAUDE_AUTH;
+    }
+  });
+
+  it("runs on the subscription token and runs local models without any cloud sign-in", async () => {
+    process.env.FAKE_CLAUDE_AUTH = "setup-token";
+    try {
+      await create(undefined, { UNSLOTH_STUDIO_AUTH_TOKEN: "unsloth-secret" });
+      await instance.adapter.sendTurn({ threadId: "t-setup-token", text: "hi" });
+      expect(await recorder.until((e) => e.type === "turn.completed" && e.threadId === "t-setup-token")).toMatchObject({ ok: true });
+
+      process.env.FAKE_CLAUDE_AUTH = "out";
+      await instance.adapter.sendTurn({ threadId: "t-local-no-login", text: "hi", model: "unsloth::local-model" });
+      expect(await recorder.until((e) => e.type === "turn.completed" && e.threadId === "t-local-no-login")).toMatchObject({ ok: true });
+    } finally {
+      delete process.env.FAKE_CLAUDE_AUTH;
+    }
+  });
+
   it("uses instance credentials when launching an injected local model", async () => {
     await create(undefined, { UNSLOTH_STUDIO_AUTH_TOKEN: "unsloth-secret" });
     const dump = join(scratch, "dump.json");

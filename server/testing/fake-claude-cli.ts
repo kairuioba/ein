@@ -14,7 +14,9 @@
 //                      private temp file and deletes it when the turn settles,
 //                      so a test cannot open it after the fact.
 //   FAKE_CLAUDE_AUTH   in (default) | out | unsupported | malformed |
-//                      inherited-api-key — what `auth status` reports
+//                      inherited-api-key | console | settings-auth-token |
+//                      setup-token | helper | bedrock — what `auth status`
+//                      reports (JSON, and the --text form's token line)
 //   FAKE_CLAUDE_ARGV_LOG  path to APPEND one JSON line per turn: {argv,
 //                      prompt} — for runs where several turns share one path
 //
@@ -47,10 +49,26 @@ if (argv[0] === "auth" && argv[1] === "status") {
     process.stdout.write("not json\n");
     process.exit(0);
   }
-  const loggedIn = auth === "in" || (auth === "inherited-api-key" && Boolean(process.env.ANTHROPIC_API_KEY));
+  // the shapes the real CLI (2.1.302) prints for each way of being signed in
+  const statuses: Record<string, { json: Record<string, unknown>; text: string }> = {
+    in: { json: { loggedIn: true, authMethod: "claude.ai", apiProvider: "firstParty", subscriptionType: "max" }, text: "Login method: Claude Max account" },
+    out: { json: { loggedIn: false, authMethod: "none", apiProvider: "firstParty" }, text: "Not logged in. Run claude auth login to authenticate." },
+    console: { json: { loggedIn: true, authMethod: "api_key", apiProvider: "firstParty", apiKeySource: "/login managed key" }, text: "API key: /login managed key" },
+    "settings-auth-token": { json: { loggedIn: true, authMethod: "oauth_token", apiProvider: "firstParty" }, text: "Auth token: ANTHROPIC_AUTH_TOKEN" },
+    "setup-token": { json: { loggedIn: true, authMethod: "oauth_token", apiProvider: "firstParty" }, text: "Auth token: CLAUDE_CODE_OAUTH_TOKEN" },
+    helper: { json: { loggedIn: true, authMethod: "api_key_helper", apiProvider: "firstParty", apiKeySource: "apiKeyHelper" }, text: "API key: apiKeyHelper" },
+    bedrock: { json: { loggedIn: true, authMethod: "third_party", apiProvider: "bedrock" }, text: "API provider: AWS Bedrock" },
+  };
+  const status =
+    auth === "inherited-api-key"
+      ? process.env.ANTHROPIC_API_KEY
+        ? { json: { loggedIn: true, authMethod: "api_key", apiProvider: "firstParty", apiKeySource: "ANTHROPIC_API_KEY" }, text: "API key: ANTHROPIC_API_KEY" }
+        : statuses.out
+      : (statuses[auth] ?? statuses.out);
+  const text = argv.includes("--text");
   process.stdout.write(
-    JSON.stringify({ loggedIn, authMethod: loggedIn ? "claude.ai" : "none", apiProvider: "firstParty" }) + "\n",
-    () => process.exit(auth === "out" ? 1 : 0),
+    (text ? status.text : JSON.stringify(status.json)) + "\n",
+    () => process.exit(status.json.loggedIn ? 0 : 1),
   );
 }
 

@@ -27,7 +27,7 @@ import type {
 } from "../contracts.ts";
 import { newEventId, newId } from "../contracts.ts";
 import { decodeCodexSelection, readCodexModelCatalog, STATIC_CODEX_MODELS } from "./codex-catalog.ts";
-import { codexLocalProviderArgs } from "./local-inject.ts";
+import { codexLocalProviderArgs, decodeInjectId } from "./local-inject.ts";
 import { augmentedPath } from "../env-path.ts";
 import { classifyError, computeBackoff, RETRY_MAX_ATTEMPTS } from "./retry.ts";
 import { appendNative } from "./native.ts";
@@ -74,6 +74,38 @@ function mountMcpServer(
   );
 }
 
+/** How the installed `codex` is signed in, from `codex login status` (on
+ * stderr since 0.147, on stdout before). Ein runs Codex on the user's own
+ * ChatGPT plan only: a login made with an OpenAI API key (`codex login
+ * --with-api-key`) is billed per use, so it does not count. */
+export interface CodexLogin {
+  /** the CLI answered at all — false when it is missing */
+  checked: boolean;
+  loggedIn: boolean;
+  /** signed in with ChatGPT */
+  chatgpt: boolean;
+}
+
+export function parseCodexLoginStatus(failed: boolean, output: string): CodexLogin {
+  // both "Logged in using …" and "Not logged in" mention it; a missing binary doesn't
+  const checked = /logged in/i.test(output);
+  const loggedIn = !failed && /^logged in\b/im.test(output);
+  return { checked, loggedIn, chatgpt: loggedIn && /^logged in using chatgpt\b/im.test(output) };
+}
+
+function codexLoginStatus(cli: string, env: Record<string, string | undefined>): Promise<CodexLogin> {
+  return new Promise((resolve) => {
+    execCli(cli, ["login", "status"], { timeout: 8000, env }, (err, stdout, stderr) =>
+      resolve(parseCodexLoginStatus(Boolean(err), `${stdout ?? ""}\n${stderr ?? ""}`)),
+    );
+  });
+}
+
+function codexLoginProblem(login: CodexLogin): string | undefined {
+  if (!login.loggedIn || login.chatgpt) return undefined;
+  return t("Codex here is signed in with an OpenAI API key, which is billed per use. Ein runs Codex only on your own ChatGPT plan — sign in with ChatGPT.");
+}
+
 export const CodexDriver: ProviderDriver<CodexConfig> = {
   driverKind: DRIVER_KIND,
   metadata: { displayName: "Codex", supportsMultipleInstances: true },
@@ -109,6 +141,15 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       return env;
     };
     const catalogEnv = childEnv();
+    // The last `codex login status` answer, shared by snapshot() and the turn
+    // gate; a refusal re-asks first (the user may just have signed in).
+    let loginCache: { at: number; login: CodexLogin } | null = null;
+    const currentLogin = async (fresh = false): Promise<CodexLogin> => {
+      if (!fresh && loginCache && Date.now() - loginCache.at < 60_000) return loginCache.login;
+      const login = await codexLoginStatus(config.cli, childEnv());
+      loginCache = { at: Date.now(), login };
+      return login;
+    };
     let models = STATIC_CODEX_MODELS;
     const refreshModels = async () => {
       try {
@@ -145,6 +186,20 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       const { threadId } = turn;
       if (active.has(threadId)) throw new Error(t("a turn is already running on this thread"));
       const turnId = newId();
+      // A cloud turn runs on the user's ChatGPT plan or not at all: an API-key
+      // login would bill per use without the user having chosen that. Local
+      // models need no cloud sign-in.
+      if (!decodeInjectId(turn.model)) {
+        let login = await currentLogin();
+        if (login.loggedIn && !login.chatgpt) login = await currentLogin(true);
+        const problem = codexLoginProblem(login);
+        if (problem) {
+          emit({ ...base(threadId, turnId), type: "turn.started" });
+          emit({ ...base(threadId, turnId), type: "runtime.error", message: problem, setup: true });
+          emit({ ...base(threadId, turnId), type: "turn.completed", ok: false, stopReason: "auth_required", cost: null });
+          return { turnId };
+        }
+      }
       // a retry relaunches the whole app-server; the backoff is scaled down in
       // tests so a fake's transient failures don't stall real seconds
       const retryScale = Number(process.env.FAKE_CODEX_RETRY_SCALE ?? "1");
@@ -607,13 +662,17 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       );
     });
     if (!version) return { state: "unavailable", reason: t("`{cli}` CLI not found", { cli: config.cli }) };
-    const authenticated = await new Promise<boolean>((resolve) => {
-      execCli(config.cli, ["login", "status"], { timeout: 8000, env }, (err, stdout, stderr) =>
-        resolve(!err && /^logged in\b/im.test(`${stdout}\n${stderr ?? ""}`)),
-      );
-    });
+    const login = await codexLoginStatus(config.cli, env);
+    loginCache = { at: Date.now(), login };
+    const problem = codexLoginProblem(login);
     // childEnv drops OPENAI_API_KEY on purpose — turns run on the ChatGPT login
-    return { state: "available", version, authenticated, billing: "subscription" };
+    return {
+      state: "available",
+      version,
+      authenticated: login.chatgpt,
+      billing: "subscription",
+      ...(problem ? { reason: problem } : {}),
+    };
   };
 
   return {

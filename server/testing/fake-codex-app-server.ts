@@ -24,6 +24,11 @@ if (process.argv[2] === "login" && process.argv[3] === "status") {
     process.stderr.write("Not logged in\n");
     process.exit(1);
   }
+  // `codex login --with-api-key`: signed in, but billed per use
+  if (mode === "api-key-login") {
+    process.stderr.write("Logged in using an API key - sk-proj-***ABCD\n");
+    process.exit(0);
+  }
   // Codex 0.147.0 reports a successful login on stderr; retain a mode for
   // older versions that wrote the same status on stdout.
   const statusStream = mode === "logged-in-stdout" ? process.stdout : process.stderr;

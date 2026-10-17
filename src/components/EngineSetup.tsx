@@ -153,6 +153,11 @@ export function EngineSetup({
         </span>
         <div className="min-w-0">
           <div className="text-[13px] font-semibold text-ink">{title}</div>
+          {/* why a CLI that has SOME login still needs one (an API key is not
+              the user's own account sign-in) */}
+          {signInOnly && instance.snapshot.reason && (
+            <p className="mt-0.5 text-[12px] leading-relaxed text-warning">{instance.snapshot.reason}</p>
+          )}
           <p className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">{description}</p>
         </div>
       </div>

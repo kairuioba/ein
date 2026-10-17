@@ -42,30 +42,117 @@ import { appendNative } from "./native.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
 import { t } from "../../shared/i18n.ts";
 
-/** Whether `claude` has been signed in.
+/** How the installed `claude` is signed in. */
+export interface ClaudeLogin {
+  /** The CLI answered at all — false when it is missing or printed no status,
+   * so a turn can go on to report the real problem (a missing binary). */
+  checked: boolean;
+  /** The CLI holds some credential. */
+  loggedIn: boolean;
+  /** …and it is the user's own Claude subscription: the claude.ai sign-in, or
+   * the subscription token `claude setup-token` creates. Only this runs turns. */
+  subscription: boolean;
+  /** What the CLI would use instead, when that is not a subscription, for
+   * the setup card: a Console account, a key or token variable from Claude
+   * Code's own settings (Ein's environment never carries one), an
+   * apiKeyHelper, or a cloud provider (Bedrock, Vertex…). */
+  otherLogin?: { kind: "console" | "env" | "helper" | "cloud" | "unknown"; name: string };
+}
+
+function runStatus(
+  run: typeof execCli,
+  cli: string,
+  format: "--json" | "--text",
+  env: NodeJS.ProcessEnv,
+): Promise<string> {
+  return new Promise((resolve) => {
+    // the real CLI exits 1 when signed out but still prints the status
+    run(cli, ["auth", "status", format], { timeout: 8000, env }, (_error, stdout) => resolve(stdout ?? ""));
+  });
+}
+
+/** How `claude` is signed in, from its own `auth status`.
  *
  * Credential storage is deliberately not inspected here. Claude Code uses the
  * macOS Keychain for OAuth, a JSON file on some platforms, and may gain other
  * backends over time. Presence checks also accept stale credentials. The CLI's
  * own machine-readable auth command is the source of truth for every backend.
+ *
+ * Being signed in is not enough: Claude Code also runs on API keys (an
+ * ANTHROPIC_API_KEY, a Console account's managed key, an apiKeyHelper), on
+ * gateway tokens (ANTHROPIC_AUTH_TOKEN, often set in ~/.claude/settings.json
+ * for a relay) and on Bedrock/Vertex — all billed per use. Ein runs Claude on
+ * the user's own subscription only, so those count as not signed in. The JSON
+ * names the method; for "oauth_token" only the text form says whether the
+ * token is the subscription one (CLAUDE_CODE_OAUTH_TOKEN) or a gateway's.
  */
-export function claudeSignedIn(
+export async function claudeLogin(
+  cli: string,
+  env: NodeJS.ProcessEnv,
+  run: typeof execCli = execCli,
+): Promise<ClaudeLogin> {
+  let status: { loggedIn?: unknown; authMethod?: unknown; apiKeySource?: unknown; apiProvider?: unknown };
+  try {
+    const parsed: unknown = JSON.parse(await runStatus(run, cli, "--json", env));
+    if (!parsed || typeof parsed !== "object") return { checked: false, loggedIn: false, subscription: false };
+    status = parsed;
+  } catch {
+    return { checked: false, loggedIn: false, subscription: false };
+  }
+  const checked = true;
+  const loggedIn = status.loggedIn === true;
+  if (!loggedIn) return { checked, loggedIn: false, subscription: false };
+  // Test rigs whose CLI authenticates through a sandbox token opt in here;
+  // nothing in the product sets it.
+  if (env.EIN_CLAUDE_ACCEPT_ANY_LOGIN === "1") return { checked, loggedIn, subscription: true };
+  const method = typeof status.authMethod === "string" ? status.authMethod : undefined;
+  // a CLI too old to name its method: nothing better to go on than loggedIn
+  if (method === undefined || method === "claude.ai") return { checked, loggedIn, subscription: true };
+  if (method === "oauth_token") {
+    const text = await runStatus(run, cli, "--text", env);
+    if (/\bCLAUDE_CODE_OAUTH_TOKEN\b/.test(text)) return { checked, loggedIn, subscription: true };
+    const source = /auth token:\s*([A-Z0-9_]+)/i.exec(text)?.[1];
+    return { checked, loggedIn, subscription: false, otherLogin: { kind: "env", name: source ?? "ANTHROPIC_AUTH_TOKEN" } };
+  }
+  if (method === "api_key") {
+    const source = typeof status.apiKeySource === "string" ? status.apiKeySource : "";
+    if (source === "/login managed key") return { checked, loggedIn, subscription: false, otherLogin: { kind: "console", name: source } };
+    if (source === "apiKeyHelper") return { checked, loggedIn, subscription: false, otherLogin: { kind: "helper", name: source } };
+    return { checked, loggedIn, subscription: false, otherLogin: { kind: "env", name: source || "ANTHROPIC_API_KEY" } };
+  }
+  if (method === "api_key_helper") return { checked, loggedIn, subscription: false, otherLogin: { kind: "helper", name: "apiKeyHelper" } };
+  if (method === "third_party") {
+    const provider = typeof status.apiProvider === "string" && status.apiProvider ? status.apiProvider : method;
+    return { checked, loggedIn, subscription: false, otherLogin: { kind: "cloud", name: `${provider[0]!.toUpperCase()}${provider.slice(1)}` } };
+  }
+  return { checked, loggedIn, subscription: false, otherLogin: { kind: "unknown", name: method } };
+}
+
+/** Whether `claude` is signed in to the user's Claude subscription. */
+export async function claudeSignedIn(
   cli: string,
   env: NodeJS.ProcessEnv,
   run: typeof execCli = execCli,
 ): Promise<boolean> {
-  return new Promise((resolve) => {
-    run(cli, ["auth", "status", "--json"], { timeout: 8000, env }, (_error, stdout) => {
-      try {
-        const status: unknown = JSON.parse(stdout);
-        resolve(
-          typeof status === "object" && status !== null && "loggedIn" in status && status.loggedIn === true,
-        );
-      } catch {
-        resolve(false);
-      }
-    });
-  });
+  return (await claudeLogin(cli, env, run)).subscription;
+}
+
+/** The setup-card line for a CLI that is signed in, but not to a subscription. */
+export function claudeLoginProblem(login: ClaudeLogin): string | undefined {
+  if (login.subscription || !login.loggedIn) return undefined;
+  const other = login.otherLogin ?? { kind: "unknown", name: "" };
+  switch (other.kind) {
+    case "console":
+      return t("Claude Code here is signed in with an Anthropic Console account, which is billed per use. Ein runs Claude only on your own Claude subscription — sign in with your Claude account.");
+    case "env":
+      return t("Claude Code here uses {name} from its own settings (~/.claude/settings.json, \"env\"), which is billed per use. Ein runs Claude only on your own Claude subscription — remove it there, then sign in with your Claude account.", { name: other.name });
+    case "helper":
+      return t("Claude Code here gets an API key from apiKeyHelper in its settings, which is billed per use. Ein runs Claude only on your own Claude subscription — remove it there, then sign in with your Claude account.");
+    case "cloud":
+      return t("Claude Code here is set up for {name}, which is billed per use by that cloud. Ein runs Claude only on your own Claude subscription — sign in with your Claude account.", { name: other.name });
+    default:
+      return t("Claude Code here is signed in without a Claude subscription. Ein runs Claude only on your own Claude subscription — sign in with your Claude account.");
+  }
 }
 
 /** The CLI environment shared by auth probes and real turns.
@@ -86,7 +173,12 @@ function claudeEnvironment(
   // env-injected at boot); none of them are this CLI's to see.
   stripWorkspaceCredentialEnv(env);
   const applied = applyClaudeInject(env, model);
-  if (!applied.injected) delete env.ANTHROPIC_API_KEY;
+  if (!applied.injected) {
+    // per-use credentials never ride along into a subscription turn: an API
+    // key, or a gateway token that would also receive the sign-in
+    delete env.ANTHROPIC_API_KEY;
+    delete env.ANTHROPIC_AUTH_TOKEN;
+  }
   return env;
 }
 
@@ -438,7 +530,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     },
     needsNode: true,
     docsUrl: "https://claude.com/claude-code",
-    signInCommand: "claude",
+    // the official claude.ai sign-in (subscription), never the Console/API one
+    signInCommand: "claude auth login --claudeai",
   },
   models: STATIC_CLAUDE_MODELS,
   decodeConfig,
@@ -457,6 +550,17 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       }
     };
     await refreshModels();
+    // The last answer to "is this the user's subscription?" — snapshot() and
+    // the turn gate share it so a turn does not pay for an `auth status` run
+    // every time; a refusal always re-asks first (the user may just have
+    // signed in).
+    let loginCache: { at: number; login: ClaudeLogin } | null = null;
+    const currentLogin = async (fresh = false): Promise<ClaudeLogin> => {
+      if (!fresh && loginCache && Date.now() - loginCache.at < 60_000) return loginCache.login;
+      const login = await claudeLogin(config.cli, claudeEnvironment(undefined, { ...process.env, ...input.environment }));
+      loginCache = { at: Date.now(), login };
+      return login;
+    };
     const listeners = new Set<RuntimeEventListener>();
     // one active turn per thread; a second send while busy is a caller bug
     const active = new Map<string, { stop: () => void; turnId: string; broker?: ReturnType<typeof createPermissionBroker> }>();
@@ -583,6 +687,28 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       const turnEnvironment: NodeJS.ProcessEnv = { ...process.env, ...input.environment };
       const turnModel = await resolveClaudeTurnModel(turn.model, turnEnvironment);
       const injected = applyClaudeInject({ ...turnEnvironment }, turnModel);
+      // A cloud turn runs on the user's own Claude subscription or not at all:
+      // a CLI signed in with an API key, a Console account or a gateway token
+      // would bill per use without the user ever having chosen that. Local
+      // models (injected) need no cloud sign-in.
+      if (!injected.injected) {
+        let login = await currentLogin();
+        if (!login.subscription) login = await currentLogin(true);
+        // a CLI that could not answer at all goes on to spawn, which reports why
+        if (login.checked && !login.subscription) {
+          emit({ ...base(threadId, turnId), type: "turn.started" });
+          emit({
+            ...base(threadId, turnId),
+            type: "runtime.error",
+            message:
+              claudeLoginProblem(login) ??
+              t("Claude Code is not signed in — run `claude auth login` in a terminal and sign in with your Claude account"),
+            setup: true,
+          });
+          emit({ ...base(threadId, turnId), type: "turn.completed", ok: false, stopReason: "auth_required", cost: null });
+          return { turnId };
+        }
+      }
       if (injected.model) args.push("--model", injected.model);
       if (turn.effort) args.push("--effort", turn.effort);
       if (turn.system) args.push("--append-system-prompt", turn.system);
@@ -1047,11 +1173,18 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         );
       });
       if (!version) return { state: "unavailable", reason: t("`{cli}` CLI not found", { cli: config.cli }) };
-      const authenticated = await claudeSignedIn(config.cli, env);
-      // claudeEnvironment strips ANTHROPIC_API_KEY, so turns run on the
-      // CLI's own login (Pro/Max): the cost it reports is what the call
-      // WOULD bill, not a charge
-      return { state: "available", version, authenticated, billing: "subscription" };
+      const login = await claudeLogin(config.cli, env);
+      loginCache = { at: Date.now(), login };
+      const problem = claudeLoginProblem(login);
+      // Turns run only on the CLI's subscription login (Pro/Max): the cost it
+      // reports is what the call WOULD bill, not a charge
+      return {
+        state: "available",
+        version,
+        authenticated: login.subscription,
+        billing: "subscription",
+        ...(problem ? { reason: problem } : {}),
+      };
     };
 
     /** One-shot Claude call with the prompt on stdin, never argv. Approval

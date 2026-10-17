@@ -456,6 +456,20 @@ describe("CodexDriver turns (fake app-server)", () => {
     });
   });
 
+  // Regression: an API-key login counted as signed in and ran turns billed
+  // per use instead of on the user's ChatGPT plan.
+  it("treats an API-key login as not signed in and refuses cloud turns on it", async () => {
+    await create({ mode: "api-key-login" });
+    const snapshot = await instance.snapshot();
+    expect(snapshot).toMatchObject({ state: "available", authenticated: false });
+    expect(snapshot.reason).toContain("API key");
+
+    await instance.adapter.sendTurn({ threadId: "t-api-key", text: "hi" });
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: false, stopReason: "auth_required" });
+    expect(recorder.events.find((e) => e.type === "runtime.error")).toMatchObject({ setup: true });
+  });
+
   it("also accepts login status from older Codex versions that used stdout", async () => {
     await create({ mode: "logged-in-stdout" });
     await expect(instance.snapshot()).resolves.toMatchObject({

@@ -72,8 +72,12 @@ import * as composio from "./composio.ts";
 import { chiefOfStaffSystemPrompt } from "./chief-of-staff.ts";
 import { reasonLabel } from "./reason-labels.ts";
 import { Dispatcher, dispatchSettings } from "./dispatch.ts";
+import { TaskFolderStore } from "./task-folders.ts";
+import type { DispatchRun } from "../shared/dispatch-types.ts";
+import { DEPARTMENT_COLORS } from "../shared/org-types.ts";
 import { UnattendedBots } from "./unattended-state.ts";
 import { handleDispatchApi } from "./dispatch-api.ts";
+import type { TaskFolderDepartment, TaskFolderStatus, TaskFolderView } from "../shared/task-folders.ts";
 import { handleOrgApi, isOrgApiPath, type OrgApiDeps } from "./org/api.ts";
 import { OrgEventLog } from "./org/events.ts";
 import { OrgLayer } from "./org/layer.ts";
@@ -2129,6 +2133,103 @@ const refreshRecommenderInstances = (): Promise<void> => {
 // fresh scan before every plan, pick and staffing change (dispatch-api)
 for (const delay of [2_000, 8_000, 20_000]) setTimeout(() => void refreshRecommenderInstances(), delay).unref?.();
 setInterval(() => void refreshRecommenderInstances(), 60_000).unref?.();
+// 任务文件夹层：侧栏最外层「任务」。dispatch run 是执行体，这里存用户自己的
+// 整理（颜色/序号/折叠/归档）与任务负责人。建在 dispatcher 之前是为了让广播
+// 钩子能在第一批 run 上就被调用。
+let taskFolders: TaskFolderStore | null = null;
+
+/** The company chief (总控) sits above every task and is never a task lead. */
+function companyChiefId(): string | undefined {
+  return store.bots.find((bot) => !bot.hidden && bot.chiefOfStaff && !bot.section?.trim())?.id ?? store.bots.find((bot) => !bot.hidden && bot.chiefOfStaff)?.id;
+}
+
+/** A task's own lead: the department lead with most of its work, else any
+ * sectioned member, and never the company chief. Undefined for an empty task. */
+function taskLeadForRun(run: DispatchRun): string | undefined {
+  const chief = companyChiefId();
+  const bySection = new Map<string, number>();
+  for (const subtask of run.subtasks) {
+    const section = store.bot(subtask.assigneeBotId)?.section?.trim();
+    if (!section) continue;
+    bySection.set(section, (bySection.get(section) ?? 0) + 1);
+  }
+  for (const [section] of [...bySection.entries()].sort((a, b) => b[1] - a[1])) {
+    const lead = store.bots.find(
+      (bot) => !bot.hidden && bot.id !== chief && bot.chiefOfStaff && bot.section?.trim() === section,
+    );
+    if (lead) return lead.id;
+  }
+  const member = run.subtasks
+    .map((subtask) => store.bot(subtask.assigneeBotId))
+    .find((bot) => Boolean(bot && !bot.hidden && bot.id !== chief));
+  if (member) return member!.id;
+  const squadBot = (run.squads ?? []).flatMap((squad) => squad.botIds).map((id) => store.bot(id)).find((bot) => Boolean(bot && bot.id !== chief));
+  return squadBot?.id;
+}
+
+function taskFolderStatus(run: DispatchRun | undefined): TaskFolderStatus {
+  if (!run) return "draft";
+  switch (run.status) {
+    case "running":
+    case "awaiting-approval":
+    case "synthesizing":
+      return "running";
+    case "done":
+      return "done";
+    case "failed":
+      return "failed";
+    case "canceled":
+      return "canceled";
+    default:
+      return "draft";
+  }
+}
+
+/** Folders plus what their dispatch run knows: status, progress, people and
+ * the departments the task actually uses. */
+function taskFolderViews(): TaskFolderView[] {
+  const folders = taskFolders?.list() ?? [];
+  const runsById = new Map(dispatcher.list().map((run) => [run.id, run]));
+  return folders.map((folder) => {
+    const run = folder.runId ? runsById.get(folder.runId) : undefined;
+    const lead = folder.leadBotId ? store.bot(folder.leadBotId) : undefined;
+    const memberIds = new Set<string>();
+    if (run) {
+      for (const subtask of run.subtasks) if (subtask.assigneeBotId) memberIds.add(subtask.assigneeBotId);
+      for (const squad of run.squads ?? []) for (const botId of squad.botIds) memberIds.add(botId);
+    }
+    const members = [...memberIds].map((id) => store.bot(id)).filter((bot): bot is NonNullable<typeof bot> => Boolean(bot));
+    const bySection = new Map<string, string[]>();
+    for (const bot of members) {
+      const section = bot.section?.trim();
+      if (!section) continue;
+      bySection.set(section, [...(bySection.get(section) ?? []), bot.id]);
+    }
+    const departments: TaskFolderDepartment[] = [...bySection.entries()].map(([section, ids], index) => {
+      const departmentLead = ids.map((id) => store.bot(id)).find((bot) => Boolean(bot?.chiefOfStaff));
+      return {
+        section,
+        people: ids.length,
+        color: DEPARTMENT_COLORS[index % DEPARTMENT_COLORS.length],
+        ...(departmentLead ? { leadBotId: departmentLead.id, leadName: departmentLead.name } : {}),
+      };
+    });
+    const progress = run
+      ? {
+          done: run.subtasks.filter((subtask) => !subtask.childRunId && subtask.status === "done").length,
+          total: run.subtasks.filter((subtask) => !subtask.childRunId).length,
+        }
+      : { done: 0, total: 0 };
+    return {
+      ...folder,
+      status: taskFolderStatus(run),
+      progress,
+      memberCount: members.length,
+      departments,
+      ...(lead ? { leadName: lead.name } : {}),
+    };
+  });
+}
 const dispatcher = new Dispatcher({
   bots: () => store.bots,
   bot: (id) => store.bot(id) ?? undefined,
@@ -2205,12 +2306,21 @@ const dispatcher = new Dispatcher({
   broadcast: (run) => {
     broadcast({ kind: "dispatch.run", run });
     orgLayer.onDispatchRun(run);
+    if (run.parentRunId) return;
+    try {
+      taskFolders?.ensureForRun(run, taskLeadForRun(run));
+      broadcast({ kind: "task-folders", tasks: taskFolderViews() });
+    } catch (error) {
+      console.error("task folders: could not sync a dispatch run", error);
+    }
   },
   broadcastRoutes: (routes) => broadcast({ kind: "dispatch.routes", routes }),
   settings: () => dispatchSettings(cfg.dispatch),
   maxBots: MAX_WORKSPACE_BOTS,
 });
 dispatcher.load();
+taskFolders = new TaskFolderStore(DATA_DIR);
+taskFolders.seedFromRuns(dispatcher.list(), 12, (run) => taskLeadForRun(run));
 setTimeout(() => dispatcher.resumeAll(), 3_000).unref?.();
 // an engine throttling a worker (429s the driver retries) feeds the
 // "is an engine rate limiting us?" question when people are added mid-run
@@ -5443,6 +5553,40 @@ const server = createServer(async (req, res) => {
     // Live Team Map metadata. Prompts and replies never leave their
     // transcripts: this projection carries only ids, status relationships,
     // optional delegation labels, and timestamps.
+    // ── 任务文件夹：侧栏最外层「任务」 ─────────────────────────────────
+    if (path === "/api/task-folders") {
+      if (!taskFolders) return json(res, 503, { error: "task folders are not ready yet" });
+      if (method === "GET") return json(res, 200, { tasks: taskFolderViews() });
+      if (method === "POST") {
+        const body = await readBody(req);
+        if (body?.leadBotId && !store.bot(String(body.leadBotId))) return json(res, 400, { error: "no such lead bot" });
+        const created = taskFolders.create(body ?? {});
+        if ("error" in created) return json(res, 400, created);
+        const tasks = taskFolderViews();
+        broadcast({ kind: "task-folders", tasks });
+        return json(res, 200, { task: tasks.find((task) => task.id === created.id), tasks });
+      }
+    }
+    const folderMatch = path.match(/^\/api\/task-folders\/([\w-]+)$/);
+    if (folderMatch) {
+      if (!taskFolders) return json(res, 503, { error: "task folders are not ready yet" });
+      const body = (await readBody(req)) ?? {};
+      if (method === "PATCH") {
+        if (body.leadBotId && !store.bot(String(body.leadBotId))) return json(res, 400, { error: "no such lead bot" });
+        const patched = taskFolders.patch(folderMatch[1]!, body);
+        if ("error" in patched) return json(res, 404, patched);
+        const tasks = taskFolderViews();
+        broadcast({ kind: "task-folders", tasks });
+        return json(res, 200, { task: tasks.find((task) => task.id === patched.id), tasks });
+      }
+      if (method === "DELETE") {
+        const archived = taskFolders.archive(folderMatch[1]!);
+        if ("error" in archived) return json(res, 404, archived);
+        const tasks = taskFolderViews();
+        broadcast({ kind: "task-folders", tasks });
+        return json(res, 200, { ok: true, tasks });
+      }
+    }
     if (path.startsWith("/api/dispatch/")) {
       if (await handleDispatchApi(method, path, url, req, res, dispatchApiDeps, () => dispatchSettings(cfg.dispatch))) return;
     }

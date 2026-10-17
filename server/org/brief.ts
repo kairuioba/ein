@@ -83,6 +83,11 @@ export function buildBrief(input: BriefInput): Brief {
   const escalateMs = Math.max(1, org.rules.escalateAfterMin) * 60_000;
 
   const subtasks = runs.flatMap((run) => run.subtasks.filter((subtask) => subtask.status !== "canceled").map((subtask) => ({ run, subtask })));
+  // A subtask a lead handed to its own team is a container: its team's
+  // subtasks (the child run, in view too) are the work, so the counts skip
+  // it, as the workbench's do (src/lib/workbench.ts isLeafSubtask).
+  const inView = new Set(runs.map((run) => run.id));
+  const counts = (subtask: DispatchSubtask) => !(subtask.childRunId && inView.has(subtask.childRunId));
 
   // ── risks ──
   const risks: Brief["risks"] = [];
@@ -141,8 +146,8 @@ export function buildBrief(input: BriefInput): Brief {
     const work = subtasks.filter(({ subtask }) => ids.has(subtask.assigneeBotId)).map(({ subtask }) => subtask);
     if (!people.length && !work.length) continue;
     for (const subtask of work) counted.add(subtask);
-    let depDone = work.filter((subtask) => subtask.status === "done").length;
-    let depTotal = work.length;
+    let depDone = work.filter((subtask) => counts(subtask) && subtask.status === "done").length;
+    let depTotal = work.filter(counts).length;
     if (!work.length) {
       // no dispatched work: the conversations the owner started with these
       // bots today, done once the bot has answered
@@ -203,7 +208,7 @@ export function buildBrief(input: BriefInput): Brief {
   }
   // dispatched work assigned outside every department still counts toward the whole
   for (const { subtask } of subtasks) {
-    if (counted.has(subtask)) continue;
+    if (counted.has(subtask) || !counts(subtask)) continue;
     total += 1;
     if (subtask.status === "done") done += 1;
   }

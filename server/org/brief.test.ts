@@ -128,6 +128,38 @@ describe("brief", () => {
     ]);
   });
 
+  it("counts a department's own plan, not also the subtask its lead handed to it", () => {
+    const company: DispatchRun = {
+      ...RUN,
+      id: "company",
+      subtasks: [st("落地页", "dev-lead", "running", { childRunId: "dept", threadId: "t-dl-2" }), st("竞品调研", "market-1", "done", { finishedAt: NOW - 3 * MIN })],
+    };
+    const dept: DispatchRun = {
+      ...RUN,
+      id: "dept",
+      chiefBotId: "dev-lead",
+      sourceThreadId: "t-dl-2",
+      parentRunId: "company",
+      parentSubtaskId: "落地页",
+      subtasks: [st("页面开发", "dev-1", "done", { finishedAt: NOW - MIN }), st("预约接口", "dev-1", "running", { startedAt: NOW - MIN })],
+    };
+    const brief = buildBrief(input({ runs: [company, dept] }));
+    // like the workbench: the lead's subtask is a container for its team's two
+    expect(brief.departments.find((dep) => dep.section === "技术部")).toMatchObject({ done: 1, total: 2 });
+    expect([brief.done, brief.total]).toEqual([2, 3]);
+    // once the team is done and the lead's subtask with it, still two of two
+    const finished = buildBrief(
+      input({
+        runs: [
+          { ...company, subtasks: [{ ...company.subtasks[0]!, status: "done", finishedAt: NOW }, company.subtasks[1]!] },
+          { ...dept, status: "done", subtasks: dept.subtasks.map((subtask) => ({ ...subtask, status: "done" as const, finishedAt: NOW - MIN })) },
+        ],
+      }),
+    );
+    expect(finished.departments.find((dep) => dep.section === "技术部")).toMatchObject({ done: 2, total: 2 });
+    expect(finished.headline).toBe("Overall 3/3; nothing needs your decision.");
+  });
+
   it("falls back to the owner's own conversations when a department has no dispatched work", () => {
     const conversations: Record<string, ConversationState> = {
       "t-cl": { lastAt: NOW - MIN, lastUserAt: NOW - 2 * MIN, replied: true },

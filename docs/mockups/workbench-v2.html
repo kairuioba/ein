@@ -1,0 +1,1101 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Ein · 项目内 AI 协同办公工作台 mockup（官网改版）</title>
+<style>
+  :root{
+    --bg:#0a0d11;--panel:#141a20;--panel-2:#1b222a;--panel-3:#242d36;
+    --ink:#f2f6f8;--ink-2:#c7d2db;--sub:#8f9ca8;--hair:rgba(255,255,255,.09);
+    --green:#5ee2a0;--green-soft:rgba(94,226,160,.14);
+    --amber:#ffb454;--amber-soft:rgba(255,180,84,.10);
+    --red:#ff7a7a;--red-soft:rgba(255,122,122,.10);
+    --purple:#b59cff;--purple-soft:rgba(181,156,255,.12);
+    --grey:#8f9ca8;--grey-soft:rgba(143,156,168,.14);
+    --font:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Noto Sans SC","Microsoft YaHei",sans-serif;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{
+    margin:0;background:radial-gradient(1200px 800px at 50% -10%,#121820 0%,#05070a 62%);
+    color:var(--ink);font-family:var(--font);display:flex;align-items:center;justify-content:center;min-height:100dvh;
+  }
+  button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer;text-align:left}
+  input,textarea{font:inherit;color:inherit}
+  .stage{display:flex;flex-direction:column;align-items:center;gap:14px;padding:24px 16px}
+  .stage-hint{max-width:375px;margin:0;color:#5b6672;font-size:12px;line-height:1.7;text-align:center}
+  .stage-hint b{color:#8f9ca8;font-weight:600}
+
+  .phone{
+    position:relative;width:375px;height:812px;flex:0 0 auto;background:var(--bg);
+    border:1px solid rgba(255,255,255,.14);border-radius:44px;overflow:hidden;
+    box-shadow:0 40px 100px rgba(0,0,0,.65),0 0 0 6px rgba(255,255,255,.03);
+    display:grid;grid-template-rows:auto 1fr auto;isolation:isolate;
+  }
+  .statusbar{height:32px;display:flex;align-items:center;justify-content:space-between;padding:0 24px;font-size:12px;font-weight:600;color:#d7e0e7}
+  .statusbar .right{display:flex;align-items:center;gap:6px}
+  .sig{display:inline-flex;align-items:flex-end;gap:2px;height:10px}
+  .sig i{display:block;width:2.5px;background:#d7e0e7;border-radius:1px}
+  .sig i:nth-child(1){height:3px}.sig i:nth-child(2){height:5px}.sig i:nth-child(3){height:7px}.sig i:nth-child(4){height:9px}
+  .battery{width:20px;height:10px;border:1px solid rgba(255,255,255,.55);border-radius:2.5px;position:relative}
+  .battery::after{content:"";position:absolute;inset:1.5px;right:5px;background:#d7e0e7;border-radius:1px}
+
+  .screens{position:relative;min-height:0;overflow:hidden}
+  .screen{position:absolute;inset:0;display:none;flex-direction:column;min-height:0}
+  .screen.active{display:flex}
+  .screen-scroll{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+  .screen-scroll::-webkit-scrollbar{width:0}
+
+  /* 项目头部 */
+  .project-top{display:flex;align-items:center;justify-content:space-between;padding:2px 12px 0;flex:0 0 auto}
+  .project-top .back{color:#9ec9b4;font-size:13px;padding:8px 6px}
+  .project-top .more{color:var(--sub);font-size:20px;line-height:1;padding:6px 10px}
+  .project-head{padding:0 16px}
+  .project-title-row{display:flex;align-items:center;gap:10px}
+  .project-title-row h1{font-size:22px;line-height:30px;font-weight:700;margin:0;letter-spacing:.01em}
+  .pill{flex:0 0 auto;padding:4px 9px;border-radius:99px;font-size:10.5px;font-weight:600;white-space:nowrap}
+  .pill-needs{color:#ffd08a;background:var(--amber-soft);border:1px solid rgba(255,180,84,.32)}
+  .pill-run{color:#9df0c6;background:var(--green-soft);border:1px solid rgba(94,226,160,.28)}
+  .goal{margin:8px 0 0;font-size:13px;line-height:20px;color:var(--ink-2)}
+  .progress-row{display:flex;align-items:center;gap:10px;margin-top:12px}
+  .progress-track{flex:1 1 auto;height:6px;border-radius:99px;background:rgba(255,255,255,.09);overflow:hidden}
+  .progress-fill{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#3fbf84,#5ee2a0);transition:width .35s ease}
+  .progress-label{flex:0 0 auto;font-size:11px;color:var(--sub);font-variant-numeric:tabular-nums}
+
+  /* 区块 */
+  .section{padding:20px 16px 0}
+  .section-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}
+  .section-title{font-size:12px;font-weight:600;color:var(--sub);letter-spacing:.06em}
+  .section-count{font-size:11px;color:var(--sub)}
+  .more-link{font-size:11.5px;color:#8fe3b7;flex:0 0 auto}
+
+  /* 拍板卡 */
+  .decision-card{
+    position:relative;background:linear-gradient(180deg,#1c232b,#161c22);border:1px solid var(--hair);
+    border-radius:16px;padding:14px 14px 12px;box-shadow:0 14px 32px rgba(0,0,0,.32);
+    will-change:transform,opacity;
+  }
+  .decision-card.enter{animation:cardIn .22s ease-out both}
+  @keyframes cardIn{from{transform:translateY(10px);opacity:0}to{transform:none;opacity:1}}
+  .decision-card.fly-away{transform:translate(118%,-14%) rotate(6deg);opacity:0;transition:transform .3s ease-in,opacity .3s ease-in}
+  .card-flag{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:var(--amber);letter-spacing:.04em}
+  .card-title{font-size:17px;line-height:24px;font-weight:700;margin:8px 0 4px}
+  .card-meta{margin:0;font-size:11.5px;line-height:18px;color:var(--sub)}
+  .card-evidence{margin:9px 0 0;font-size:11.5px;line-height:18px;color:#b9c6d0}
+  .card-actions{display:flex;gap:7px;margin-top:12px}
+  .card-actions button{border-radius:10px;text-align:center;font-size:12.5px;height:40px}
+  .btn-primary{background:var(--green);color:#06251a;font-weight:700;flex:1.2 1 0;padding:0 8px}
+  .btn-soft{background:var(--panel-3);border:1px solid var(--hair);color:var(--ink-2);flex:1 1 0;padding:0 8px}
+  .btn-mini{padding:0 10px;height:30px;border-radius:8px;font-size:11.5px;background:var(--panel-3);border:1px solid var(--hair);color:var(--ink-2);text-align:center}
+  .btn-mini.warn{color:#ffd08a;border-color:rgba(255,180,84,.35);background:var(--amber-soft)}
+  .more-decisions{display:flex;align-items:center;justify-content:center;width:100%;margin-top:8px;padding:8px;font-size:11.5px;color:var(--sub)}
+  .empty-needs{padding:16px 14px;border-radius:14px;background:rgba(94,226,160,.07);border:1px solid rgba(94,226,160,.2);font-size:13px;color:#c8ffe4}
+
+  /* 此刻 + 等待链 */
+  .now-card{background:var(--panel);border:1px solid var(--hair);border-radius:14px;overflow:hidden}
+  .now-row{display:flex;align-items:center;gap:10px;width:100%;padding:12px 14px}
+  .now-text{flex:1 1 auto;font-size:12.5px;line-height:19px;color:var(--ink-2)}
+  .now-text b{color:var(--ink);font-weight:600}
+  .wait-time{color:var(--amber)}
+  .chev{flex:0 0 auto;color:#5b6672;font-size:14px;transition:transform .2s ease}
+  .chev.open{transform:rotate(90deg)}
+  .chain{border-top:1px solid rgba(255,255,255,.06);padding:6px 14px 12px}
+  .chain-item{position:relative;display:flex;gap:10px;padding:8px 0 8px 16px;border-left:1px solid rgba(255,255,255,.12);margin-left:3px}
+  .chain-item:last-child{border-left-color:transparent}
+  .chain-dot{position:absolute;left:-4px;top:14px;width:7px;height:7px;border-radius:50%;background:var(--grey);border:1px solid rgba(255,255,255,.25)}
+  .chain-item.done .chain-dot{background:var(--green);border-color:transparent}
+  .chain-item.waiting .chain-dot{background:var(--amber);border-color:transparent}
+  .chain-item.blocked .chain-dot{background:var(--red);border-color:transparent;box-shadow:0 0 0 3px rgba(255,122,122,.16)}
+  .chain-item.future .chain-dot{background:var(--panel-3);border-color:rgba(255,255,255,.2)}
+  .chain-main{flex:1 1 auto;min-width:0}
+  .chain-name{font-size:12.5px;color:var(--ink);font-weight:600}
+  .chain-text{font-size:11.5px;line-height:17px;color:var(--sub);margin-top:1px}
+  .chain-time{flex:0 0 auto;font-size:10.5px;color:var(--sub);white-space:nowrap;padding-top:1px}
+  .chain-time.warn{color:var(--red)}
+  .chain-time.done{color:#8fe3b7}
+  .nudge{flex:0 0 auto;margin-left:6px;padding:4px 8px;border-radius:7px;background:var(--amber-soft);border:1px solid rgba(255,180,84,.32);color:#ffd08a;font-size:10.5px;text-align:center}
+
+  /* 团队 */
+  .team-card{background:var(--panel);border:1px solid var(--hair);border-radius:14px;padding:4px 14px}
+  .team-dept{display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,.05)}
+  .team-dept:last-child{border-bottom:0}
+  .dept-name{flex:0 0 52px;font-size:11.5px;color:var(--sub);padding-top:4px}
+  .members{flex:1 1 auto;display:flex;flex-wrap:wrap;gap:6px 14px}
+  .member{display:inline-flex;align-items:center;gap:5px;padding:3px 2px;font-size:12px;color:var(--ink-2)}
+  .status-dot{width:6px;height:6px;border-radius:50%;flex:0 0 auto}
+  .status-dot.working{background:var(--green);box-shadow:0 0 0 3px rgba(94,226,160,.14)}
+  .status-dot.waiting{background:var(--amber);box-shadow:0 0 0 3px rgba(255,180,84,.14)}
+  .status-dot.reviewing{background:var(--purple);box-shadow:0 0 0 3px rgba(181,156,255,.14)}
+  .status-dot.blocked{background:var(--red);box-shadow:0 0 0 3px rgba(255,122,122,.14)}
+  .status-dot.idle{background:var(--grey)}
+  .member-state{font-size:10px;color:var(--sub)}
+
+  /* 协作流 */
+  .flow-card{background:var(--panel);border:1px solid var(--hair);border-radius:14px;overflow:hidden}
+  .flow-row{display:flex;align-items:flex-start;gap:8px;padding:11px 12px;border-bottom:1px solid rgba(255,255,255,.05)}
+  .flow-row:last-child{border-bottom:0}
+  .flow-main{flex:1 1 auto;min-width:0}
+  .flow-route{font-size:12.5px;color:var(--ink);font-weight:600}
+  .flow-route .arrow{color:var(--sub);font-weight:400;margin:0 3px}
+  .flow-item{font-size:11.5px;line-height:17px;color:var(--sub);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .flow-status{flex:0 0 auto;padding:3px 7px;border-radius:6px;font-size:10px;line-height:14px;white-space:nowrap}
+  .flow-status.waiting{color:#ffd08a;background:var(--amber-soft)}
+  .flow-status.reviewing{color:#d9ccff;background:var(--purple-soft)}
+  .flow-status.bad{color:#ffabab;background:var(--red-soft)}
+  .flow-status.ok{color:#9df0c6;background:var(--green-soft)}
+  .flow-status.boss{color:#ffd08a;background:var(--amber-soft)}
+  .flow-wait{flex:0 0 auto;width:66px;text-align:right;font-size:10.5px;color:var(--sub);padding-top:2px;font-variant-numeric:tabular-nums}
+  .flow-wait.warn{color:var(--red)}
+
+  /* 异常 */
+  .exception-card{background:var(--panel);border:1px solid rgba(255,122,122,.24);border-radius:14px;padding:13px 14px}
+  .ex-title{font-size:13px;line-height:20px;color:#ffcfcf;font-weight:600}
+  .ex-meta{margin:5px 0 0;font-size:11.5px;line-height:18px;color:var(--sub)}
+  .ex-actions{display:flex;gap:7px;margin-top:10px}
+  .ex-actions .btn-mini{flex:1 1 0}
+
+  /* 底部 dock */
+  .dock{flex:0 0 auto;background:rgba(11,15,19,.98);border-top:1px solid rgba(255,255,255,.06);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);z-index:20;padding-bottom:env(safe-area-inset-bottom)}
+  .tabbar{display:grid;grid-template-columns:repeat(4,1fr);height:48px}
+  .tab{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;color:#6c7884;font-size:10px}
+  .tab-ico{font-size:14px;line-height:16px}
+  .tab.active{color:var(--ink)}
+  .tab.active .tab-ico{color:var(--green)}
+  .composer{display:flex;align-items:center;gap:8px;padding:5px 12px 9px}
+  .composer input{
+    flex:1 1 auto;height:38px;padding:0 12px;border-radius:19px;border:1px solid var(--hair);
+    background:var(--panel);color:var(--ink);font-size:13px;outline:none;
+  }
+  .composer input::placeholder{color:#66727e}
+  .send-btn{flex:0 0 auto;height:38px;padding:0 14px;border-radius:19px;background:var(--green);color:#06251a;font-size:12.5px;font-weight:700;text-align:center}
+
+  /* 协作 tab */
+  .tab-page-head{padding:6px 16px 0}
+  .tab-page-head h2{font-size:19px;line-height:26px;font-weight:700;margin:0}
+  .tab-page-head p{margin:5px 0 0;font-size:12px;line-height:18px;color:var(--sub)}
+  .handoff-card{background:var(--panel);border:1px solid var(--hair);border-radius:14px;padding:12px 14px;margin-top:10px}
+  .handoff-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+  .handoff-title{font-size:12.5px;color:var(--ink);font-weight:600}
+  .handoff-state{font-size:10px;padding:3px 7px;border-radius:6px;background:var(--amber-soft);color:#ffd08a}
+  .handoff-state.ok{background:var(--green-soft);color:#9df0c6}
+  .handoff-state.bad{background:var(--red-soft);color:#ffabab}
+  .handoff-grid{display:grid;grid-template-columns:64px 1fr;gap:4px 8px;margin-top:10px;font-size:11.5px;line-height:17px}
+  .handoff-grid .k{color:var(--sub)}
+  .handoff-grid .v{color:var(--ink-2)}
+  .handoff-actions{display:flex;gap:7px;margin-top:11px}
+  .handoff-actions .btn-mini{flex:1 1 0}
+
+  /* 对话 */
+  .msg{display:flex;gap:9px;padding:10px 16px}
+  .avatar{flex:0 0 auto;width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:700;background:var(--panel-3);color:var(--ink-2)}
+  .avatar.boss{background:rgba(94,226,160,.2);color:#9df0c6}
+  .avatar.lead{background:rgba(181,156,255,.18);color:#d9ccff}
+  .msg-body{flex:1 1 auto;min-width:0}
+  .msg-head{display:flex;align-items:baseline;gap:6px;flex-wrap:wrap}
+  .msg-name{font-size:11.5px;font-weight:600;color:var(--ink-2)}
+  .msg-role{font-size:9.5px;color:var(--sub);background:rgba(255,255,255,.06);padding:1px 5px;border-radius:4px}
+  .msg-time{margin-left:auto;font-size:10px;color:#5b6672;font-variant-numeric:tabular-nums}
+  .msg-text{margin:3px 0 0;font-size:12.5px;line-height:19px;color:#cfdae2}
+  .at{color:#8fe3b7;font-weight:600}
+  .quick-at{display:flex;gap:6px;flex-wrap:wrap;padding:6px 16px 4px;border-top:1px solid rgba(255,255,255,.05)}
+  .quick-at button{padding:5px 9px;border-radius:99px;background:var(--panel-2);border:1px solid var(--hair);font-size:11px;color:var(--ink-2)}
+
+  /* 复盘 */
+  .stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+  .stat{background:var(--panel);border:1px solid var(--hair);border-radius:12px;padding:11px 12px}
+  .stat .n{font-size:19px;font-weight:700;color:var(--ink);line-height:24px;font-variant-numeric:tabular-nums}
+  .stat .l{font-size:10.5px;color:var(--sub);margin-top:2px}
+  .retro-block{background:var(--panel);border:1px solid var(--hair);border-radius:14px;padding:12px 14px;margin-top:10px}
+  .retro-block h3{font-size:12px;font-weight:600;color:var(--sub);margin:0 0 8px;letter-spacing:.05em}
+  .retro-line{display:flex;gap:8px;font-size:12px;line-height:19px;color:var(--ink-2);margin-bottom:5px}
+  .retro-line .ok{color:var(--green);font-weight:700;flex:0 0 auto}
+  .retro-line .bad{color:var(--red);font-weight:700;flex:0 0 auto}
+  .retro-line .t{color:var(--sub);flex:0 0 auto}
+  .reset-link{display:block;margin:18px auto 6px;padding:8px;color:#5b6672;font-size:11px;text-align:center}
+
+  /* 半屏 / toast */
+  .sheet-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.56);opacity:0;pointer-events:none;transition:opacity .22s ease;z-index:39}
+  .sheet-backdrop.open{opacity:1;pointer-events:auto}
+  .sheet{
+    position:absolute;left:0;right:0;bottom:0;max-height:84%;overflow-y:auto;z-index:40;
+    background:#171d24;border-radius:22px 22px 0 0;border-top:1px solid rgba(255,255,255,.1);
+    padding:10px 18px calc(18px + env(safe-area-inset-bottom));transform:translateY(104%);
+    transition:transform .26s cubic-bezier(.2,.8,.2,1);box-shadow:0 -22px 60px rgba(0,0,0,.5);
+  }
+  .sheet.open{transform:translateY(0)}
+  .sheet::-webkit-scrollbar{width:0}
+  .sheet-grab{width:36px;height:4px;border-radius:99px;background:rgba(255,255,255,.18);margin:0 auto 14px}
+  .sheet-title{font-size:17px;line-height:24px;font-weight:700;margin:0 0 6px}
+  .sheet-label{font-size:12px;font-weight:600;color:var(--sub);margin:16px 0 8px;letter-spacing:.04em}
+  .sheet-textarea{width:100%;min-height:64px;padding:10px 12px;border-radius:10px;resize:none;border:1px solid var(--hair);background:#0f1419;color:var(--ink);font-size:13px;line-height:20px;outline:none}
+  .sheet-textarea::placeholder{color:#66727e}
+  .reason-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .reason{height:42px;border-radius:10px;border:1px solid var(--hair);background:var(--panel);color:var(--ink-2);font-size:13px;text-align:center}
+  .reason.selected{border-color:rgba(94,226,160,.8);background:var(--green-soft);color:#c8ffe4;font-weight:600}
+  .sheet-actions{display:flex;gap:8px;margin-top:16px}
+  .sheet-actions .btn-primary,.sheet-actions .btn-soft{flex:1 1 0;height:44px}
+  .event-log{margin-top:8px;padding:10px 12px;border-radius:10px;background:#0f1419;border:1px solid var(--hair)}
+  .event{display:flex;gap:8px;font-size:11.5px;line-height:18px;color:var(--ink-2);margin-bottom:6px}
+  .event:last-child{margin-bottom:0}
+  .event .t{flex:0 0 auto;color:var(--sub);font-variant-numeric:tabular-nums}
+  .warn-line{margin-top:10px;padding:8px 10px;border-radius:8px;background:var(--amber-soft);border-left:2px solid var(--amber);font-size:11.5px;line-height:18px;color:#ffd79a}
+  .muted{color:var(--sub);font-size:12px;line-height:19px;margin:4px 0}
+  .hidden{display:none!important}
+
+  .toast{
+    position:absolute;left:14px;right:14px;bottom:110px;z-index:50;display:flex;align-items:center;gap:10px;
+    padding:12px 14px;border-radius:12px;background:#232c35;border:1px solid rgba(255,255,255,.12);
+    box-shadow:0 16px 34px rgba(0,0,0,.45);transform:translateY(12px);opacity:0;pointer-events:none;
+    transition:transform .2s ease,opacity .2s ease;
+  }
+  .toast.show{transform:none;opacity:1;pointer-events:auto}
+  .toast-text{flex:1 1 auto;font-size:12.5px;line-height:18px;color:var(--ink-2)}
+  .toast-action{flex:0 0 auto;color:#8fe3b7;font-size:12.5px;font-weight:700;padding:4px 2px}
+
+  @media (max-width:480px),(max-height:700px){
+    body{display:block;background:var(--bg);min-height:100dvh}
+    .stage{padding:0;gap:0}
+    .stage-hint{display:none}
+    .phone{width:100vw;height:100dvh;max-height:none;border:0;border-radius:0;box-shadow:none}
+  }
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="phone" id="phone" data-screen="overview">
+    <div class="statusbar">
+      <span>02:16</span>
+      <span class="right"><span class="sig"><i></i><i></i><i></i><i></i></span><span>5G</span><span class="battery"></span></span>
+    </div>
+
+    <main class="screens">
+      <!-- 概览 -->
+      <section class="screen" data-view="overview">
+        <div class="screen-scroll">
+          <div class="project-top">
+            <button class="back" data-act="back-projects">← 项目</button>
+            <button class="more" data-act="more" aria-label="更多">⋯</button>
+          </div>
+          <header class="project-head">
+            <div class="project-title-row">
+              <h1>官网改版</h1>
+              <span class="pill pill-needs" id="project-pill">等你拍板</span>
+            </div>
+            <p class="goal">目标：4 周内上线新版官网首页</p>
+            <div class="progress-row">
+              <span class="progress-track"><span class="progress-fill" id="progress-fill" style="width:43%"></span></span>
+              <span class="progress-label" id="progress-label">3/7 子任务 · 预计周五完成</span>
+            </div>
+          </header>
+
+          <section class="section" id="needs-section">
+            <div class="section-head">
+              <span class="section-title">需要你 <span class="section-count" id="needs-count">(2)</span></span>
+            </div>
+            <div id="decision-area"></div>
+          </section>
+
+          <section class="section">
+            <div class="section-head"><span class="section-title">此刻</span></div>
+            <div class="now-card">
+              <button class="now-row" data-act="chain">
+                <span class="now-text" id="now-text">小林 写完文案 → 等 <b>阿哲</b> 评审<span class="wait-time">（已 6 分钟）</span></span>
+                <span class="chev" id="chain-chev">›</span>
+              </button>
+              <div class="chain hidden" id="chain"></div>
+            </div>
+          </section>
+
+          <section class="section">
+            <div class="section-head"><span class="section-title">团队</span></div>
+            <div class="team-card" id="team"></div>
+          </section>
+
+          <section class="section">
+            <div class="section-head">
+              <span class="section-title">协作流</span>
+              <button class="more-link" data-act="go-collab">全部 ›</button>
+            </div>
+            <div class="flow-card" id="flow-preview"></div>
+          </section>
+
+          <section class="section" id="exception-section">
+            <div class="section-head"><span class="section-title">异常</span></div>
+            <div id="exception-area"></div>
+          </section>
+          <div style="height:18px"></div>
+        </div>
+      </section>
+
+      <!-- 协作 -->
+      <section class="screen" data-view="collab">
+        <div class="screen-scroll">
+          <div class="tab-page-head">
+            <h2>协作流</h2>
+            <p>谁在等谁 · 交付物 · 等了多久。等待超过 15 分钟标红。</p>
+          </div>
+          <section class="section">
+            <div class="section-head"><span class="section-title">等待链</span></div>
+            <div class="now-card"><div class="chain" id="chain-full" style="border-top:0"></div></div>
+          </section>
+          <section class="section">
+            <div class="section-head"><span class="section-title">协作流</span></div>
+            <div class="flow-card" id="flow-full"></div>
+          </section>
+          <section class="section">
+            <div class="section-head"><span class="section-title">交接物</span><span class="section-count">接收方要显式接收</span></div>
+            <div id="handoffs"></div>
+          </section>
+          <div style="height:18px"></div>
+        </div>
+      </section>
+
+      <!-- 对话 -->
+      <section class="screen" data-view="chat">
+        <div class="screen-scroll" id="chat-scroll">
+          <div class="tab-page-head">
+            <h2>项目对话</h2>
+            <p>发给项目负责人，由它拆成动作；@谁，谁单独回你。</p>
+          </div>
+          <div id="messages"></div>
+          <div class="quick-at">
+            <button data-act="at" data-name="小林">@小林</button>
+            <button data-act="at" data-name="阿哲">@阿哲</button>
+            <button data-act="at" data-name="阿美">@阿美</button>
+            <button data-act="at" data-name="阿凯">@阿凯</button>
+            <button data-act="at" data-name="总控">@总控</button>
+          </div>
+          <div style="height:12px"></div>
+        </div>
+      </section>
+
+      <!-- 复盘 -->
+      <section class="screen" data-view="retro">
+        <div class="screen-scroll">
+          <div class="tab-page-head">
+            <h2>复盘</h2>
+            <p>第 2 周 / 共 4 周 · 数据来自项目记录，不是成员自述。</p>
+          </div>
+          <div style="padding:12px 16px 0">
+            <div class="stat-grid">
+              <div class="stat"><div class="n">3 / 7</div><div class="l">已完成子任务</div></div>
+              <div class="stat"><div class="n">6 分钟</div><div class="l">当前最长等待</div></div>
+              <div class="stat"><div class="n">1</div><div class="l">打回超过 2 次的子任务</div></div>
+              <div class="stat"><div class="n">2</div><div class="l">等你拍板</div></div>
+            </div>
+          </div>
+          <section class="section">
+            <div class="section-head"><span class="section-title">本周完成</span></div>
+            <div class="retro-block">
+              <div class="retro-line"><span class="ok">✓</span><span class="t">周一</span><span>视觉方向由阿美完成，评审一次通过</span></div>
+              <div class="retro-line"><span class="ok">✓</span><span class="t">周二</span><span>小林写完首版文案，已送评审</span></div>
+              <div class="retro-line"><span class="ok">✓</span><span class="t">周三</span><span>阿码搭好测试环境</span></div>
+            </div>
+          </section>
+          <section class="section">
+            <div class="section-head"><span class="section-title">打回记录</span></div>
+            <div class="retro-block">
+              <div class="retro-line"><span class="bad">×2</span><span>落地页配图：配图和文案调性不一致</span></div>
+              <div class="retro-line"><span class="bad">×1</span><span>首版文案：定价表述像承诺</span></div>
+              <p class="muted">同一子任务打回 2 次后，按规则需要你介入；现在已生成异常卡。</p>
+            </div>
+          </section>
+          <section class="section">
+            <div class="section-head"><span class="section-title">评审 vs 自评</span></div>
+            <div class="retro-block">
+              <div class="retro-line"><span>自评</span><span>小林：4 项都过</span></div>
+              <div class="retro-line"><span>评审</span><span>阿哲：3 项同意，1 项不同意（已修正）</span></div>
+              <p class="muted">评审和执行不是同一个人；评审只出证据，最终的板由你拍。</p>
+            </div>
+          </section>
+          <section class="section">
+            <div class="section-head"><span class="section-title">下一步</span></div>
+            <div class="retro-block">
+              <div class="retro-line"><span class="ok">→</span><span>阿美重做落地页配图（如果换人）</span></div>
+              <div class="retro-line"><span class="ok">→</span><span>文案等你拍板后发给阿哲做发布前确认</span></div>
+              <div class="retro-line"><span class="ok">→</span><span>周五前跑完内测</span></div>
+            </div>
+          </section>
+          <button class="reset-link" data-act="reset">重置演示</button>
+          <div style="height:18px"></div>
+        </div>
+      </section>
+    </main>
+
+    <div class="dock">
+      <nav class="tabbar">
+        <button class="tab active" data-tab="overview"><span class="tab-ico">▦</span><span>概览</span></button>
+        <button class="tab" data-tab="collab"><span class="tab-ico">⇄</span><span>协作</span></button>
+        <button class="tab" data-tab="chat"><span class="tab-ico">☰</span><span>对话</span></button>
+        <button class="tab" data-tab="retro"><span class="tab-ico">◎</span><span>复盘</span></button>
+      </nav>
+      <div class="composer">
+        <input id="composer-input" type="text" placeholder="对全队说… @点名" autocomplete="off">
+        <button class="send-btn" data-act="send">发送</button>
+      </div>
+    </div>
+
+    <div class="sheet-backdrop" id="sheet-backdrop"></div>
+    <div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-label="半屏操作"></div>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  </div>
+  <p class="stage-hint">手机 mockup · 375 宽 · 项目内 AI 协同办公：切<b>概览 / 协作 / 对话 / 复盘</b>；点「此刻」展开等待链；拍板卡可同意/打回/稍后；输入栏可 @点名。</p>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var $ = function (s, r) { return (r || document).querySelector(s); };
+  var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  // ---------- 假数据 ----------
+  var STATUS_LABEL = { working: "工作中", waiting: "等待", reviewing: "评审中", blocked: "受阻", idle: "空闲" };
+  var MEMBER_INFO = {
+    小林: { role: "内容部 · 文案", doing: "首版文案已提交，等阿哲评审。", waits: "阿哲", done: 2 },
+    小琳: { role: "内容部 · 内容运营", doing: "在整理竞品文案，暂时空闲。", waits: "—", done: 1 },
+    阿美: { role: "设计部 · 视觉", doing: "等文案定稿才能做落地页，已等 2 小时 12 分。", waits: "小林", done: 1 },
+    阿凯: { role: "设计部 · 配图", doing: "落地页配图被打回 2 次，等老板决定。", waits: "你", done: 1 },
+    阿哲: { role: "评审部 · 评审", doing: "正在评审首版文案，已 6 分钟。", waits: "—", done: 3 },
+    阿码: { role: "研发部 · 前端", doing: "在搭内测环境，进度 70%。", waits: "—", done: 1 }
+  };
+  var TEAM = [
+    { dept: "内容部", members: ["小林", "小琳"] },
+    { dept: "设计部", members: ["阿美", "阿凯"] },
+    { dept: "评审部", members: ["阿哲"] },
+    { dept: "研发部", members: ["阿码"] }
+  ];
+  var MEMBER_STATUS = { 小林: "working", 小琳: "idle", 阿美: "waiting", 阿凯: "blocked", 阿哲: "reviewing", 阿码: "working" };
+
+  var CHAIN = [
+    { who: "小林", text: "提交「首版文案 v3」", time: "02:08", cls: "done", tcls: "done" },
+    { who: "阿哲", text: "评审中", time: "已等 6 分钟", cls: "waiting", tcls: "" },
+    { who: "阿美", text: "等文案定稿，才能做落地页", time: "已等 2 小时 12 分", cls: "blocked", tcls: "warn", nudge: true },
+    { who: "你", text: "最终确认（未到）", time: "", cls: "future", tcls: "" }
+  ];
+
+  var FLOW = [
+    { from: "小林", to: "阿哲", item: "首版文案", status: "等待评审", cls: "waiting", wait: "6 分钟", warn: false },
+    { from: "阿美", to: "小林", item: "落地页配图（等文案定稿）", status: "等待", cls: "waiting", wait: "2 小时 12 分", warn: true },
+    { from: "阿凯", to: "阿哲", item: "落地页配图 v2", status: "被打回", cls: "bad", wait: "已回 2 轮", warn: true },
+    { from: "阿哲", to: "你", item: "最终文案确认", status: "等你拍板", cls: "boss", wait: "—", warn: false },
+    { from: "小林", to: "阿美", item: "文案定稿交接", status: "已接收", cls: "ok", wait: "02:10 接收", warn: false }
+  ];
+
+  var HANDOFFS = [
+    {
+      title: "小林 → 阿哲 · 首版文案 v3",
+      state: "等待接收",
+      stateCls: "",
+      pieces: {
+        "产出物": "docs/copy.md · v3（12 个链接已附）",
+        "做了什么": "写完首页、产品页、价格页；没写博客页。",
+        "验收标准": "① 定价表述不是承诺 ② 链接都能打开 ③ 语气和品牌一致",
+        "未决问题": "发布前要不要请老板过一遍对外文案？"
+      }
+    },
+    {
+      title: "阿凯 → 阿美 · 落地页配图 v2",
+      state: "被打回",
+      stateCls: "bad",
+      pieces: {
+        "产出物": "assets/hero-v2.png（含源文件）",
+        "做了什么": "按第 1 轮意见放大主视觉；没改配色。",
+        "验收标准": "① 主视觉占屏 40% ② 和文案调性一致 ③ 移动端不裁切",
+        "未决问题": "调性以哪版文案为准？文案还没定稿。"
+      }
+    },
+    {
+      title: "阿码 → 小林 · 内测环境",
+      state: "已接收",
+      stateCls: "ok",
+      pieces: {
+        "产出物": "内测地址 + 账号（已单独发）",
+        "做了什么": "环境搭好、数据灌好；没做压力测试。",
+        "验收标准": "① 12 个页面都能打开 ② 移动端不白屏",
+        "未决问题": "压力测试什么时候补？"
+      }
+    }
+  ];
+
+  var MESSAGES = [
+    { name: "总控", role: "项目负责人", kind: "lead", time: "02:05", text: "今天目标：把首版文案定下来，配图同步推进。" },
+    { name: "小林", role: "内容部", kind: "member", time: "02:08", text: "文案 v3 提交了，等阿哲评审。" },
+    { name: "阿哲", role: "评审部", kind: "member", time: "02:14", text: "评审通过。发布前的对外确认等老板。" },
+    { name: "你", role: "老板", kind: "boss", time: "02:15", text: "配图先按阿哲的意见改。" }
+  ];
+
+  var CARDS = [
+    {
+      id: "copy",
+      title: "最终文案可以对外发布吗？",
+      meta: "评审阿哲已通过 · 小林提交 · 含对外文案",
+      evidence: ["✓ 终稿已核对", "✓ 12 个链接都测过"],
+      approveToast: "已同意发布。10 分钟内可撤回。",
+      rejectToast: "已打回。负责人会重排，改完再叫你。",
+      undo: true
+    },
+    {
+      id: "budget",
+      title: "配图预算超了 ¥80，能加吗？",
+      meta: "负责人阿凯申请 · 超出项目预算 8% · 可撤回",
+      evidence: ["✓ ¥0 备选方案已评估，不够用"],
+      approveToast: "已同意加 ¥80。负责人会继续推进。",
+      rejectToast: "已打回预算申请。负责人会再想办法。",
+      undo: false
+    }
+  ];
+
+  var INITIAL = {
+    cards: JSON.parse(JSON.stringify(CARDS)),
+    progressDone: 3,
+    exception: true,
+    nudged: false,
+    messages: JSON.parse(JSON.stringify(MESSAGES)),
+    approvedCopy: false
+  };
+
+  var state = {
+    screen: "overview",
+    cards: JSON.parse(JSON.stringify(CARDS)),
+    activeCard: 0,
+    progressDone: 3,
+    progressTotal: 7,
+    exception: true,
+    exResolved: "",
+    nudged: false,
+    chainOpen: false,
+    messages: JSON.parse(JSON.stringify(MESSAGES)),
+    approvedCopy: false,
+    reject: null
+  };
+  var historyStack = [];
+  var toastTimer = null;
+
+  // ---------- 渲染：顶部状态 ----------
+  function needsCount() { return state.cards.length; }
+  function renderHead() {
+    var pill = $("#project-pill");
+    if (needsCount() > 0) {
+      pill.className = "pill pill-needs";
+      pill.textContent = "等你拍板";
+    } else if (state.exception && !state.exResolved) {
+      pill.className = "pill pill-needs";
+      pill.textContent = "有异常";
+    } else {
+      pill.className = "pill pill-run";
+      pill.textContent = "进行中";
+    }
+    $("#needs-count").textContent = "(" + needsCount() + ")";
+    $("#progress-fill").style.width = Math.round((state.progressDone / state.progressTotal) * 100) + "%";
+    $("#progress-label").textContent = state.progressDone + "/" + state.progressTotal + " 子任务 · 预计周五完成";
+    $("#now-text").innerHTML = state.approvedCopy
+      ? "阿美 开始做落地页配图 → 等 <b>阿哲</b> 评审<span class=\"wait-time\">（刚开始）</span>"
+      : "小林 写完文案 → 等 <b>阿哲</b> 评审<span class=\"wait-time\">（已 6 分钟）</span>";
+  }
+
+  // ---------- 渲染：需要你 ----------
+  function renderDecisions() {
+    var area = $("#decision-area");
+    if (!state.cards.length) {
+      area.innerHTML = '<div class="empty-needs">团队运转正常，没有需要你的事。</div>';
+      return;
+    }
+    var c = state.cards[state.activeCard % state.cards.length];
+    var evidence = c.evidence.map(function (x) { return "<div>" + esc(x) + "</div>"; }).join("");
+    var more = state.cards.length > 1
+      ? '<button class="more-decisions" data-act="cycle-card">还有 ' + (state.cards.length - 1) + " 件 ›</button>"
+      : "";
+    area.innerHTML =
+      '<article class="decision-card enter" id="decision-card">' +
+        '<div class="card-flag">⚑ 拍板</div>' +
+        '<h3 class="card-title">' + esc(c.title) + "</h3>" +
+        '<p class="card-meta">' + esc(c.meta) + "</p>" +
+        '<div class="card-evidence">' + evidence + "</div>" +
+        '<div class="card-actions">' +
+          '<button class="btn-primary" data-act="approve" data-card="' + esc(c.id) + '">同意</button>' +
+          '<button class="btn-soft" data-act="reject" data-card="' + esc(c.id) + '">打回并说明</button>' +
+          '<button class="btn-soft" data-act="later" data-card="' + esc(c.id) + '">稍后</button>' +
+        "</div>" +
+      "</article>" + more;
+  }
+
+  // ---------- 渲染：等待链 / 此刻 ----------
+  function chainHtml() {
+    return CHAIN.map(function (it) {
+      var time = it.time ? '<span class="chain-time ' + it.tcls + '">' + esc(it.time) + "</span>" : "";
+      var nudge = it.nudge && !state.nudged ? '<button class="nudge" data-act="nudge" data-name="阿美">催一下</button>' : "";
+      var nudged = it.nudge && state.nudged ? '<span class="chain-time done">已催</span>' : "";
+      return '<div class="chain-item ' + it.cls + '">' +
+        '<span class="chain-dot"></span>' +
+        '<span class="chain-main"><span class="chain-name">' + esc(it.who) + "</span>" +
+          '<span class="chain-text">' + esc(it.text) + "</span></span>" +
+        time + nudge + nudged + "</div>";
+    }).join("");
+  }
+  function renderNow() {
+    $("#chain").innerHTML = chainHtml();
+    $("#chain-full").innerHTML = chainHtml();
+    $("#chain").classList.toggle("hidden", !state.chainOpen);
+    $("#chain-chev").classList.toggle("open", state.chainOpen);
+  }
+
+  // ---------- 渲染：团队 ----------
+  function renderTeam() {
+    $("#team").innerHTML = TEAM.map(function (g) {
+      var members = g.members.map(function (name) {
+        var st = MEMBER_STATUS[name] || "idle";
+        return '<button class="member" data-act="member" data-name="' + esc(name) + '">' +
+          '<span class="status-dot ' + st + '"></span>' + esc(name) +
+          '<span class="member-state">' + STATUS_LABEL[st] + "</span></button>";
+      }).join("");
+      return '<div class="team-dept"><span class="dept-name">' + esc(g.dept) + "</span>" +
+        '<span class="members">' + members + "</span></div>";
+    }).join("");
+  }
+
+  // ---------- 渲染：协作流 ----------
+  function flowRow(f) {
+    return '<div class="flow-row">' +
+      '<span class="flow-main"><span class="flow-route">' + esc(f.from) + '<span class="arrow">→</span>' + esc(f.to) + "</span>" +
+        '<span class="flow-item">' + esc(f.item) + "</span></span>" +
+      '<span class="flow-status ' + f.cls + '">' + esc(f.status) + "</span>" +
+      '<span class="flow-wait' + (f.warn ? " warn" : "") + '">' + esc(f.wait) + "</span>" +
+      "</div>";
+  }
+  function renderFlow() {
+    $("#flow-preview").innerHTML = FLOW.slice(0, 2).map(flowRow).join("");
+    $("#flow-full").innerHTML = FLOW.map(flowRow).join("");
+  }
+
+  // ---------- 渲染：异常 ----------
+  function renderException() {
+    var area = $("#exception-area");
+    if (!state.exception || state.exResolved) {
+      $("#exception-section").classList.add("hidden");
+      area.innerHTML = "";
+      return;
+    }
+    $("#exception-section").classList.remove("hidden");
+    area.innerHTML =
+      '<div class="exception-card">' +
+        '<div class="ex-title">⚠ 「落地页配图」被打回 2 次，需要你介入</div>' +
+        '<p class="ex-meta">阿哲：配图和文案调性不一致（第 2 次）</p>' +
+        '<div class="ex-actions">' +
+          '<button class="btn-mini" data-act="ex-cause">看原因</button>' +
+          '<button class="btn-mini" data-act="ex-swap">换人</button>' +
+          '<button class="btn-mini warn" data-act="ex-decide">我来定</button>' +
+        "</div>" +
+      "</div>";
+  }
+
+  // ---------- 渲染：交接物 ----------
+  function renderHandoffs() {
+    $("#handoffs").innerHTML = HANDOFFS.map(function (h) {
+      var rows = Object.keys(h.pieces).map(function (k) {
+        return '<span class="k">' + esc(k) + '</span><span class="v">' + esc(h.pieces[k]) + "</span>";
+      }).join("");
+      return '<div class="handoff-card">' +
+        '<div class="handoff-head"><span class="handoff-title">' + esc(h.title) + "</span>" +
+          '<span class="handoff-state ' + h.stateCls + '">' + esc(h.state) + "</span></div>" +
+        '<div class="handoff-grid">' + rows + "</div>" +
+        "</div>";
+    }).join("");
+  }
+
+  // ---------- 渲染：对话 ----------
+  function renderChat() {
+    $("#messages").innerHTML = state.messages.map(function (m) {
+      var avatar = m.kind === "boss" ? "你" : m.name.slice(0, 1);
+      var role = m.role ? '<span class="msg-role">' + esc(m.role) + "</span>" : "";
+      var text = esc(m.text).replace(/@([\u4e00-\u9fa5]{2,3})/g, '<span class="at">@$1</span>');
+      return '<div class="msg">' +
+        '<span class="avatar ' + m.kind + '">' + esc(avatar) + "</span>" +
+        '<div class="msg-body"><div class="msg-head"><span class="msg-name">' + esc(m.name) + "</span>" + role +
+          '<span class="msg-time">' + esc(m.time) + "</span></div>" +
+          '<p class="msg-text">' + text + "</p></div></div>";
+    }).join("");
+    var sc = $("#chat-scroll");
+    if (sc) sc.scrollTop = sc.scrollHeight;
+  }
+
+  // ---------- 全量刷新 ----------
+  function refresh() {
+    renderHead();
+    renderDecisions();
+    renderNow();
+    renderTeam();
+    renderFlow();
+    renderException();
+    renderHandoffs();
+    renderChat();
+  }
+
+  // ---------- 视图切换 ----------
+  function setView(view) {
+    state.screen = view;
+    $("#phone").dataset.screen = view;
+    $$(".screen").forEach(function (s) { s.classList.toggle("active", s.dataset.view === view); });
+    $$(".tab").forEach(function (b) { b.classList.toggle("active", b.dataset.tab === view); });
+    var sc = $(".screen.active .screen-scroll");
+    if (sc && view !== "chat") sc.scrollTop = 0;
+    if (view === "chat") renderChat();
+  }
+
+  // ---------- toast ----------
+  function showToast(text, actionLabel, action) {
+    var toast = $("#toast");
+    toast.innerHTML = '<span class="toast-text">' + esc(text) + "</span>" +
+      (actionLabel ? '<button class="toast-action" id="toast-action">' + esc(actionLabel) + "</button>" : "");
+    toast.classList.add("show");
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { toast.classList.remove("show"); }, 8000);
+    if (actionLabel && action) {
+      var btn = $("#toast-action");
+      if (btn) btn.addEventListener("click", function () {
+        toast.classList.remove("show");
+        if (toastTimer) clearTimeout(toastTimer);
+        action();
+      });
+    }
+  }
+
+  // ---------- 半屏 ----------
+  function openSheet(html) {
+    var sheet = $("#sheet");
+    sheet.innerHTML = html;
+    $("#sheet-backdrop").classList.add("open");
+    sheet.classList.add("open");
+    sheet.scrollTop = 0;
+  }
+  function closeSheet() {
+    $("#sheet-backdrop").classList.remove("open");
+    $("#sheet").classList.remove("open");
+    setTimeout(function () { if (!$("#sheet").classList.contains("open")) $("#sheet").innerHTML = ""; }, 240);
+  }
+
+  // ---------- 拍板动作 ----------
+  function flyCardThenAfter(fn) {
+    var card = $("#decision-card");
+    if (card) card.classList.add("fly-away");
+    setTimeout(fn, 300);
+  }
+  function approveCard(id) {
+    var idx = -1;
+    for (var i = 0; i < state.cards.length; i++) if (state.cards[i].id === id) idx = i;
+    if (idx < 0) return;
+    var card = state.cards[idx];
+    state.cards.splice(idx, 1);
+    state.activeCard = 0;
+    state.progressDone = Math.min(state.progressTotal, state.progressDone + 1);
+    if (id === "copy") state.approvedCopy = true;
+    refresh();
+    showToast(card.approveToast, card.undo ? "撤回" : null, card.undo ? function () {
+      state.cards.unshift(card);
+      state.activeCard = 0;
+      state.progressDone = Math.max(0, state.progressDone - 1);
+      state.approvedCopy = false;
+      refresh();
+      showToast("已撤回。卡片回到「需要你」。");
+    } : null);
+  }
+  function laterCard(id) {
+    var idx = -1;
+    for (var i = 0; i < state.cards.length; i++) if (state.cards[i].id === id) idx = i;
+    if (idx < 0) return;
+    state.cards.splice(idx, 1);
+    state.activeCard = 0;
+    refresh();
+    showToast("已稍后。明早 8:00 和晨报一起出现，今晚不再提醒。");
+  }
+  function openReject(id) {
+    state.reject = { cardId: id, reason: null };
+    var reasons = ["文案不对", "风险太大", "范围跑偏", "我想改一下"].map(function (r) {
+      return '<button class="reason" data-act="reason" data-reason="' + esc(r) + '" role="radio" aria-checked="false">' + esc(r) + "</button>";
+    }).join("");
+    openSheet(
+      '<div class="sheet-grab"></div>' +
+      '<h2 class="sheet-title">打回并说明</h2>' +
+      '<p class="muted">这句原因会写进下一轮的验收标准，执行的人照着改。</p>' +
+      '<p class="sheet-label">原因（必选一项）</p>' +
+      '<div class="reason-grid" role="radiogroup" aria-label="打回原因">' + reasons + "</div>" +
+      '<p class="sheet-label">一句话原因（必填）</p>' +
+      '<textarea class="sheet-textarea" id="reject-note" rows="2" placeholder="哪里不行？一句就行。"></textarea>' +
+      '<div class="sheet-actions">' +
+        '<button class="btn-soft" data-act="close-sheet">取消</button>' +
+        '<button class="btn-primary" id="confirm-reject" data-act="confirm-reject" disabled>确认打回</button>' +
+      "</div>"
+    );
+  }
+  function rejectOk() {
+    if (!state.reject) return false;
+    var noteEl = $("#reject-note");
+    return !!state.reject.reason && !!(noteEl && noteEl.value.trim());
+  }
+  function updateRejectBtn() {
+    var btn = $("#confirm-reject");
+    if (btn) btn.disabled = !rejectOk();
+  }
+  function confirmReject() {
+    if (!rejectOk()) return;
+    var id = state.reject.cardId;
+    var reason = state.reject.reason;
+    var note = $("#reject-note").value.trim();
+    state.reject = null;
+    var idx = -1;
+    for (var i = 0; i < state.cards.length; i++) if (state.cards[i].id === id) idx = i;
+    if (idx >= 0) state.cards.splice(idx, 1);
+    state.activeCard = 0;
+    closeSheet();
+    refresh();
+    showToast("已打回：" + reason + "。负责人会重排，改完再叫你。");
+    void note;
+  }
+
+  // ---------- 异常 / 成员 / 更多 ----------
+  function openExceptionCause() {
+    openSheet(
+      '<div class="sheet-grab"></div>' +
+      '<h2 class="sheet-title">「落地页配图」为什么被打回 2 次</h2>' +
+      '<div class="event-log">' +
+        '<div class="event"><span class="t">02:01</span><span>阿凯提交「配图 v2」，附源文件。</span></div>' +
+        '<div class="event"><span class="t">02:04</span><span>阿哲打回：主视觉太小，移动端看不清（第 1 次）。</span></div>' +
+        '<div class="event"><span class="t">02:10</span><span>阿凯改完，再次提交。</span></div>' +
+        '<div class="event"><span class="t">02:12</span><span>阿哲又打回：配图和文案调性不一致（第 2 次）。</span></div>' +
+      "</div>" +
+      '<p class="muted" style="margin-top:10px">同一个子任务被打回 2 次，按规则需要你介入。</p>' +
+      '<div class="sheet-actions">' +
+        '<button class="btn-soft" data-act="close-sheet">关闭</button>' +
+        '<button class="btn-primary" data-act="ex-swap">换人</button>' +
+        '<button class="btn-soft" data-act="ex-decide">我来定</button>' +
+      "</div>"
+    );
+  }
+  function openSwap() {
+    openSheet(
+      '<div class="sheet-grab"></div>' +
+      '<h2 class="sheet-title">让阿美接手落地页配图？</h2>' +
+      '<p class="muted">阿凯会把源文件和交接四件套交给阿美；阿美必须点「接收」，交接才算完成。</p>' +
+      '<div class="sheet-actions">' +
+        '<button class="btn-soft" data-act="close-sheet">取消</button>' +
+        '<button class="btn-primary" data-act="confirm-swap">确认换人</button>' +
+      "</div>"
+    );
+  }
+  function openDecide() {
+    openSheet(
+      '<div class="sheet-grab"></div>' +
+      '<h2 class="sheet-title">我来定：落地页配图</h2>' +
+      '<p class="muted">你定了之后，负责人会按这个决定继续；结果进复盘。</p>' +
+      '<div class="sheet-actions" style="flex-direction:column">' +
+        '<button class="btn-primary" data-act="decide-option" data-option="按阿哲的意见改">按阿哲的意见改</button>' +
+        '<button class="btn-soft" data-act="decide-option" data-option="照原样继续">照原样继续</button>' +
+        '<button class="btn-soft" data-act="decide-option" data-option="先不做这个配图">先不做这个配图</button>' +
+        '<button class="btn-soft" data-act="close-sheet">取消</button>' +
+      "</div>"
+    );
+  }
+  function resolveException(note) {
+    state.exResolved = note;
+    state.exception = false;
+    closeSheet();
+    refresh();
+  }
+  function openMember(name) {
+    var info = MEMBER_INFO[name] || { role: "", doing: "", waits: "—", done: 0 };
+    var st = MEMBER_STATUS[name] || "idle";
+    openSheet(
+      '<div class="sheet-grab"></div>' +
+      '<h2 class="sheet-title">' + esc(name) + ' · ' + STATUS_LABEL[st] + "</h2>" +
+      '<p class="muted">' + esc(info.role) + "</p>" +
+      '<div class="retro-block" style="margin-top:10px">' +
+        '<div class="retro-line"><span class="t">在做</span><span>' + esc(info.doing) + "</span></div>" +
+        '<div class="retro-line"><span class="t">等谁</span><span>' + esc(info.waits) + "</span></div>" +
+        '<div class="retro-line"><span class="t">今天完成</span><span>' + info.done + " 项</span></div>" +
+      "</div>" +
+      '<div class="sheet-actions">' +
+        '<button class="btn-soft" data-act="close-sheet">关闭</button>' +
+        '<button class="btn-soft" data-act="member-doing" data-name="' + esc(name) + '">看它在做什么</button>' +
+        '<button class="btn-primary" data-act="member-ask" data-name="' + esc(name) + '">问 TA</button>' +
+      "</div>"
+    );
+  }
+  function openMore() {
+    openSheet(
+      '<div class="sheet-grab"></div>' +
+      '<h2 class="sheet-title">项目操作</h2>' +
+      '<div class="sheet-actions" style="flex-direction:column">' +
+        '<button class="btn-soft" data-act="more-todo" data-option="调整目标">调整目标</button>' +
+        '<button class="btn-soft" data-act="more-todo" data-option="调整优先级">调整优先级</button>' +
+        '<button class="btn-soft" data-act="more-todo" data-option="暂停项目">暂停项目</button>' +
+        '<button class="btn-soft" data-act="more-todo" data-option="终止项目">终止项目</button>' +
+        '<button class="btn-soft" data-act="close-sheet">取消</button>' +
+      "</div>"
+    );
+  }
+
+  // ---------- 输入 ----------
+  function focusComposer() {
+    var input = $("#composer-input");
+    if (!input) return;
+    input.focus();
+    try { input.setSelectionRange(input.value.length, input.value.length); } catch (e) { /* ignore */ }
+  }
+  function askMember(name) {
+    closeSheet();
+    setView("chat");
+    var input = $("#composer-input");
+    if (input) input.value = "@" + name + " ";
+    focusComposer();
+  }
+  function sendMessage() {
+    var input = $("#composer-input");
+    var text = input ? input.value.trim() : "";
+    if (!text) { showToast("说一句再发。"); return; }
+    var mentioned = text.match(/@([\u4e00-\u9fa5]{2,3})/);
+    state.messages.push({ name: "你", role: "老板", kind: "boss", time: "02:16", text: text });
+    if (input) input.value = "";
+    renderChat();
+    if (mentioned) showToast("已点名 @" + mentioned[1] + "，TA 会单独回你。");
+    else showToast("已发给全队。项目负责人会接住，拆成动作。");
+  }
+
+  // ---------- 重置 ----------
+  function resetDemo() {
+    state.cards = JSON.parse(JSON.stringify(INITIAL.cards));
+    state.activeCard = 0;
+    state.progressDone = INITIAL.progressDone;
+    state.exception = INITIAL.exception;
+    state.exResolved = "";
+    state.nudged = INITIAL.nudged;
+    state.chainOpen = false;
+    state.messages = JSON.parse(JSON.stringify(INITIAL.messages));
+    state.approvedCopy = false;
+    state.reject = null;
+    historyStack = [];
+    closeSheet();
+    var input = $("#composer-input");
+    if (input) input.value = "";
+    refresh();
+    setView("overview");
+    showToast("演示已重置。回到 02:16。");
+  }
+
+  // ---------- 事件 ----------
+  document.addEventListener("click", function (e) {
+    var actEl = e.target.closest ? e.target.closest("[data-act]") : null;
+    if (actEl) {
+      var act = actEl.dataset.act;
+      switch (act) {
+        case "back-projects":
+          showToast("演示里只有一个项目「官网改版」。");
+          break;
+        case "more": openMore(); break;
+        case "cycle-card":
+          state.activeCard = (state.activeCard + 1) % state.cards.length;
+          renderDecisions();
+          break;
+        case "approve":
+          flyCardThenAfter(function () { approveCard(actEl.dataset.card); });
+          break;
+        case "reject": openReject(actEl.dataset.card); break;
+        case "later":
+          flyCardThenAfter(function () { laterCard(actEl.dataset.card); });
+          break;
+        case "reason":
+          if (state.reject) {
+            state.reject.reason = actEl.dataset.reason;
+            $$(".reason").forEach(function (r) {
+              var on = r === actEl;
+              r.classList.toggle("selected", on);
+              r.setAttribute("aria-checked", on ? "true" : "false");
+            });
+            updateRejectBtn();
+          }
+          break;
+        case "confirm-reject": confirmReject(); break;
+        case "chain":
+          state.chainOpen = !state.chainOpen;
+          renderNow();
+          break;
+        case "nudge":
+          state.nudged = true;
+          renderNow();
+          showToast("已催阿美：一条 @阿美 的消息已发出，30 分钟没回应会升级成异常。");
+          break;
+        case "go-collab": setView("collab"); break;
+        case "member": openMember(actEl.dataset.name); break;
+        case "member-ask": askMember(actEl.dataset.name); break;
+        case "member-doing":
+          closeSheet();
+          showToast(actEl.dataset.name + " 正在做什么，已展开。");
+          break;
+        case "ex-cause": openExceptionCause(); break;
+        case "ex-swap": openSwap(); break;
+        case "ex-decide": openDecide(); break;
+        case "confirm-swap":
+          resolveException("换人：阿美接手");
+          showToast("已换人：阿美接手落地页配图。阿凯会把源文件交出来。");
+          break;
+        case "decide-option":
+          resolveException(actEl.dataset.option);
+          showToast("已定：" + actEl.dataset.option + "。负责人会按这个继续。");
+          break;
+        case "more-todo":
+          closeSheet();
+          showToast("演示：已记录「" + actEl.dataset.option + "」，正式版会二次确认。");
+          break;
+        case "at": {
+          var input = $("#composer-input");
+          if (input) input.value = (input.value ? input.value + " " : "") + "@" + actEl.dataset.name + " ";
+          focusComposer();
+          break;
+        }
+        case "send": sendMessage(); break;
+        case "close-sheet": closeSheet(); break;
+        case "reset": resetDemo(); break;
+      }
+      return;
+    }
+
+    var tabEl = e.target.closest ? e.target.closest("[data-tab]") : null;
+    if (tabEl) {
+      historyStack = [];
+      setView(tabEl.dataset.tab);
+    }
+  });
+
+  document.addEventListener("input", function (e) {
+    if (e.target.id === "reject-note") updateRejectBtn();
+  });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") closeSheet();
+  });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" && e.target && e.target.id === "composer-input") {
+      e.preventDefault();
+      sendMessage();
+    }
+  });
+  $("#sheet-backdrop").addEventListener("click", closeSheet);
+
+  // 支持 #collab / #chat / #retro 直接打开，方便截图自检
+  function routeFromHash() {
+    var h = (location.hash || "").replace("#", "");
+    if (h === "collab" || h === "chat" || h === "retro") setView(h);
+    else setView("overview");
+  }
+  window.addEventListener("hashchange", routeFromHash);
+
+  refresh();
+  routeFromHash();
+})();
+</script>
+</body>
+</html>

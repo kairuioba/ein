@@ -76,6 +76,7 @@ import { TaskFolderStore } from "./task-folders.ts";
 import { buildTaskRetro } from "./task-retro.ts";
 import { buildStateDoc } from "./state-doc.ts";
 import { buildDecisionStack, emptyDecisionStack } from "./decision-stack.ts";
+import { buildProjectOffice, emptyProjectOffice } from "./office-view.ts";
 import { buildContextShare, type ContextSource } from "./context-share.ts";
 import { InboxStore } from "./inbox-store.ts";
 import type { DispatchRun } from "../shared/dispatch-types.ts";
@@ -5861,6 +5862,35 @@ const server = createServer(async (req, res) => {
       const run = folder.runId ? dispatcher.get(folder.runId) : undefined;
       const inboxOpen = inbox.list("open").filter((item) => item.taskId === folder.id).length;
       return json(res, 200, { state: buildStateDoc({ folder, ...(run ? { run } : {}), inboxOpen }) });
+    }
+    // ── 项目内「AI 协同办公」只读投影 ─────────────────────────────────
+    // 目标/进度、部门+成员状态、谁在等谁、待拍板、活动流、异常；全部由
+    // dispatch 的事实字段推导（见 server/office-view.ts），投影失败也不 500。
+    const officeMatch = path.match(/^\/api\/task-folders\/([\w-]+)\/office$/);
+    if (officeMatch && method === "GET") {
+      if (!taskFolders) return json(res, 503, { error: "task folders are not ready yet" });
+      const folder = taskFolders.byId(officeMatch[1]!);
+      if (!folder) return json(res, 404, { error: "no such task folder" });
+      const run = folder.runId ? dispatcher.get(folder.runId) : undefined;
+      try {
+        const office = buildProjectOffice({
+          folder,
+          ...(run ? { run } : {}),
+          bots: store.bots
+            .filter((bot) => !bot.hidden)
+            .map((bot) => ({
+              id: bot.id,
+              name: bot.name,
+              ...(bot.title ? { title: bot.title } : {}),
+              ...(bot.section?.trim() ? { section: bot.section.trim() } : {}),
+            })),
+          inboxItems: inbox.list("open").filter((item) => item.taskId === folder.id),
+        });
+        return json(res, 200, { office });
+      } catch (error) {
+        console.error("office view: could not build the project projection", error);
+        return json(res, 200, { office: emptyProjectOffice(folder) });
+      }
     }
     const retroMatch = path.match(/^\/api\/task-folders\/([\w-]+)\/retro$/);
     if (retroMatch && method === "GET") {

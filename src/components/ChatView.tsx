@@ -24,7 +24,6 @@ import {
 import { WorkingDots } from "@/components/WorkingIndicator";
 import {
   useStore,
-  useStreaming,
   formatTime,
   messageVersions,
   openNotificationTarget,
@@ -37,7 +36,7 @@ import { EngineSetup } from "./EngineSetup";
 import { BotAvatar } from "./Avatar";
 import { TurnPresence } from "./TurnPresence";
 import { showToolCallsEnabled } from "@/lib/feature-flags";
-import { showWorkingDots } from "@/lib/turn-tail";
+import { initialTail, nextTail, showWorkingDots } from "@/lib/turn-tail";
 import { liveActivityLabel } from "@/lib/live-activity";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { OptionCard, shouldHideOnboardingCard } from "./OptionCard";
@@ -59,8 +58,8 @@ import { groupActivityRuns, type TranscriptItem } from "@/lib/activity-runs";
 import { ActivityRun } from "./ActivityRun";
 import { webhookMessageView } from "@/lib/webhook-message";
 import { splitTranscriptAttachments } from "@/lib/composer-attachments";
-import { BOTTOM_FOLLOW_THRESHOLD, shouldResumeBottomFollow } from "@/lib/bottom-follow";
-import { useComposerDockPad } from "@/lib/composer-dock";
+import { useBottomFollow } from "@/hooks/use-bottom-follow";
+import { COMPOSER_DOCK_HEIGHT, TRANSCRIPT_END_PAD } from "@/lib/composer-dock";
 import {
   TRANSCRIPT_WINDOW_SIZE,
   expandWindowStart,
@@ -562,11 +561,11 @@ type TimedCard =
 const itemFirstAt = (item: TranscriptItem) => (item.kind === "run" ? item.messages[0]!.at : item.message.at);
 const itemLastAt = (item: TranscriptItem) => (item.kind === "run" ? item.messages.at(-1)!.at : item.message.at);
 
-/** The settled transcript, memoized as one unit: during streaming every
- * frame re-renders ChatView, but all of these props keep their identity
- * (bot/messages only change on real message events), so the whole list —
- * every markdown tree, every code block — bails out of React work and only
- * the streaming tail below it commits. This is the t3code structural-sharing
+/** The settled transcript, memoized as one unit: ChatView re-renders for
+ * every store change around it (a bot patch, a poll, the composer), but all
+ * of these props keep their identity (bot/messages only change on real
+ * message events), so the whole list — every markdown tree, every code
+ * block — bails out of React work. This is the t3code structural-sharing
  * idea at component granularity. */
 const MessagesList = memo(function MessagesList({
   bot,
@@ -574,7 +573,7 @@ const MessagesList = memo(function MessagesList({
   transcript,
   editingId,
   lastBotTextId,
-  emergingId,
+  arrivingId,
   canRetryLast,
   engine,
   hasEarlier,
@@ -595,7 +594,9 @@ const MessagesList = memo(function MessagesList({
   transcript: Message[];
   editingId: string | null;
   lastBotTextId: string | undefined;
-  emergingId?: string | null;
+  /** the reply that just took the typing line's place: it pops in where it
+   * will stay, so the transcript changes height once, not three times */
+  arrivingId?: string | null;
   canRetryLast: boolean;
   /** This bot's engine, for rendering setup help on a `setup` error. */
   engine: InstanceInfo | undefined;
@@ -684,7 +685,6 @@ const MessagesList = memo(function MessagesList({
           );
         }
         const m = item.message;
-        if (m.id === emergingId) return <div key={m.id} className="contents">{renderCards(i)}</div>;
         const row = (() => {
           switch (m.kind) {
             case "secret":
@@ -776,7 +776,13 @@ const MessagesList = memo(function MessagesList({
           <div key={m.id} className="contents">
             <div className="contents" data-mid={m.id}>
               {separatorFor(m.at)}
-              <div className={cn("flex min-w-0 flex-col", m.role === "user" ? "items-end" : "items-start")}>
+              <div
+                className={cn(
+                  "flex min-w-0 flex-col",
+                  m.role === "user" ? "items-end" : "items-start",
+                  m.id === arrivingId && "turn-answer",
+                )}
+              >
                 {row}
                 {threadCount > 0 && <ThreadLink count={threadCount} onClick={() => onShowReplies(m.id)} />}
               </div>
@@ -839,12 +845,11 @@ function PinnedBanner({
 export function ChatView({ bot }: { bot: Bot }) {
   const { state, dispatch } = useStore();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const logRef = useRef<HTMLDivElement>(null);
   const composerDockRef = useRef<HTMLDivElement>(null);
-  const composerDock = useComposerDockPad(composerDockRef);
-
-  const stream = useStreaming();
-  const streaming = stream.streaming[bot.threadId];
-  const reasoning = stream.reasoning[bot.threadId];
+  // No useStreaming() here: the 1:1 view never shows streamed text (the reply
+  // pops in when it settles), and subscribing re-rendered this whole view —
+  // header, composer, cards — on every token frame of every reply.
   const provisioning = state.provisioning[bot.id];
   const [findOpen, setFindOpen] = useState(false);
   const { replyTo, selectReply, clearReply, consumeReply, restoreReply } = useReplyDraft(
@@ -943,7 +948,7 @@ export function ChatView({ bot }: { bot: Bot }) {
   );
 
   // The typing line while the turn works. Streaming stays invisible — when
-  // the reply is finished, the whole bubble pops in above the line.
+  // the reply is finished, the whole bubble pops in where the line was.
   const lastMessage = messages.at(-1);
   const toolInFlight = lastMessage?.kind === "activity" && lastMessage.tool?.ok === undefined && !isSystemLine(lastMessage);
   const activityLabel = liveActivityLabel(lastMessage);
@@ -952,23 +957,29 @@ export function ChatView({ bot }: { bot: Bot }) {
       bot.activity !== "waiting-on-you" &&
       showWorkingDots(bot.busy, lastMessage),
   );
-  const wasWaiting = useRef(false);
-  const [popping, setPopping] = useState<{ id: string; text: string } | null>(null);
+  // Which reply is popping in, decided in the render that brings it (not in
+  // an effect a frame later): the bubble mounts once, in its final row, and
+  // the typing line steps aside in the same commit.
+  const [tail, setTail] = useState(() => ({ key: transcriptKey, ...initialTail(lastMessage, waiting) }));
+  let currentTail = tail;
+  if (tail.key !== transcriptKey) {
+    currentTail = { key: transcriptKey, ...initialTail(lastMessage, waiting) };
+    setTail(currentTail);
+  } else {
+    const next = nextTail(tail, waiting, lastMessage);
+    if (next !== tail) {
+      currentTail = { key: transcriptKey, ...next };
+      setTail(currentTail);
+    }
+  }
+  const arrivingId = currentTail.arrivingId;
   useEffect(() => {
-    wasWaiting.current = false;
-    setPopping(null);
-  }, [bot.id]);
-  useEffect(() => {
-    if (waiting) wasWaiting.current = true;
-  }, [waiting]);
-  useEffect(() => {
-    if (lastMessage?.role !== "bot" || lastMessage.kind !== "text" || !wasWaiting.current) return;
-    wasWaiting.current = false;
-    setPopping({ id: lastMessage.id, text: lastMessage.text ?? "" });
-    const timer = setTimeout(() => setPopping(null), 520);
+    if (!arrivingId) return;
+    // the pop is 0.48s; afterwards a remount (window, branch) must not replay it
+    const timer = setTimeout(() => setTail((current) => (current.arrivingId === arrivingId ? { ...current, arrivingId: null } : current)), 520);
     return () => clearTimeout(timer);
-  }, [lastMessage?.id, lastMessage?.role, lastMessage?.kind, lastMessage?.text]);
-  const presenceVisible = waiting || popping !== null;
+  }, [arrivingId]);
+  const replyLanded = lastMessage?.role === "bot" && lastMessage.kind === "text";
   // Wall-clock anchor for the working row's elapsed readout — set when the
   // turn starts, cleared when it settles, reset on bot switch.
   const [busySince, setBusySince] = useState<number | null>(null);
@@ -1031,22 +1042,12 @@ export function ChatView({ bot }: { bot: Bot }) {
     openRoutinePanel(names.size === 1 ? botRoutines[0]!.id : null);
   }, [botRoutines, openRoutinePanel]);
 
-  // Scroll pinning: follow the bottom while the user hasn't scrolled away.
-  // Follow breaks ONLY on an upward user gesture (wheel/touch), never on
-  // scroll position checks — streamed content growth flickers "at bottom"
-  // false for a frame, and breaking there kills follow permanently
-  // (upstream-verified failure). Scrolling back to the end re-arms it.
-  const [follow, setFollow] = useState(true);
-  const followRef = useRef(true);
-  const previousScrollTop = useRef(0);
-  const touchY = useRef(0);
-
-  const setBottomFollow = useCallback((next: boolean) => {
-    followRef.current = next;
-    setFollow(next);
-  }, []);
-
-  useEffect(() => setBottomFollow(true), [bot.id, setBottomFollow]);
+  // Scroll pinning: follow the bottom while the reader hasn't scrolled away.
+  // An observer pins every change in height before it is painted (see
+  // useBottomFollow); an upward wheel, touch, key or scrollbar grab detaches,
+  // and scrolling back down to the end re-arms.
+  const bottom = useBottomFollow({ scrollRef, contentRef: logRef, dockRef: composerDockRef, resetKey: transcriptKey });
+  const follow = bottom.follow;
 
   // A search result may be hundreds of rows before the mounted tail. Open a
   // bounded window around it first; useFocusMessage then scrolls and flashes
@@ -1059,22 +1060,10 @@ export function ChatView({ bot }: { bot: Bot }) {
     if (targetIndex < 0) return;
     appliedFocus.current = focus.nonce;
     const range = focusWindowRange(messages.length, targetIndex);
-    setBottomFollow(false);
+    follow.detach();
     setTranscriptWindow({ key: transcriptKey, start: range.start, end: range.end });
-  }, [bot.threadId, messages, setBottomFollow, state.focusMessage, transcriptKey]);
+  }, [bot.threadId, messages, follow, state.focusMessage, transcriptKey]);
   useFocusMessage(bot.threadId, messages.length > 0);
-
-  // deps track the FULL messages.length, so expanding the window (which only
-  // changes windowedMessages) can never re-trigger this bottom scrollTo.
-  // `follow` is intentionally omitted: flipping it true used to yank the
-  // viewport to the end. Re-pinning only arms future content; Jump to latest
-  // and this effect on new rows do the scrolling.
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el || !followRef.current) return;
-    el.scrollTo({ top: el.scrollHeight });
-    previousScrollTop.current = el.scrollTop;
-  }, [bot.id, messages.length, streaming, reasoning, bot.busy, composerDock.pad, cards.length]);
 
   // Expanding prepends rows: capture the height first, then after the commit
   // shift scrollTop by the growth so the message under the cursor stays put
@@ -1084,7 +1073,7 @@ export function ChatView({ bot }: { bot: Bot }) {
     preExpandHeight.current = scrollRef.current?.scrollHeight ?? null;
     // expanding means reading scrollback — never let a mid-expand stream
     // event pin the viewport back to the bottom
-    setBottomFollow(false);
+    follow.detach();
     const start = expandWindowStart(startIndex);
     setTranscriptWindow((w) => ({ ...w, start }));
   };
@@ -1095,39 +1084,19 @@ export function ChatView({ bot }: { bot: Bot }) {
     preExpandHeight.current = null;
     // keep the resume-follow heuristic from reading the restore as a
     // downward user scroll
-    previousScrollTop.current = el.scrollTop;
-  }, [transcriptWindow.start]);
+    follow.syncScrollTop();
+  }, [transcriptWindow.start, follow]);
 
   const showLater = () => {
-    setBottomFollow(false);
+    follow.detach();
     const nextEnd = Math.min(messages.length, endIndex + TRANSCRIPT_WINDOW_SIZE);
     setTranscriptWindow((w) => ({ ...w, end: nextEnd >= messages.length ? null : nextEnd }));
   };
 
-  // keyboard is a scroll gesture too (upstream lesson): PageUp/Home/ArrowUp
-  // break follow like an upward wheel; the at-end onScroll check re-arms it.
-  // ArrowUp only counts outside inputs — in the composer it edits, not scrolls.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const typingInField = e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement;
-      if (e.key === "PageUp" || ((e.key === "Home" || e.key === "ArrowUp") && !typingInField)) {
-        setBottomFollow(false);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [setBottomFollow]);
-
-  const atEnd = () => {
-    const el = scrollRef.current;
-    return !el || el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_FOLLOW_THRESHOLD;
-  };
   const jumpToLatest = () => {
-    setBottomFollow(true);
+    // a re-tailed window that changes height is pinned by the observer
     setTranscriptWindow({ key: transcriptKey, start: tailWindowStart(messages.length), end: null });
-    requestAnimationFrame(() => {
-      scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-    });
+    bottom.jumpToLatest();
   };
 
   const approvalsWaiting = pendingApprovals(messages).length > 0;
@@ -1205,39 +1174,12 @@ export function ChatView({ bot }: { bot: Bot }) {
           <div
             ref={scrollRef}
             className="h-full overflow-x-hidden overflow-y-auto overscroll-y-contain [overflow-anchor:none]"
-            onPointerDown={(e) => {
-              // grabbing the scrollbar is a scroll gesture too — the lane lives
-              // past the content box (clientWidth excludes it)
-              const el = scrollRef.current;
-              if (el && e.target === el && e.nativeEvent.offsetX >= el.clientWidth) setBottomFollow(false);
-            }}
-            onWheel={(e) => {
-              if (e.deltaY < 0) setBottomFollow(false);
-              else if (atEnd()) setBottomFollow(true);
-            }}
-            onTouchStart={(e) => (touchY.current = e.touches[0]?.clientY ?? 0)}
-            onTouchMove={(e) => {
-              const y = e.touches[0]?.clientY ?? 0;
-              if (y > touchY.current + 4) setBottomFollow(false);
-              else if (atEnd()) setBottomFollow(true);
-            }}
-            onScroll={() => {
-              const el = scrollRef.current;
-              if (!el) return;
-              const scrollTop = el.scrollTop;
-              const resume = shouldResumeBottomFollow({
-                following: followRef.current,
-                previousScrollTop: previousScrollTop.current,
-                scrollTop,
-                distanceFromBottom: el.scrollHeight - scrollTop - el.clientHeight,
-              });
-              previousScrollTop.current = scrollTop;
-              if (resume) setBottomFollow(true);
-            }}
+            {...bottom.scrollProps}
           >
             <div
+              ref={logRef}
               className={cn(COLUMN, "flex min-h-full flex-col justify-end gap-3 pt-4")}
-              style={{ paddingBottom: composerDock.pad }}
+              style={{ paddingBottom: TRANSCRIPT_END_PAD }}
               role="log"
               aria-live="polite"
               aria-label={t("Conversation with {name}", { name: bot.name })}
@@ -1258,7 +1200,7 @@ export function ChatView({ bot }: { bot: Bot }) {
                 transcript={messages}
                 editingId={editingId}
                 lastBotTextId={lastBotTextId}
-                emergingId={popping?.id}
+                arrivingId={arrivingId}
                 canRetryLast={canRetryLast}
                 engine={state.instances.find((i) => i.instanceId === bot.modelSelection.instanceId)}
                 hasEarlier={hiddenCount > 0}
@@ -1291,19 +1233,11 @@ export function ChatView({ bot }: { bot: Bot }) {
               )}
               <TurnPresence
                 avatar={<BotAvatar bot={bot} size={18} state={toolInFlight ? "working" : "thinking"} />}
-                visible={presenceVisible}
+                visible={waiting}
                 label={typing}
-                answering={popping !== null}
+                replaced={replyLanded}
                 since={busySince}
-              >
-                {popping ? (
-                  <div className={BOT_BUBBLE}>
-                    <MessageBoundary fallbackText={popping.text}>
-                      <ChatMarkdown text={popping.text} />
-                    </MessageBoundary>
-                  </div>
-                ) : null}
-              </TurnPresence>
+              />
               {/* Ghost tail: 1:1 sends made mid-turn wait in the server's steer
                   queue and stay off the transcript until drain (they must never
                   become the active leaf). These rows are that queue made visible,
@@ -1338,12 +1272,12 @@ export function ChatView({ bot }: { bot: Bot }) {
           <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 z-[1] h-5 bg-gradient-to-b from-stage to-transparent" />
 
           {/* Reading scrollback — one tap back to the end, streaming or not */}
-          {!follow && (
+          {!bottom.following && (
             <button
               onClick={jumpToLatest}
               aria-label={t("Jump to latest messages")}
               className="animate-pop-in absolute left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-raised px-3 py-1.5 text-[12.5px] text-ink shadow-lg hover:bg-raised-hover"
-              style={{ bottom: composerDock.height }}
+              style={{ bottom: COMPOSER_DOCK_HEIGHT }}
             >
               <ArrowDown size={13} /> {t("Jump to latest")}
             </button>

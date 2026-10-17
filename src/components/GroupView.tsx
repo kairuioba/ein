@@ -29,7 +29,6 @@ import {
 import {
   api,
   useStore,
-  useStreaming,
   formatTime,
   openNotificationTarget,
   type Bot,
@@ -65,9 +64,9 @@ import { cn } from "@/lib/cn";
 import { intlLocale, msg, t, tn, tRich } from "@/lib/i18n";
 import { useFocusMessage } from "@/lib/focus-message";
 import { shortPath } from "@/lib/short-path";
-import { BOTTOM_FOLLOW_THRESHOLD, shouldResumeBottomFollow } from "@/lib/bottom-follow";
-import { useComposerDockPad } from "@/lib/composer-dock";
-import { showWorkingDots } from "@/lib/turn-tail";
+import { useBottomFollow } from "@/hooks/use-bottom-follow";
+import { COMPOSER_DOCK_HEIGHT, TRANSCRIPT_END_PAD } from "@/lib/composer-dock";
+import { initialTail, nextTail, showWorkingDots } from "@/lib/turn-tail";
 import { liveActivityLabel } from "@/lib/live-activity";
 import { splitTranscriptAttachments } from "@/lib/composer-attachments";
 import { basisNumbers, type NumberedSource } from "@/lib/group-sources";
@@ -261,7 +260,7 @@ const Transcript = memo(function Transcript({
   members,
   messages,
   transcript,
-  emergingId,
+  arrivingId,
   meeting,
   onReply,
   onJump,
@@ -273,7 +272,9 @@ const Transcript = memo(function Transcript({
   messages: Message[];
   /** Full room transcript, used to resolve quoted messages outside the mounted window. */
   transcript: Message[];
-  emergingId?: string | null;
+  /** the reply that just took the typing line's place: it pops in where it
+   * will stay, so the room changes height once, not three times */
+  arrivingId?: string | null;
   meeting: Meeting;
   onReply: (message: Message) => void;
   onJump: (messageId: string) => void;
@@ -345,7 +346,6 @@ const Transcript = memo(function Transcript({
           );
         }
         const m = item.message;
-        if (m.id === emergingId) return null;
         const user = m.role === "user";
         const sender = botOf(m.from?.botId);
 
@@ -431,7 +431,7 @@ const Transcript = memo(function Transcript({
           const text = chips.length ? (meeting.sources.texts.get(m.id) ?? m.text) : m.text;
           const inline = chips.length > 0 && PLAIN_LINE.test(text);
           row = (
-            <div className="group flex w-full items-end gap-1.5">
+            <div className={cn("group flex w-full items-end gap-1.5", m.id === arrivingId && "turn-answer")}>
               <div
                 className="w-fit max-w-[560px] min-w-0 rounded-2xl rounded-tl-md bg-control/60 px-[13px] py-[9px] text-[13.5px] leading-[1.6] text-ink"
                 title={new Date(m.at).toLocaleString(intlLocale())}
@@ -1095,15 +1095,12 @@ function readMinutesOpen(groupId: string): boolean | null {
 
 export function GroupView({ group }: { group: Group }) {
   const { state, dispatch } = useStore();
-  const stream = useStreaming();
-  const streaming = stream.streaming[group.threadId];
+  // No useStreaming() here: rooms never show streamed text (a reply pops in
+  // when it settles), and subscribing re-rendered the whole room on every
+  // token frame.
   const scrollRef = useRef<HTMLDivElement>(null);
+  const logRef = useRef<HTMLDivElement>(null);
   const composerDockRef = useRef<HTMLDivElement>(null);
-  const composerDock = useComposerDockPad(composerDockRef);
-  const [follow, setFollow] = useState(true);
-  const followRef = useRef(true);
-  const previousScrollTop = useRef(0);
-  const touchY = useRef(0);
   const [folderOpen, setFolderOpen] = useState(false);
   const [membersOpen, setMembersOpen] = useState(false);
   const [findOpen, setFindOpen] = useState(false);
@@ -1156,34 +1153,34 @@ export function GroupView({ group }: { group: Group }) {
   const waiting = Boolean(
     speaker && showWorkingDots(true, group.messages.at(-1), speaker.id),
   );
-  const wasWaiting = useRef(false);
-  const [popping, setPopping] = useState<{ id: string; text: string; botId?: string } | null>(null);
+  // Which reply is popping in, decided in the render that brings it (see
+  // ChatView): the bubble mounts once, in its final row, and the typing line
+  // steps aside in the same commit.
+  const tailKey = `${group.id}:${group.threadId}`;
+  const [tail, setTail] = useState(() => ({ key: tailKey, ...initialTail(lastGroupMessage, waiting) }));
+  let currentTail = tail;
+  if (tail.key !== tailKey) {
+    currentTail = { key: tailKey, ...initialTail(lastGroupMessage, waiting) };
+    setTail(currentTail);
+  } else {
+    const next = nextTail(tail, waiting, lastGroupMessage);
+    if (next !== tail) {
+      currentTail = { key: tailKey, ...next };
+      setTail(currentTail);
+    }
+  }
+  const arrivingId = currentTail.arrivingId;
   useEffect(() => {
-    wasWaiting.current = false;
-    setPopping(null);
-  }, [group.id, group.threadId]);
-  useEffect(() => {
-    if (waiting) wasWaiting.current = true;
-  }, [waiting]);
-  useEffect(() => {
-    if (lastGroupMessage?.role !== "bot" || lastGroupMessage.kind !== "text" || !wasWaiting.current) return;
-    wasWaiting.current = false;
-    setPopping({
-      id: lastGroupMessage.id,
-      text: lastGroupMessage.text ?? "",
-      botId: lastGroupMessage.from?.botId,
-    });
-    const timer = setTimeout(() => setPopping(null), 520);
+    if (!arrivingId) return;
+    const timer = setTimeout(() => setTail((current) => (current.arrivingId === arrivingId ? { ...current, arrivingId: null } : current)), 520);
     return () => clearTimeout(timer);
-  }, [
-    lastGroupMessage?.id,
-    lastGroupMessage?.role,
-    lastGroupMessage?.kind,
-    lastGroupMessage?.text,
-    lastGroupMessage?.from?.botId,
-  ]);
-  const presenceVisible = waiting || popping !== null;
-  const presenceSpeaker = speaker ?? members.find((member) => member.id === popping?.botId) ?? members[0];
+  }, [arrivingId]);
+  // the speaker's own settled reply replaced its typing line
+  const replyLanded = lastGroupMessage?.role === "bot" && lastGroupMessage.kind === "text";
+  // the line outlives `speaker` for its fade, so remember who was on it
+  const lastSpeaker = useRef<Bot | undefined>(undefined);
+  if (speaker) lastSpeaker.current = speaker;
+  const presenceSpeaker = speaker ?? lastSpeaker.current ?? members[0];
 
   // Windowed transcript, mirroring ChatView: only a tail of the room mounts;
   // the anchored boundary re-tails on a render-phase reset when the room (or
@@ -1212,12 +1209,16 @@ export function GroupView({ group }: { group: Group }) {
     [group.messages, transcriptWindow.start, transcriptWindow.end],
   );
 
-  const setBottomFollow = useCallback((next: boolean) => {
-    followRef.current = next;
-    setFollow(next);
-  }, []);
-
-  useEffect(() => setBottomFollow(true), [group.id, setBottomFollow]);
+  // Scroll pinning, as in ChatView: an observer pins every change in height
+  // before it is painted; the reader's upward gestures detach.
+  const bottom = useBottomFollow({
+    scrollRef,
+    contentRef: logRef,
+    dockRef: composerDockRef,
+    resetKey: transcriptKey,
+    observeKey: setupPending,
+  });
+  const follow = bottom.follow;
 
   const appliedFocus = useRef<number | null>(null);
   useEffect(() => {
@@ -1227,41 +1228,14 @@ export function GroupView({ group }: { group: Group }) {
     if (targetIndex < 0) return;
     appliedFocus.current = focus.nonce;
     const range = focusWindowRange(group.messages.length, targetIndex);
-    setBottomFollow(false);
+    follow.detach();
     setTranscriptWindow({ key: transcriptKey, start: range.start, end: range.end });
-  }, [group.messages, group.threadId, setBottomFollow, state.focusMessage, transcriptKey]);
+  }, [group.messages, group.threadId, follow, state.focusMessage, transcriptKey]);
   useFocusMessage(group.threadId, group.messages.length > 0);
 
   // an open folder editor belongs to the room it was opened in
   useEffect(() => setFolderOpen(false), [group.id]);
   useEffect(() => setMembersOpen(false), [group.id]);
-  // deps track the FULL messages.length, so expanding the window (which only
-  // changes windowedMessages) can never re-trigger this bottom scrollTo.
-  // `follow` is intentionally omitted — see ChatView.
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el || !followRef.current) return;
-    el.scrollTo({ top: el.scrollHeight });
-    previousScrollTop.current = el.scrollTop;
-  }, [group.id, group.messages.length, streaming, group.busyBotId, composerDock.pad]);
-
-  // Rows also grow after they mount — a decision card or the minutes line
-  // arrives with the polled company data, an image loads. While following
-  // the bottom, keep it there.
-  const logRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const log = logRef.current;
-    const scroller = scrollRef.current;
-    if (!log || !scroller || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(() => {
-      if (!followRef.current) return;
-      scroller.scrollTo({ top: scroller.scrollHeight });
-      previousScrollTop.current = scroller.scrollTop;
-    });
-    observer.observe(log);
-    return () => observer.disconnect();
-  }, [group.id, setupPending]);
-
   // Expanding prepends rows: capture the height first, then after the commit
   // shift scrollTop by the growth so the message under the cursor stays put
   // (browser scroll anchoring is disabled on this container).
@@ -1270,7 +1244,7 @@ export function GroupView({ group }: { group: Group }) {
     preExpandHeight.current = scrollRef.current?.scrollHeight ?? null;
     // expanding means reading scrollback — never let a mid-expand stream
     // event pin the viewport back to the bottom
-    setBottomFollow(false);
+    follow.detach();
     const start = expandWindowStart(startIndex);
     setTranscriptWindow((w) => ({ ...w, start }));
   };
@@ -1281,18 +1255,13 @@ export function GroupView({ group }: { group: Group }) {
     preExpandHeight.current = null;
     // keep the resume-follow heuristic from reading the restore as a
     // downward user scroll
-    previousScrollTop.current = el.scrollTop;
-  }, [transcriptWindow.start]);
+    follow.syncScrollTop();
+  }, [transcriptWindow.start, follow]);
 
   const showLater = () => {
-    setBottomFollow(false);
+    follow.detach();
     const nextEnd = Math.min(group.messages.length, endIndex + TRANSCRIPT_WINDOW_SIZE);
     setTranscriptWindow((w) => ({ ...w, end: nextEnd >= group.messages.length ? null : nextEnd }));
-  };
-
-  const atEnd = () => {
-    const el = scrollRef.current;
-    return !el || el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_FOLLOW_THRESHOLD;
   };
 
   const jumpTo = useCallback(
@@ -1439,29 +1408,7 @@ export function GroupView({ group }: { group: Group }) {
           <div
             ref={scrollRef}
             className="h-full overflow-x-hidden overflow-y-auto px-5 [overflow-anchor:none]"
-            onWheel={(e) => {
-              if (e.deltaY < 0) setBottomFollow(false);
-              else if (atEnd()) setBottomFollow(true);
-            }}
-            onTouchStart={(e) => (touchY.current = e.touches[0]?.clientY ?? 0)}
-            onTouchMove={(e) => {
-              const y = e.touches[0]?.clientY ?? 0;
-              if (y > touchY.current + 4) setBottomFollow(false);
-              else if (atEnd()) setBottomFollow(true);
-            }}
-            onScroll={() => {
-              const el = scrollRef.current;
-              if (!el) return;
-              const scrollTop = el.scrollTop;
-              const resume = shouldResumeBottomFollow({
-                following: followRef.current,
-                previousScrollTop: previousScrollTop.current,
-                scrollTop,
-                distanceFromBottom: el.scrollHeight - scrollTop - el.clientHeight,
-              });
-              previousScrollTop.current = scrollTop;
-              if (resume) setBottomFollow(true);
-            }}
+            {...bottom.scrollProps}
           >
             {setupPending ? (
               <div className={cn(COLUMN, "flex min-h-full items-center py-8")}>
@@ -1471,7 +1418,7 @@ export function GroupView({ group }: { group: Group }) {
               <div
                 ref={logRef}
                 className={cn(COLUMN, "flex min-h-full flex-col justify-end gap-3 pt-4")}
-                style={{ paddingBottom: composerDock.pad }}
+                style={{ paddingBottom: TRANSCRIPT_END_PAD }}
                 role="log"
                 aria-live="polite"
                 aria-label={t("Room {name}", { name: group.name })}
@@ -1506,7 +1453,7 @@ export function GroupView({ group }: { group: Group }) {
                   members={members}
                   messages={windowedMessages}
                   transcript={group.messages}
-                  emergingId={popping?.id}
+                  arrivingId={arrivingId}
                   meeting={meeting}
                   onReply={selectReply}
                   onJump={jumpTo}
@@ -1522,20 +1469,12 @@ export function GroupView({ group }: { group: Group }) {
                     </button>
                   </div>
                 )}
-                {(speaker || presenceVisible) && (
-                  <TurnPresence
-                    avatar={presenceSpeaker ? <MemberAvatar bot={presenceSpeaker} size={24} marker="working" /> : null}
-                    visible={presenceVisible}
-                    label={activityLabel}
-                    answering={popping !== null}
-                  >
-                    {popping ? (
-                      <div className="ml-8 w-fit max-w-[560px] rounded-2xl rounded-tl-md bg-control/60 px-[13px] py-[9px] text-[13.5px] leading-[1.6] text-ink">
-                        <ChatMarkdown text={meeting.sources.texts.get(popping.id) ?? popping.text} />
-                      </div>
-                    ) : null}
-                  </TurnPresence>
-                )}
+                <TurnPresence
+                  avatar={presenceSpeaker ? <MemberAvatar bot={presenceSpeaker} size={24} marker="working" /> : null}
+                  visible={waiting}
+                  label={activityLabel}
+                  replaced={replyLanded}
+                />
                 {showRoomLines && laterCount === 0 && (
                   <div className="flex flex-col gap-1.5 pt-1">
                     {meeting.isMeeting && meeting.state === "ended" && meeting.timing && (
@@ -1564,18 +1503,16 @@ export function GroupView({ group }: { group: Group }) {
             )}
           </div>
 
-          {!follow && (
+          {!bottom.following && (
             <button
               onClick={() => {
-                setBottomFollow(true);
+                // a re-tailed window that changes height is pinned by the observer
                 setTranscriptWindow({ key: transcriptKey, start: tailWindowStart(group.messages.length), end: null });
-                requestAnimationFrame(() => {
-                  scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-                });
+                bottom.jumpToLatest();
               }}
               aria-label={t("Jump to latest messages")}
               className="animate-pop-in absolute left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-hairline/40 bg-raised px-3 py-1.5 text-[12.5px] text-ink shadow-lg hover:bg-raised-hover"
-              style={{ bottom: composerDock.height }}
+              style={{ bottom: COMPOSER_DOCK_HEIGHT }}
             >
               <ArrowDown size={13} /> {t("Jump to latest")}
             </button>

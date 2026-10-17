@@ -472,6 +472,17 @@ body {
   transform-origin: 18px 18px;
   animation: turn-mascot-out 0.28s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
+/* A typing line that leaves with nothing in its place (stopped, failed,
+   waiting on you) closes its row and the gap-3 above it while it fades, so
+   the pinned transcript glides down instead of dropping when it unmounts. */
+@keyframes turn-presence-close {
+  from { height: 1.5rem; margin-top: 0; }
+  to { height: 0; margin-top: -0.75rem; }
+}
+.turn-presence-close {
+  overflow: hidden;
+  animation: turn-presence-close 0.28s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
 .turn-answer {
   transform-origin: 18px 100%;
   animation: turn-answer-in 0.48s cubic-bezier(0.16, 1, 0.3, 1) both;
@@ -508,7 +519,7 @@ body {
   .animate-caret, .animate-msg-in, .animate-shimmer { animation: none; }
   .animate-status-pulse { animation: none; opacity: 0.6; }
   .thinking-shimmer { background: none; color: var(--color-ink-secondary); }
-  .turn-mascot-in, .turn-mascot-out, .turn-answer { animation: none; }
+  .turn-mascot-in, .turn-mascot-out, .turn-answer, .turn-presence-close { animation: none; }
   /* The drawer still moves, it just arrives instantly. */
   aside { transition: none; }
 }

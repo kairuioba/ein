@@ -1612,7 +1612,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     views.set(id, {
       id,
       // with departments around, the bots outside them are "not in a department"
-      label: id === BOTS_SECTION_ID && departments.length ? t("No department") : sidebarSectionLabel(id),
+      label: id === BOTS_SECTION_ID && departments.length ? t("Not in any department") : sidebarSectionLabel(id),
       color: BUILTIN_COLORS[id],
       count: bots.length + groups.length,
       rows: [

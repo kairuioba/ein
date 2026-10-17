@@ -1126,7 +1126,7 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
                     {!desktopBrowser
                       ? browserBlockedOnWindows
                         ? t("The built-in browser is temporarily unavailable on Windows while Electron's production sandbox support is being verified.")
-                        : t("The built-in browser needs the OpenMausBot desktop app.")
+                        : t("The built-in browser needs the Ein desktop app.")
                       : !browserFeature
                         ? t("The built-in browser is switched off under App Settings → Experimental.")
                         : !canUseBrowser

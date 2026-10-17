@@ -1559,8 +1559,8 @@ function workerPrompt(run: DispatchRun, subtask: DispatchSubtask, context: { chi
     .map((dep) => run.subtasks.find((entry) => entry.id === dep))
     .filter((dep): dep is DispatchSubtask => Boolean(dep?.result));
   const header = leadOf
-    ? `[Assigned by @${chiefName}, the company's chief, through OpenMausBot dispatch. You lead the ${leadOf} department; this subtask is your department's part of a larger plan.]`
-    : `[Assigned by @${chiefName} through OpenMausBot dispatch. You are one specialist on a team; do this subtask yourself and reply with the finished deliverable.]`;
+    ? `[Assigned by @${chiefName}, the company's chief, through Ein dispatch. You lead the ${leadOf} department; this subtask is your department's part of a larger plan.]`
+    : `[Assigned by @${chiefName} through Ein dispatch. You are one specialist on a team; do this subtask yourself and reply with the finished deliverable.]`;
   return [
     header,
     "",

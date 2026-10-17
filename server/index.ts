@@ -2559,7 +2559,7 @@ async function startTurn(
   const resumeCursor = resume ? task.resumeCursors[instanceId] : undefined;
 
   const persona = [
-    `You are ${bot.name}, a personal bot in OpenMausBot.`,
+    `You are ${bot.name}, a personal bot in Ein.`,
     bot.title && `Role: ${bot.title}.`,
     bot.description && `About: ${bot.description}`,
     replyLanguageInstruction(),
@@ -2680,7 +2680,7 @@ async function startTurn(
           throw new Error(t("this model engine cannot control this computer — choose Claude or an ACP engine, or select another destination"));
         }
         const cua = readCuaConnection();
-        if (!cua) throw new Error(t("CUA Driver is not ready for this computer — check permissions and restart OpenMausBot"));
+        if (!cua) throw new Error(t("CUA Driver is not ready for this computer — check permissions and restart Ein"));
         integrations.localComputer = cua;
         computerKind = "local";
       }
@@ -3178,7 +3178,7 @@ async function cloudRoutineReadiness(): Promise<{ ready: boolean; reason?: strin
   }
   const instance = registry.instances().find((candidate) => candidate.driverKind === "boxAgent");
   if (!instance) {
-    return { ready: false, reason: "The Cloud VM runner is unavailable. Restart OpenMausBot and try again." };
+    return { ready: false, reason: "The Cloud VM runner is unavailable. Restart Ein and try again." };
   }
   try {
     const snapshot = await instance.snapshot();
@@ -3548,7 +3548,7 @@ async function runGroupMemberTurn(
     .map((b) => `@${b.name}${b.title ? ` (${b.title})` : ""}`)
     .join(", ");
   const system = [
-    `You are ${bot.name}, a bot in the room "${group.name}" in OpenMausBot.`,
+    `You are ${bot.name}, a bot in the room "${group.name}" in Ein.`,
     bot.title && `Role: ${bot.title}.`,
     bot.description && `About: ${bot.description}`,
     `Room members: ${roster}, and ${userName} (the human).`,
@@ -4184,7 +4184,7 @@ function dispatchConnectorResume(entry: { botId: string; threadId: string; resum
   const owner = connectorThread(entry.botId, entry.threadId);
   if (!owner) return;
   const names = entry.labels.join(", ");
-  const prompt = `OpenMausBot connection update: the user securely connected ${names}. Continue the task that paused for this connection. Do not ask them to connect it again.`;
+  const prompt = `Ein connection update: the user securely connected ${names}. Continue the task that paused for this connection. Do not ask them to connect it again.`;
   if (owner.bot.busy) {
     pendingConnectorResumes.set(`${entry.threadId}:${entry.resumeKey}`, entry);
     return;
@@ -4282,8 +4282,8 @@ function dispatchSecretResume(entry: SecretResumeEntry) {
   if (!owner) return;
   const prompt =
     entry.outcome === "provided"
-      ? `OpenMausBot credential update: the user securely provided ${entry.label}. Continue the task that paused for it. You do not receive the secret and must not ask them to paste it into chat.`
-      : `OpenMausBot credential update: the user declined to provide ${entry.label}. Continue without it if possible, or briefly explain the limitation. Do not ask them to paste it into chat.`;
+      ? `Ein credential update: the user securely provided ${entry.label}. Continue the task that paused for it. You do not receive the secret and must not ask them to paste it into chat.`
+      : `Ein credential update: the user declined to provide ${entry.label}. Continue without it if possible, or briefly explain the limitation. Do not ask them to paste it into chat.`;
   if (owner.bot.busy) {
     pendingSecretResumes.set(`${entry.threadId}:${entry.messageId}`, entry);
     return;
@@ -5024,7 +5024,7 @@ const server = createServer(async (req, res) => {
         }
         const channel = getOrCreateChannel(store, currentFrom, currentTarget);
         mirrorExchange(commsBus, currentFrom, currentTarget, message, channel, fromThreadId);
-        const prefixed = `[Message from @${currentFrom.name}, another bot in this OpenMausBot workspace. Reply to them.]\n\n${message}`;
+        const prefixed = `[Message from @${currentFrom.name}, another bot in this Ein workspace. Reply to them.]\n\n${message}`;
         const outcome = await askBotAndWait(toBotId, prefixed, depth, fromBotId);
         if (outcome.status === "timeout" && !delegationWatch.has(currentTarget.threadId)) {
           // The peer's turn is still running — only the wait ended. Convert
@@ -5847,7 +5847,7 @@ const server = createServer(async (req, res) => {
           ? body.name.trim()
           : profileName
             ? t("{name}'s Team", { name: profileName })
-            : t("My OpenMaus Team");
+            : t("My Ein Team");
       const memberIds = store.bots.filter((bot) => !bot.hidden).map((bot) => bot.id);
       if (memberIds.length === 0) return json(res, 400, { error: t("Create a bot before exporting your team") });
       try {

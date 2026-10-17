@@ -13,6 +13,7 @@ import { ApiKeyRow, VpsConnection } from "@/components/ApiKeys";
 import { LocalComputerSection } from "@/components/LocalComputerSection";
 import { CompanionSection } from "@/components/CompanionSection";
 import { Card, Switch } from "@/components/SettingsPrimitives";
+import { UpdatesCard } from "./UpdatesCard";
 import { SkinPicker } from "@/components/SkinPicker";
 import { RoomTurnTimeoutSettings } from "@/components/RoomTurnTimeoutSettings";
 import { TranscriptionSettings } from "@/components/TranscriptionSettings";
@@ -57,53 +58,6 @@ function ProfileFields() {
         className={inputClass}
       />
     </div>
-  );
-}
-
-function UpdatesRow() {
-  const s = useUpdaterState();
-  if (!window.ogb?.updater) {
-    return <Card title={t("Updates")} subtitle={t("Updates are handled by the desktop app. This window is not running inside it.")} />;
-  }
-  const updater = window.ogb.updater;
-  if (s?.unavailable) {
-    return (
-      <Card
-        title={t("Updates")}
-        subtitle={t("This edition does not update itself, so it never turns into the upstream English release. Install new versions from your team's release page.")}
-      />
-    );
-  }
-  const label =
-    s?.status === "checking"
-      ? t("Checking…")
-      : s?.status === "available"
-        ? t("{version} available", { version: s.version })
-        : s?.status === "downloading"
-          ? t("Downloading {percent}%", { percent: Math.round(s.percent ?? 0) })
-          : s?.status === "downloaded"
-            ? t("{version} ready — restart to apply", { version: s.version })
-            : s?.status === "error"
-              ? t("Check failed: {message}", { message: s.message ?? t("unknown error") })
-              : t("You're on the latest version we know of.");
-  return (
-    <Card title={t("Updates")} subtitle={label}>
-      <button
-        onClick={() => {
-          if (s?.status === "available") return void updater.download();
-          if (s?.status === "downloaded") return void updater.install();
-          void updater.check();
-        }}
-        disabled={s?.status === "checking" || s?.status === "downloading"}
-        className="h-8 rounded-[9px] bg-raised px-3 text-[13px] font-semibold text-ink shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_75%,transparent)] hover:bg-raised-hover disabled:opacity-40"
-      >
-        {s?.status === "available"
-          ? t("Download")
-          : s?.status === "downloaded"
-            ? t("Restart and install")
-            : t("Check for updates")}
-      </button>
-    </Card>
   );
 }
 
@@ -235,7 +189,7 @@ function ExperimentalFeaturesRow() {
                 : t("Off by default. Enable it to let supported bots use a browser tab you can watch and take over.")
               : browserBlockedOnWindows
                 ? t("Temporarily unavailable on Windows while Electron's production sandbox support is being verified.")
-                : t("Needs the OpenMausBot desktop app.")}
+                : t("Needs the Ein desktop app.")}
           </div>
         </div>
         <Switch
@@ -318,7 +272,7 @@ function BrowserProfilesRow() {
       try {
         await window.ogb?.browser?.forgetProfile?.(profile.partitionId ?? profile.id);
       } catch {
-        setError(t("The profile was removed, but its local browser data could not be erased. Restart OpenMausBot before reusing that profile name."));
+        setError(t("The profile was removed, but its local browser data could not be erased. Restart Ein before reusing that profile name."));
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t("Could not delete the browser profile."));
@@ -440,7 +394,7 @@ function DiagnosticsRow() {
         <button
           onClick={() => void exportDiagnostics()}
           disabled={exporting || !available}
-          title={available ? undefined : t("Needs the OpenMausBot desktop app.")}
+          title={available ? undefined : t("Needs the Ein desktop app.")}
           aria-label={t("Export diagnostics to a text file")}
           className="h-8 rounded-[9px] bg-raised px-3 text-[13px] font-semibold text-ink shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_75%,transparent)] hover:bg-raised-hover disabled:opacity-40"
         >
@@ -567,7 +521,7 @@ export function UpdatesSection() {
     <>
       <SectionHeader title={t("Updates")} description={t("Which version you run, and a redacted report to send when something breaks.")} />
       <div className="flex flex-col gap-3.5">
-        <UpdatesRow />
+        <UpdatesCard />
         <DiagnosticsRow />
       </div>
     </>

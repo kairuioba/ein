@@ -183,7 +183,7 @@ const ROUTINE_FIELDS_SCHEMA = {
   run_on: {
     type: "string",
     enum: ["maus", "cloud"],
-    description: "Where the routine runs. Defaults to maus (this OpenMausBot setup).",
+    description: "Where the routine runs. Defaults to maus (this Ein setup).",
   },
   duration_minutes: {
     type: "integer",
@@ -197,7 +197,7 @@ const TOOLS = [
   {
     name: "list_bots",
     description:
-      "List the other bots (agents) in your OpenMausBot section, with their model and whether they're busy. Call this before delegate_bot or ask_bot to discover who's available. Use delegate_bot for assignments; use ask_bot only for a short consultation needed inline.",
+      "List the other bots (agents) in your Ein section, with their model and whether they're busy. Call this before delegate_bot or ask_bot to discover who's available. Use delegate_bot for assignments; use ask_bot only for a short consultation needed inline.",
     inputSchema: { type: "object", properties: {} },
   },
   {
@@ -269,7 +269,7 @@ const TOOLS = [
   {
     name: "submit_plan",
     description:
-      "CHIEF OF STAFF ONLY. Submit a whole multi-step plan and let OpenMausBot run it: each subtask goes to the best-fitting teammate (a specialist with a recommended model is created when nobody fits), subtasks run in dependency order and in parallel where possible, each specialist receives the results it depends on, and you are asked for one consolidated report when everything has finished. Returns immediately with the assignments. Prefer this over several delegate_bot calls whenever a request has two or more distinct pieces of work. After it succeeds, tell the user the plan in a few lines and end your turn — do not wait, poll, or do the subtasks yourself.",
+      "CHIEF OF STAFF ONLY. Submit a whole multi-step plan and let Ein run it: each subtask goes to the best-fitting teammate (a specialist with a recommended model is created when nobody fits), subtasks run in dependency order and in parallel where possible, each specialist receives the results it depends on, and you are asked for one consolidated report when everything has finished. Returns immediately with the assignments. Prefer this over several delegate_bot calls whenever a request has two or more distinct pieces of work. After it succeeds, tell the user the plan in a few lines and end your turn — do not wait, poll, or do the subtasks yourself.",
     inputSchema: {
       type: "object",
       properties: {
@@ -307,7 +307,7 @@ const TOOLS = [
   {
     name: "add_people",
     description:
-      "CHIEF OF STAFF ONLY. Speed up one of your dispatch runs that is going too slowly (for example when the user says it is too slow or asks for more people). OpenMausBot first checks whether more people would help — work waiting on other results or approvals, nothing left that can run in parallel, too much rework, or an engine rate limiting all mean no — and only then adds a squad of new specialists who take subtasks nobody has started; finished and running work stays put. Within your company rules and budget it happens at once; otherwise tell the user why, and they can add people from the workbench. Returns the diagnosis and what changed.",
+      "CHIEF OF STAFF ONLY. Speed up one of your dispatch runs that is going too slowly (for example when the user says it is too slow or asks for more people). Ein first checks whether more people would help — work waiting on other results or approvals, nothing left that can run in parallel, too much rework, or an engine rate limiting all mean no — and only then adds a squad of new specialists who take subtasks nobody has started; finished and running work stays put. Within your company rules and budget it happens at once; otherwise tell the user why, and they can add people from the workbench. Returns the diagnosis and what changed.",
     inputSchema: {
       type: "object",
       properties: {
@@ -319,7 +319,7 @@ const TOOLS = [
   {
     name: "request_credential",
     description:
-      "Ask the user for a supported API key through OpenMausBot's secure credential card. Use this instead of asking them to paste a secret into chat. The secret is saved by the desktop app and is never returned to you. After calling this tool, end the turn; OpenMausBot resumes the task after the user saves or declines.",
+      "Ask the user for a supported API key through Ein's secure credential card. Use this instead of asking them to paste a secret into chat. The secret is saved by the desktop app and is never returned to you. After calling this tool, end the turn; Ein resumes the task after the user saves or declines.",
     inputSchema: {
       type: "object",
       properties: {
@@ -692,7 +692,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
       return { text: `${r.label ?? CREDENTIAL_TARGETS[credentialId].label} is already configured. Continue the task.` };
     }
     return {
-      text: `A secure ${r.label ?? CREDENTIAL_TARGETS[credentialId].label} card is now visible to the user. End this turn; OpenMausBot will resume the task after they save or decline. Never ask them to paste the key into chat.`,
+      text: `A secure ${r.label ?? CREDENTIAL_TARGETS[credentialId].label} card is now visible to the user. End this turn; Ein will resume the task after they save or decline. Never ask them to paste the key into chat.`,
     };
   }
   if (name === "list_routines") {

@@ -376,7 +376,7 @@ export class RoutineManager {
     for (const run of this.runs) {
       if (run.status === "running" || run.status === "waiting") {
         run.status = "failed";
-        run.error = t("OpenMausBot restarted while this routine was running");
+        run.error = t("Ein restarted while this routine was running");
         run.attention = undefined;
         run.finishedAt = this.now();
         recovered.push(cloneRun(run));
@@ -636,7 +636,7 @@ export class RoutineManager {
     receivedAt: number;
   }): RoutineRun {
     if (this.options.botState(input.botId) === "missing") {
-      throw Object.assign(new Error(msg("The assigned MAUS no longer exists")), { status: 410 });
+      throw Object.assign(new Error(msg("The assigned bot no longer exists")), { status: 410 });
     }
     const run: RoutineRun = {
       id: randomUUID(),

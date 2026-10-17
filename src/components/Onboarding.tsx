@@ -15,6 +15,7 @@ import { Button, Dialog } from "./ui";
 import { api, useStore, type Bot, type InstanceInfo } from "@/state/store";
 import { saveOrg } from "@/state/org-api";
 import { cn } from "@/lib/cn";
+import { PRODUCT_TAGLINE } from "@/lib/brand";
 import { msg, t, tn } from "@/lib/i18n";
 import type { MascotPose } from "@/lib/engine-mascots";
 import { RECOMMENDED_DRIVER, engineState, engineUsable, mascotForInstance, onboardingEngines, type EngineState } from "./settings/engine-model";
@@ -79,10 +80,11 @@ function Stepper({ step }: { step: Step }) {
   );
 }
 
-function Heading({ title, sub }: { title: string; sub: ReactNode }) {
+function Heading({ title, tagline, sub }: { title: string; tagline?: string; sub: ReactNode }) {
   return (
     <div className="text-center">
       <h1 className="text-[24px] leading-[1.3] font-bold tracking-[-0.2px] text-ink">{title}</h1>
+      {tagline && <p className="mt-1 text-[13px] tracking-[0.05em] text-ink-secondary/80">{tagline}</p>}
       <p className="mt-1.5 text-[14px] text-ink-secondary">{sub}</p>
     </div>
   );
@@ -461,7 +463,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
           <div className="mt-14 flex w-full max-w-[440px] flex-col items-center">
             <Mascot kind="workbuddy" pose="wave" scale={1.5} shadow />
             <div className="mt-3">
-              <Heading title={t("Welcome to OpenMausBot")} sub={t("Bots that do real work on their own computer. Your name and email appear in the sidebar and stay on this computer.")} />
+              <Heading title={t("Welcome to Ein")} tagline={PRODUCT_TAGLINE} sub={t("Bots that do real work on their own computer. Your name and email appear in the sidebar and stay on this computer.")} />
             </div>
             <div className={cn(cardCls, "mt-6 flex w-full flex-col gap-3 p-6")}>
               <label className={fieldCls}>

@@ -297,7 +297,7 @@ function createBrowserHost({ manager, token = randomBytes(32).toString("hex"), n
     // Explicit turn-completion revocation is primary. Registration's
     // absolute two-hour expiry is a hard crash/revoke-failure backstop; a
     // retained proxy cannot keep itself alive by making requests.
-    if (!surface) return json(res, 503, { error: "the OpenMausBot window is closed — open it to use the browser" });
+    if (!surface) return json(res, 503, { error: "the Ein window is closed — open it to use the browser" });
     const beforeLease = surface.controlLease?.(botId, profile)
       ?? { held: surface.isHumanControlled?.(botId, profile) === true, epoch: 0 };
     if (beforeLease.held) {

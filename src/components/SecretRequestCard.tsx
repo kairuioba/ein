@@ -33,7 +33,7 @@ export function SecretRequestCard({
       ? t("Saved securely. Your bot is continuing the task.")
       : t("Saved securely. Your bot will continue when its current turn settles.")
     : declined
-      ? t("You chose not to provide this credential. OpenMausBot could not resume the bot yet.")
+      ? t("You chose not to provide this credential. Ein could not resume the bot yet.")
       : secret.description;
   const footerLabel = declined
     ? t("Continuing without this credential failed")
@@ -128,7 +128,7 @@ export function SecretRequestCard({
           <span>{description}</span>
           {open && (
             <span className="inline-flex items-center gap-1 text-ink-secondary/90">
-              <IconLock size={11} /> {t("Stored securely by OpenMausBot and never added to chat.")}
+              <IconLock size={11} /> {t("Stored securely by Ein and never added to chat.")}
             </span>
           )}
         </>

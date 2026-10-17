@@ -371,14 +371,14 @@ function hasNoPublishedPorts(config: {
 function statusProblem(status: VpsComputerStatus): string | null {
   if (!status.configured) return t("Configure a VPS SSH alias in App Settings → Connections");
   if (!status.daemonUp) return t("Docker over SSH could not reach the VPS; check the SSH alias and Docker on the VPS");
-  if (!status.image) return t("Prepare the pinned OpenMausBot Cua image on the VPS (Driver {version})", { version: CUA_DRIVER_VERSION });
-  if (status.container === "missing") return t("No OpenMausBot container exists for this bot on the VPS");
-  if (!status.imageMatches) return t("The VPS container uses an incompatible or untrusted OpenMausBot image");
-  if (!status.managed) return t("The VPS container name is occupied by a container OpenMausBot did not create");
+  if (!status.image) return t("Prepare the pinned Ein Cua image on the VPS (Driver {version})", { version: CUA_DRIVER_VERSION });
+  if (status.container === "missing") return t("No Ein container exists for this bot on the VPS");
+  if (!status.imageMatches) return t("The VPS container uses an incompatible or untrusted Ein image");
+  if (!status.managed) return t("The VPS container name is occupied by a container Ein did not create");
   if (status.network === "unsafe") return t("The VPS container uses an unapproved network or publishes ports; refusing to use it");
   if (status.mounts === "unsafe") return t("The VPS container has host mounts; refusing to use it");
-  if (status.security === "unsafe") return t("The VPS container is missing OpenMausBot safety limits");
-  if (status.container === "stopped") return t("The OpenMausBot VPS container is stopped");
+  if (status.security === "unsafe") return t("The VPS container is missing Ein safety limits");
+  if (status.container === "stopped") return t("The Ein VPS container is stopped");
   if (status.desktop_error) return t("The VPS Cua desktop failed to start: {error}", { error: status.desktop_error });
   if (!status.desktopReady) return t("The VPS container started, but Cua Driver is not ready yet");
   return null;
@@ -800,7 +800,7 @@ export async function vpsComputerAction(
         if (before.container === "missing") return before;
         if (!before.managed) {
           throw Object.assign(
-            new Error(t("The VPS container name is occupied by a container OpenMausBot did not create — remove it on the VPS yourself")),
+            new Error(t("The VPS container name is occupied by a container Ein did not create — remove it on the VPS yourself")),
             { status: 409 },
           );
         }

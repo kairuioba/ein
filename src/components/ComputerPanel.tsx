@@ -709,12 +709,12 @@ export function ComputerPanel({
 
       if (window.ogb?.desktopViewer) {
         const opened = await window.ogb.desktopViewer.open(viewerUrl, t("{name}'s live desktop", { name: bot.name }), bot.id);
-        if (!opened) throw new Error(t("OpenMausBot could not open the live desktop"));
+        if (!opened) throw new Error(t("Ein could not open the live desktop"));
       } else if (fallbackTab) {
         fallbackTab.location.replace(viewerUrl);
       } else if (window.ogb?.openExternal) {
         const opened = await window.ogb.openExternal(viewerUrl);
-        if (!opened) throw new Error(t("OpenMausBot could not open the live desktop link"));
+        if (!opened) throw new Error(t("Ein could not open the live desktop link"));
       } else if (!window.open(viewerUrl, "_blank", "noopener")) {
         throw new Error(t("Your browser blocked the live desktop tab"));
       }
@@ -798,7 +798,7 @@ export function ComputerPanel({
   };
 
   const replaceVpsComputer = async () => {
-    if (!window.confirm(t("Replace {name}'s VPS computer with the version required by this OpenMausBot update? Files stored only inside the disposable container will be deleted.", { name: bot.name }))) return;
+    if (!window.confirm(t("Replace {name}'s VPS computer with the version required by this Ein update? Files stored only inside the disposable container will be deleted.", { name: bot.name }))) return;
     setPending("vps-replace");
     setError(null);
     try {
@@ -834,7 +834,7 @@ export function ComputerPanel({
     starting: t("Starting your bot's computer…"),
     unconfigured: t("No cloud computer configured"),
     "vps-unconfigured": t("No managed VPS computer is configured for this bot"),
-    "vps-incompatible": t("This VPS computer belongs to an earlier OpenMausBot version"),
+    "vps-incompatible": t("This VPS computer belongs to an earlier Ein version"),
     "vps-stopped": t("The managed VPS computer is stopped"),
     "local-unavailable": localDisabledReason ?? t("Local computer control isn't ready."),
     "vm-unavailable": t("The Local VM isn't available for this bot"),
@@ -1143,7 +1143,7 @@ export function ComputerPanel({
         {/* everything else the panel could always do */}
         <div className="flex flex-wrap gap-2">
           {((phase === "vm" && vmViewerUrl && control.held) || (phase === "ready" && control.held)) && (
-            <Button variant="ghost" size="sm" onClick={() => void openDesktop()} disabled={pending === "join"} title={t("Open the Local VM's live desktop inside OpenMausBot")}>
+            <Button variant="ghost" size="sm" onClick={() => void openDesktop()} disabled={pending === "join"} title={t("Open the Local VM's live desktop inside Ein")}>
               {pending === "join" ? <Loader2 size={13} className="animate-spin" /> : <Monitor size={13} />}
               {t("Open live desktop")}
             </Button>

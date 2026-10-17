@@ -461,7 +461,7 @@ function createBrowserSurfaceManager({
   now = () => Date.now(),
   injectedSource = loadInjectedSource(),
 }) {
-  if (!owner || owner.isDestroyed?.()) throw new Error("The OpenMausBot window is unavailable");
+  if (!owner || owner.isDestroyed?.()) throw new Error("The Ein window is unavailable");
   if (createView?.constructor !== Function) throw new Error("The browser surface viewer is unavailable");
   const emit = notify instanceof Function ? notify : () => {};
   const emitUserInteraction = onUserInteraction instanceof Function ? onUserInteraction : () => {};
@@ -953,7 +953,7 @@ function createBrowserSurfaceManager({
 
   const create = (botId, profile) => {
     evictIfNeeded();
-    if (owner.isDestroyed?.()) throw new Error("The OpenMausBot window is unavailable");
+    if (owner.isDestroyed?.()) throw new Error("The Ein window is unavailable");
     const partition = partitionForProfile(botId, profile);
     const view = createView({
       webPreferences: {

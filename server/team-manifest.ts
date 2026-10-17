@@ -58,7 +58,7 @@ const membersSchema = z
 
 const manifestSchema = z.discriminatedUnion("version", [
   z.object({
-    format: z.literal(TEAM_MANIFEST_FORMAT, { error: () => t("This is not an OpenMaus team file") }),
+    format: z.literal(TEAM_MANIFEST_FORMAT, { error: () => t("This is not an Ein team file") }),
     version: z.literal(LEGACY_TEAM_MANIFEST_VERSION),
     team: z.object({
       name: requiredText(100),
@@ -72,7 +72,7 @@ const manifestSchema = z.discriminatedUnion("version", [
     }),
   }),
   z.object({
-    format: z.literal(TEAM_MANIFEST_FORMAT, { error: () => t("This is not an OpenMaus team file") }),
+    format: z.literal(TEAM_MANIFEST_FORMAT, { error: () => t("This is not an Ein team file") }),
     version: z.literal(TEAM_MANIFEST_VERSION),
     team: z.object({
       name: requiredText(100),

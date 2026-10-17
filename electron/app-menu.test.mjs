@@ -10,7 +10,8 @@ const i18n = require("./i18n.cjs");
 
 const build = (overrides = {}) =>
   applicationMenuTemplate({
-    appName: "OpenMausBot",
+    // main.mjs passes t("Ein"), the name people read in that language
+    appName: i18n.t("Ein"),
     platform: "darwin",
     isFullScreen: false,
     homepage: "https://example.test/omb",
@@ -27,15 +28,16 @@ describe("application menu", () => {
 
   it("keeps the English menu in English", () => {
     i18n.setLocale("en");
-    expect(labels(build())).toEqual(["OpenMausBot", "File", "Edit", "View", "Window", "Help"]);
-    expect(menuLabel("Quit {app}", { app: "OpenMausBot" }, "darwin")).toBe("Quit OpenMausBot");
+    expect(labels(build())).toEqual(["Ein", "File", "Edit", "View", "Window", "Help"]);
+    expect(menuLabel("Quit {app}", { app: i18n.t("Ein") }, "darwin")).toBe("Quit Ein");
+    expect(find(build(), "Ein Website")).toBeDefined();
   });
 
   it("uses macOS's own Chinese words on a Mac and the usual ones elsewhere", () => {
     i18n.setLocale("zh-CN");
-    expect(labels(build())).toEqual(["OpenMausBot", "文件", "编辑", "显示", "窗口", "帮助"]);
+    expect(labels(build())).toEqual(["一念", "文件", "编辑", "显示", "窗口", "帮助"]);
     expect(menuLabel("Copy", {}, "darwin")).toBe("拷贝");
-    expect(menuLabel("Quit {app}", { app: "OpenMausBot" }, "darwin")).toBe("退出“OpenMausBot”");
+    expect(menuLabel("Quit {app}", { app: i18n.t("Ein") }, "darwin")).toBe("退出“一念”");
     expect(menuLabel("Copy", {}, "win32")).toBe("复制");
     expect(labels(build({ platform: "win32" }))).toEqual(["文件", "编辑", "视图", "窗口", "帮助"]);
   });

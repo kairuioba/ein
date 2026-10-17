@@ -921,8 +921,8 @@ function buildErrorPage({ allPortsOccupied }) {
   const serverLogPath = path.join(LOG_DIR, "server.log");
   const serverLogHref = pathToFileURL(serverLogPath).href;
   const reason = allPortsOccupied
-    ? t("Every OpenMausBot port answered health checks from another process — likely a second copy of the app, or another program on ports 8799–28799. Quit that program, then quit and reopen OpenMausBot.")
-    : t("The background server didn't come up in time — this is usually slow startup, not a port conflict. Quit and reopen OpenMausBot.");
+    ? t("Every Ein port answered health checks from another process — likely a second copy of the app, or another program on ports 8799–28799. Quit that program, then quit and reopen Ein.")
+    : t("The background server didn't come up in time — this is usually slow startup, not a port conflict. Quit and reopen Ein.");
   return (
     "data:text/html;charset=utf-8," +
     encodeURIComponent(
@@ -985,7 +985,7 @@ function desktopViewerErrorPage(message, retryUrl) {
 }
 
 function openDesktopViewer(owner, rawUrl, rawTitle, contextId) {
-  if (!owner || owner.isDestroyed()) throw new Error(t("The OpenMausBot window is unavailable"));
+  if (!owner || owner.isDestroyed()) throw new Error(t("The Ein window is unavailable"));
   const url = desktopViewerUrl(rawUrl);
   const titleCandidate = Object.prototype.toString.call(rawTitle) === "[object String]" ? rawTitle.trim() : "";
   const title = titleCandidate ? titleCandidate.slice(0, 80) : t("Live desktop");
@@ -1087,7 +1087,7 @@ function openDesktopViewer(owner, rawUrl, rawTitle, contextId) {
 }
 
 function ensureDesktopWorkspace(owner) {
-  if (!owner || owner.isDestroyed()) throw new Error(t("The OpenMausBot window is unavailable"));
+  if (!owner || owner.isDestroyed()) throw new Error(t("The Ein window is unavailable"));
   if (desktopWorkspaceManager) {
     if (desktopWorkspaceOwner !== owner) {
       throw new Error(t("The desktop workspace belongs to another app window"));
@@ -1313,14 +1313,16 @@ function readHomepage() {
     const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8"));
     if (typeof manifest.homepage === "string" && /^https:\/\//.test(manifest.homepage)) return manifest.homepage;
   } catch {
-    // fall through to the upstream project
+    // fall through to the project's own repository
   }
-  return "https://github.com/milind-soni/OpenMausBot";
+  return "https://github.com/kairuioba/ein";
 }
 
 function installApplicationMenu() {
   const template = applicationMenuTemplate({
-    appName: app.getName(),
+    // The name people read ("Quit Ein" / 退出“一念”). app.getName() stays
+    // "OpenMausBot": it names the data folders and the keychain entry.
+    appName: t("Ein"),
     platform: process.platform,
     isFullScreen: menuFullScreen,
     homepage: readHomepage(),
@@ -1331,6 +1333,27 @@ function installApplicationMenu() {
     openExternal: (url) => void shell.openExternal(url),
   });
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+/** The native About panel (the app menu's “About Ein”). Same in every
+ * language, like the brand itself. Each platform reads its own subset of
+ * the fields, so only those are passed. */
+function installAboutPanel() {
+  if (typeof app.setAboutPanelOptions !== "function") return;
+  const options = {
+    applicationName: "一念 Ein",
+    applicationVersion: app.getVersion(),
+    copyright: "© 2026 kairuioba",
+  };
+  if (process.platform === "darwin" || process.platform === "win32") {
+    options.credits = "一念起，万 Bot 动\n基于开源项目 OpenMausBot（CuriosityOS，Apache-2.0）二次开发";
+  }
+  if (process.platform === "linux") options.website = "https://github.com/kairuioba/ein";
+  try {
+    app.setAboutPanelOptions(options);
+  } catch (error) {
+    console.error("[desktop] about panel options were not accepted:", error);
+  }
 }
 
 ipcMain.on("desktop:unread-count", (event, value) => {
@@ -1908,6 +1931,7 @@ setCuaStateListener((connection) => {
 
 app.whenReady().then(async () => {
   installApplicationMenu();
+  installAboutPanel();
   if (app.isPackaged) app.setAsDefaultProtocolClient("openmausbot");
   if (process.platform === "darwin") app.dock.setIcon(APP_ICON);
   secureCredentials = await loadSecureCredentials();

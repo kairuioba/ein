@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Model Context Protocol (MCP) Server for OpenMausBot
+// Model Context Protocol (MCP) Server for Ein
 // Standard JSON-RPC 2.0 stdio transport for external agent orchestration (Hermes, Claude Desktop, Cursor, etc.).
 import readline from "node:readline";
 
@@ -9,16 +9,16 @@ export function validateBaseUrl(url: string): string {
   try {
     parsed = new URL(trimmed);
   } catch {
-    throw new Error(`Invalid OpenMausBot URL: '${url}'`);
+    throw new Error(`Invalid Ein URL: '${url}'`);
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new Error("OpenMausBot URL must use http:// or https://");
+    throw new Error("Ein URL must use http:// or https://");
   }
   if (parsed.username || parsed.password) {
-    throw new Error("OpenMausBot URL must not contain credentials; use OPENMAUSBOT_TOKEN instead");
+    throw new Error("Ein URL must not contain credentials; use OPENMAUSBOT_TOKEN instead");
   }
   if ((parsed.pathname !== "/" && parsed.pathname !== "") || parsed.search || parsed.hash) {
-    throw new Error("OpenMausBot URL must be an origin without a path, query, or fragment");
+    throw new Error("Ein URL must be an origin without a path, query, or fragment");
   }
   const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
   const isLoopback = hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1";
@@ -68,12 +68,12 @@ async function fetchJson(url: string, options: RequestInit = {}): Promise<any> {
   });
   if (!response.ok) {
     const text = await response.text().catch(() => "");
-    throw new Error(`OpenMausBot API error (${response.status}): ${text || response.statusText}`);
+    throw new Error(`Ein API error (${response.status}): ${text || response.statusText}`);
   }
   try {
     return await response.json();
   } catch {
-    throw new Error(`OpenMausBot API returned a non-JSON response from ${url}`);
+    throw new Error(`Ein API returned a non-JSON response from ${url}`);
   }
 }
 
@@ -86,7 +86,7 @@ export async function probeBaseUrls(candidates: string[]): Promise<string> {
         signal: AbortSignal.timeout(Math.min(requestTimeoutMs(), 2_000)),
       });
       if (health?.app !== "openmausbot") {
-        failures.push(`${candidate} answered, but it was not OpenMausBot`);
+        failures.push(`${candidate} answered, but it was not Ein`);
         continue;
       }
       return candidate;
@@ -94,7 +94,7 @@ export async function probeBaseUrls(candidates: string[]): Promise<string> {
       failures.push(`${candidate}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
-  throw new Error(`Could not find a running OpenMausBot server. ${failures.join("; ")}`);
+  throw new Error(`Could not find a running Ein server. ${failures.join("; ")}`);
 }
 
 export async function resolveBaseUrl(): Promise<string> {
@@ -138,7 +138,7 @@ const AGENT_ACTION = { readOnlyHint: false, destructiveHint: true, idempotentHin
 export const TOOLS: McpToolDefinition[] = [
   {
     name: "get_system_health",
-    description: "Check whether the OpenMausBot server is reachable.",
+    description: "Check whether the Ein server is reachable.",
     inputSchema: {
       type: "object",
       properties: {},
@@ -522,7 +522,7 @@ function optionalStringArg(
 
 function idArg(args: Record<string, unknown>, key: string): string {
   const value = stringArg(args, key);
-  if (!/^[\w-]+$/.test(value)) throw new ToolInputError(`${key} is not a valid OpenMausBot ID`);
+  if (!/^[\w-]+$/.test(value)) throw new ToolInputError(`${key} is not a valid Ein ID`);
   return value;
 }
 
@@ -750,7 +750,7 @@ export async function handleToolCall(
   switch (name) {
     case "get_system_health": {
       const res = await fetcher("/api/health");
-      if (res?.app !== "openmausbot") throw new Error("The configured endpoint is not an OpenMausBot server");
+      if (res?.app !== "openmausbot") throw new Error("The configured endpoint is not an Ein server");
       return {
         status: "connected",
         endpoint: discoveredBaseUrl ?? OMB_BASE_URL,
@@ -824,7 +824,7 @@ export async function handleToolCall(
         }),
       });
       if (!isRecord(created?.bot) || typeof created.bot.id !== "string") {
-        throw new Error("OpenMausBot did not return the created bot");
+        throw new Error("Ein did not return the created bot");
       }
       return { success: true, bot: projectBot(created.bot) };
     }
@@ -842,7 +842,7 @@ export async function handleToolCall(
         body: JSON.stringify(patch),
       });
       if (!isRecord(result?.bot)) {
-        throw new Error("OpenMausBot did not return the updated bot");
+        throw new Error("Ein did not return the updated bot");
       }
       return { success: true, bot: projectBot(result.bot) };
     }
@@ -909,7 +909,7 @@ export async function handleToolCall(
         }),
       });
       if (!isRecord(created?.group) || typeof created.group.id !== "string") {
-        throw new Error("OpenMausBot did not return the created channel");
+        throw new Error("Ein did not return the created channel");
       }
       return { success: true, channel: projectChannel(created.group) };
     }
@@ -933,7 +933,7 @@ export async function handleToolCall(
         body: JSON.stringify(patch),
       });
       if (!isRecord(result?.group)) {
-        throw new Error("OpenMausBot did not return the updated channel");
+        throw new Error("Ein did not return the updated channel");
       }
       return { success: true, channel: projectChannel(result.group) };
     }
@@ -944,7 +944,7 @@ export async function handleToolCall(
       const route = taskRoute(args.target_type, targetId);
       const result = await fetcher(route, { method: "POST", body: JSON.stringify(title ? { title } : {}) });
       if (!isRecord(result?.task) || typeof result.task.threadId !== "string") {
-        throw new Error("OpenMausBot did not return the created task");
+        throw new Error("Ein did not return the created task");
       }
       const activeTaskId = result.bot?.threadId ?? result.group?.threadId ?? result.task?.threadId;
       return {
@@ -982,7 +982,7 @@ export async function handleToolCall(
         body: JSON.stringify({ title }),
       });
       if (!isRecord(result?.task)) {
-        throw new Error("OpenMausBot did not return the renamed task");
+        throw new Error("Ein did not return the renamed task");
       }
       return {
         success: true,
@@ -1245,7 +1245,7 @@ export async function processMcpMessage(
           name: "openmausbot-mcp",
           version: "1.1.0",
         },
-        instructions: "Use bounded read tools before mutating the OpenMausBot team. Approval grants, deletion, and computer lifecycle are intentionally unavailable.",
+        instructions: "Use bounded read tools before mutating the Ein team. Approval grants, deletion, and computer lifecycle are intentionally unavailable.",
       });
     }
 
@@ -1369,5 +1369,5 @@ if (process.argv[1] && (process.argv[1].endsWith("mcp-server.ts") || process.arg
     process.exitCode = 0;
   });
 
-  log("OpenMausBot MCP server running on stdio");
+  log("Ein MCP server running on stdio");
 }

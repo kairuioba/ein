@@ -58,6 +58,7 @@ describe("settings sections", () => {
       "usage",
       "experimental",
       "updates",
+      "about",
     ]);
   });
 
@@ -68,5 +69,11 @@ describe("settings sections", () => {
     expect(visibleSections("  WorkBuddy ").map((section) => section.id)).toEqual(["engines"]);
     expect(sectionMatches(SETTINGS_SECTIONS.find((section) => section.id === "companion")!, "phone")).toBe(true);
     expect(visibleSections("no such thing")).toEqual([]);
+  });
+
+  it("finds About by what it shows, in either language", () => {
+    expect(visibleSections("github").map((section) => section.id)).toEqual(["about"]);
+    expect(visibleSections("开源").map((section) => section.id)).toEqual(["about"]);
+    expect(visibleSections("version").map((section) => section.id)).toEqual(["updates", "about"]);
   });
 });

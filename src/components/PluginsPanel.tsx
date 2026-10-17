@@ -692,7 +692,7 @@ export function PluginsPanel() {
           <div className="mb-3 flex items-start gap-2 rounded-lg bg-warning/10 px-3 py-2 text-[12.5px] text-warning">
             <TriangleAlert size={14} className="mt-px shrink-0" />
             <span>
-              {t("Showing what was connected last time — this Mac's credential store could not be opened just now, so these could not be re-checked. Your apps are still connected; restarting OpenMausBot usually clears this.")}
+              {t("Showing what was connected last time — this Mac's credential store could not be opened just now, so these could not be re-checked. Your apps are still connected; restarting Ein usually clears this.")}
             </span>
           </div>
         )}

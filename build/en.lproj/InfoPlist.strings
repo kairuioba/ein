@@ -1,0 +1,8 @@
+/* macOS app name and permission prompts in English. The bundle keeps its
+   internal name (OpenMausBot.app); Finder, the Dock and the menu bar show Ein. */
+"CFBundleDisplayName" = "Ein";
+"CFBundleName" = "Ein";
+"NSMicrophoneUsageDescription" = "Ein uses the microphone for voice dictation into the composer.";
+"NSSpeechRecognitionUsageDescription" = "Ein transcribes your voice on-device to type messages for you.";
+"NSAccessibilityUsageDescription" = "Ein uses Accessibility when you let a bot control this Mac.";
+"NSScreenCaptureUsageDescription" = "Ein uses Screen Recording so bots can see this Mac before acting.";

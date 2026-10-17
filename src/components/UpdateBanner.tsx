@@ -50,7 +50,7 @@ export function UpdateBanner() {
 
   const title =
     s.status === "available"
-      ? t("OpenMausBot {version} is available", { version: s.version })
+      ? t("Ein {version} is available", { version: s.version })
       : s.status === "downloading"
         ? s.version
           ? t("Downloading {version}…", { version: s.version })
@@ -71,7 +71,7 @@ export function UpdateBanner() {
         : s.status === "downloaded"
           ? t("Restart to finish updating.")
           : installing
-            ? t("OpenMausBot will reopen in a moment.")
+            ? t("Ein will reopen in a moment.")
             : friendlyError(s.message);
 
   return (

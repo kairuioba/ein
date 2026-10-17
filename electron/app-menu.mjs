@@ -51,7 +51,7 @@ const MAC_ZH = {
   Zoom: "缩放",
   "Bring All to Front": "前置全部窗口",
   Help: "帮助",
-  "{app} Website": "{app} 网站",
+  "{app} Website": "{app}网站",
   "Report an Issue": "报告问题",
 };
 

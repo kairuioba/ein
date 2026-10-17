@@ -257,7 +257,7 @@ export function VpsConnection() {
       </div>
       <div className="mb-1.5 text-[12px] leading-relaxed text-ink-secondary">
         {tRich(
-          "SSH config alias for the Linux VPS. OpenMausBot uses your normal SSH config and agent; it does not store keys or passwords. See the <link>setup guide</link> for the required SSH alias shape.",
+          "SSH config alias for the Linux VPS. Ein uses your normal SSH config and agent; it does not store keys or passwords. See the <link>setup guide</link> for the required SSH alias shape.",
           {
             link: (children) => (
               <a

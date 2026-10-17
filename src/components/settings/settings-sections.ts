@@ -71,6 +71,11 @@ export const SETTINGS_SECTIONS: readonly SettingsSectionDef[] = [
     label: msg("Updates"),
     keywords: ["version", "update", "upgrade", "release", "版本", "升级"],
   },
+  {
+    id: "about",
+    label: msg("About"),
+    keywords: ["about", "version", "author", "github", "license", "open source", "关于", "版本", "作者", "开源", "协议"],
+  },
 ];
 
 /** Whether a section matches a (trimmed, lower-cased) nav search. Both the

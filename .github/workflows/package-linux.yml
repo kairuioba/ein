@@ -82,22 +82,22 @@ jobs:
         run: |
           set -euo pipefail
           version="$(node -p "require('./package.json').version")"
-          appimage="release/OpenMausBot-${version}-x86_64.AppImage"
-          deb="release/OpenMausBot-${version}-amd64.deb"
+          appimage="release/Ein-${version}-x86_64.AppImage"
+          deb="release/Ein-${version}-amd64.deb"
           test -f "$appimage"
           test -f "$deb"
-          cp "$appimage" release/OpenMausBot.AppImage
-          cp "$deb" release/OpenMausBot-amd64.deb
-          chmod 0755 release/OpenMausBot.AppImage
+          cp "$appimage" release/Ein.AppImage
+          cp "$deb" release/Ein-amd64.deb
+          chmod 0755 release/Ein.AppImage
           (
             cd release
             sha256sum \
               "$(basename "$appimage")" \
               "$(basename "$deb")" \
-              OpenMausBot.AppImage \
-              OpenMausBot-amd64.deb > SHA256SUMS-ubuntu-x64.txt
+              Ein.AppImage \
+              Ein-amd64.deb > SHA256SUMS-ubuntu-x64.txt
           )
-          echo "artifact-name=openmausbot-ubuntu-${version}-x64" >> "$GITHUB_OUTPUT"
+          echo "artifact-name=ein-ubuntu-${version}-x64" >> "$GITHUB_OUTPUT"
           echo "version: $version"
           echo "commit:  $(git rev-parse HEAD)"
           cat release/SHA256SUMS-ubuntu-x64.txt
@@ -116,10 +116,10 @@ jobs:
         with:
           name: ${{ steps.release.outputs.artifact-name }}
           path: |
-            release/OpenMausBot-*-amd64.deb
-            release/OpenMausBot-*-x86_64.AppImage
-            release/OpenMausBot-amd64.deb
-            release/OpenMausBot.AppImage
+            release/Ein-*-amd64.deb
+            release/Ein-*-x86_64.AppImage
+            release/Ein-amd64.deb
+            release/Ein.AppImage
             release/SHA256SUMS-ubuntu-x64.txt
           if-no-files-found: error
           retention-days: 14

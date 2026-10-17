@@ -66,7 +66,7 @@ function normalizeDesktopWorkspaceBounds(rawBounds, contentSize) {
 }
 
 function createDesktopWorkspaceManager({ owner, createView, notify, partitionPrefix }) {
-  if (!owner || owner.isDestroyed?.()) throw new Error(t("The OpenMausBot window is unavailable"));
+  if (!owner || owner.isDestroyed?.()) throw new Error(t("The Ein window is unavailable"));
   if (createView?.constructor !== Function) throw new Error(t("The desktop workspace viewer is unavailable"));
   const emit = notify?.constructor === Function ? notify : () => {};
   const entries = new Map();

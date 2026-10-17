@@ -17,6 +17,7 @@ import {
 import { clock } from "@/lib/workbench";
 
 import { DecisionQueue } from "./DecisionQueue";
+import { HandoffCards } from "./HandoffCards";
 import { TeamStrip } from "./TeamStrip";
 import { ViewSwitch } from "./ViewSwitch";
 import { WaitChain } from "./WaitChain";
@@ -156,6 +157,8 @@ export function ProjectOfficePage({ folderId, title, onClose, onOpenConversation
             <div className="flex flex-col gap-3 pt-1">
               <DecisionQueue decisions={office.decisions ?? []} onResolved={refresh} />
               <WaitChain waiting={office.now?.waiting ?? []} />
+              {/* 交接回执：接在「谁被谁卡住」之后；无交接时组件自己整块不渲染 */}
+              <HandoffCards folderId={folderId} onChanged={refresh} />
               <TeamStrip departments={office.departments ?? []} />
               <DetailsFold
                 office={office}

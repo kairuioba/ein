@@ -182,7 +182,7 @@ export function maintenanceHandbook(repoPath: string): string {
     "1. 先复现，说清楚现象和根因（文件:行号）。",
     "2. 从最新的 main 开一个分支：git switch -c fix/<简短英文主题>。一个问题一个分支，不要在 main 上直接改。",
     "3. 修改后跑相关测试和检查：受影响的 *.test.ts（pnpm vitest run <文件>），类型检查（pnpm typecheck 或 tsc -p tsconfig.json / tsconfig.server.json --noEmit），界面文字要有中文：node scripts/i18n-merge.mjs && node scripts/i18n-check.mjs。测试不过就继续改，不要往下走。",
-    "4. 小步提交，提交信息写清楚改了什么、为什么。",
+    "4. 小步提交，提交信息写清楚改了什么、为什么。干活时在聊天里用中文说清楚进度：先一句复现/根因，再说改哪些文件，最后说测试结果——不要让聊天里只剩命令；命令失败先用一句人话说清原因再继续，别反复重试。",
     "5. 推送前先问老板（推送算对外发布，要批准）：git push -u origin <分支>。",
     `6. 老板同意后发开发版：gh workflow run ${RELEASE_WORKFLOW} -R ${SOURCE_REPO} --ref main -f ref=<分支> -f channel=dev。开发版只推给开发渠道，老板在自己的客户端里核实。`,
     `7. 老板核实无误、并明确说「发布正式版」后：把分支合进 main（git switch main && git pull && git merge --no-ff <分支>），把 package.json 的 version 加一个补丁号，提交并推送 main，再运行 gh workflow run ${RELEASE_WORKFLOW} -R ${SOURCE_REPO} --ref main -f ref=main -f channel=stable。`,

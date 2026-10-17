@@ -38,6 +38,7 @@ import { TurnPresence } from "./TurnPresence";
 import { showToolCallsEnabled } from "@/lib/feature-flags";
 import { initialTail, nextTail, showWorkingDots } from "@/lib/turn-tail";
 import { liveActivityLabel } from "@/lib/live-activity";
+import { stepLabel } from "@/lib/computer-steps";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { OptionCard, shouldHideOnboardingCard } from "./OptionCard";
 import { ApprovalCard } from "./ApprovalCard";
@@ -520,22 +521,25 @@ function ActivityChip({ message }: { message: Message }) {
     );
   }
   const failed = tool.ok === false;
+  // The raw name is often a whole shell command. Show the app's short action
+  // label and keep the command in the tooltip: a failed step then reads
+  // "Run a command · Failed" instead of a wall of red command text.
+  const label = stepLabel(tool);
   return (
     <div className="flex justify-start">
       <div
-        className={cn(
-          "flex items-center gap-2 rounded-full bg-control/50 px-3 py-1.5 text-[12.5px]",
-          failed ? "text-danger" : "text-ink-secondary",
-        )}
+        title={tool.name}
+        className="flex items-center gap-2 rounded-full bg-control/50 px-3 py-1.5 text-[12.5px] text-ink-secondary"
       >
         {tool.ok === undefined ? (
           <WorkingDots size={3.5} />
         ) : failed ? (
-          <X size={13} />
+          <X size={13} className="text-danger" />
         ) : (
           <Check size={13} className="text-success" />
         )}
-        <span className="max-w-[480px] truncate font-mono">{tool.name}</span>
+        <span className="max-w-[480px] truncate">{label}</span>
+        {failed && <span className="shrink-0 text-danger">· {t("Failed")}</span>}
       </div>
     </div>
   );

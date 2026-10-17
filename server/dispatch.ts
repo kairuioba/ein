@@ -1329,7 +1329,9 @@ export class Dispatcher {
           subtaskId: subtask.id,
           ...(subtask.currentAttemptId ? { attemptId: subtask.currentAttemptId } : {}),
           title: subtask.title,
-          reason: gate.reason ?? t("This subtask finished but its acceptance criteria could not be confirmed."),
+          reason: subtask.reworkCount
+            ? t("{reason} · already sent back {count} of 3 times", { reason: gate.reason ?? t("This subtask finished but its acceptance criteria could not be confirmed."), count: subtask.reworkCount })
+            : gate.reason ?? t("This subtask finished but its acceptance criteria could not be confirmed."),
           evidence: gate.criteria.map((verdict) => `${verdict.id}: ${verdict.status}`),
         });
         this.host.activity(run.sourceThreadId, t("“{title}” finished but needs your decision before it counts as accepted", { title: subtask.title }), false);

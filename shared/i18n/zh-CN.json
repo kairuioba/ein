@@ -4289,5 +4289,6 @@
   "→ out": "→ 发出",
   "⌘↩ to send": "⌘↩ 发送",
   "✕ removes a step": "点 ✕ 删掉一步",
-  "Approve: the task becomes finished (the machine only checked form and facts — the content is yours to judge). Send back: record the issue for later.": "通过：任务正式完成（机器只检查了形式和事实，内容请您判断）；打回：记下问题，稍后处理。"
+  "Approve: the task becomes finished (the machine only checked form and facts — the content is yours to judge). Send back: record the issue for later.": "通过：任务正式完成（机器只检查了形式和事实，内容请您判断）；打回：记下问题，稍后处理。",
+  "{reason} · already sent back {count} of 3 times": "{reason} · 已打回 {count}/3 次"
 }

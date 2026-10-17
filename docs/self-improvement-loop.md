@@ -25,6 +25,8 @@
 
 存储：`~/.ein/dispatch-retros.ndjson`（只追加），接口 `GET /api/dispatch/retros`；工作台/简报里显示最近几条。
 
+**进度**：后端已实现（`fix/dispatch-retros` 分支：run 结束时写入硬事实记录，`GET /api/dispatch/retros?limit=20`），带测试；UI 展示待下一轮。
+
 ### 2. 经验层（派单总库 + 失败模式库）
 
 - **派单总库**：把被验证过的计划模板（按任务类型：写作/代码/调研/上线）连同边界、验收标准、验收人一起沉淀；`submit_plan` 前检索相似任务，把模板作为参考注入规划提示词。

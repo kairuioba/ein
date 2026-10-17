@@ -29,6 +29,7 @@
 | J | 维护岗「构建与发布」像摆设：点完没反馈、分支/workflow/版本不检查、开发版还用 main 的旧工作流 | 已升级并在 dev.13 实测：预检分支与版本、显示 main vs 最新正式版、派发后给运行链接；dev 构建改用该分支自己的 workflow；dev.14 首次跑通 Windows dev 构建 | `fix/maintenance-build-card` `5aee69a`（dev.13 起） |
 | I | 维护岗模型下拉的初始选中不对 | 已修：打开维护岗时用维护机器人保存的 `modelSelection` 预选，引擎/模型不在就绪列表才回退到第一个就绪引擎 | `fix/maintenance-model-preselect` `8e08f7d`（dev.11 未包含，下次构建带上） |
 | K | 派单审批卡的工具名显示为 “tool”（WorkBuddy/ACP 权限请求缺工具名），用户不知道在批什么 | 已修：从 command/title/rawInput 生成卡片说明，实在没有就显示「引擎有一个操作需要你批准」 | `fix/approval-card-label`（dev.16 之后构建） |
+| M | 任务复盘只落盘 + API，工作台/简报还没有展示入口 | 待做（自我迭代阶段 1 的 UI 部分） | 待办 |
 | L | 派单计划缺少结构化的边界/交付物/验收人字段（实测发现） | 已修：计划 schema + 员工提示词 + 汇总要求 + UI 都带 `boundaries` / `deliverable` / `reviewer` | `fix/dispatch-plan-fields` `9a7cadd`（待新构建） |
 | D | WorkBuddy 环境切换后的模型刷新提示 | `international/internal/ioa` 切换后清单要重新探测（现在 6 小时/失败 2 分钟） | 切换环境时立即触发一次后台探测，并在选择器显示「正在刷新」 |
 | E | 完整交互走查 | 首次启动、引擎登录卡、选模型、单聊/群聊/总控、插话、侧栏、⌘K、各设置页、资料库、日历、应用、错误态 | 按清单逐步截图记录（无额度阻塞） |

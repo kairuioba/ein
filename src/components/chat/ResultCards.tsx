@@ -2,16 +2,17 @@
 // this conversation — goal, status pill, progress, who is on it — and a
 // decision taken in a meeting, with the ways back to the details.
 import { Fragment, useRef, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Loader2, Sparkles } from "lucide-react";
 import { api, openNotificationTarget, useStore, type Bot } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { msg, t, tn } from "@/lib/i18n";
 import { Progress } from "@/components/ui/index";
-import type { DispatchRun, RunStatus, SubtaskStatus } from "../../../shared/dispatch-types";
+import { dispatchSettings, type DispatchRun, type RunStatus, type SubtaskStatus } from "../../../shared/dispatch-types";
 import type { OrgDecision } from "../../../shared/org-types";
 import { isActiveRun, runProgress } from "./chat-model";
 import { CardButton, ChatCard, MetaDot, MenuItem, PopoverPanel, StatusPill, useDismiss, type StatusTone } from "./primitives";
 import { IconChevronDown } from "./icons";
+import { applyAllRecommendations, pendingRecommendations, SubtaskModelControls } from "@/components/dispatch/SubtaskModel";
 
 const RUN_PILL: Record<RunStatus, { label: string; tone: StatusTone }> = {
   "awaiting-approval": { label: msg("Waiting to start"), tone: "amber" },
@@ -147,8 +148,85 @@ export function DispatchRunCard({ run, bots }: { run: DispatchRun; bots: readonl
       {isActiveRun(run.status) && progress.total > 0 && (
         <Progress value={progress.done} total={progress.total} tone="blue" className="mt-0.5 max-w-[280px]" />
       )}
+      <RunModels run={run} bots={bots} />
       {error && <p className="text-[12px] text-danger">{error}</p>}
     </ChatCard>
+  );
+}
+
+/** The most subtasks the card lists; the workbench shows every one. */
+const MODEL_ROWS = 8;
+
+/** Each subtask's engine, model and effort, with the recommendation. Open
+ * while the plan waits for you to press Start — the moment to choose. */
+function RunModels({ run, bots }: { run: DispatchRun; bots: readonly Bot[] }) {
+  const { state, dispatch } = useStore();
+  const [open, setOpen] = useState(run.status === "awaiting-approval");
+  const [applying, setApplying] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const settings = dispatchSettings(state.config?.dispatch);
+  const waiting = pendingRecommendations(run, bots, state.instances, settings);
+  const rows = run.subtasks.slice(0, MODEL_ROWS);
+  const hidden = run.subtasks.length - rows.length;
+  if (!run.subtasks.length) return null;
+  const applyAll = async () => {
+    setApplying(true);
+    setError(null);
+    setError(await applyAllRecommendations(run, bots, state.instances, settings));
+    setApplying(false);
+  };
+  return (
+    <div className="mt-1 rounded-[11px] bg-inset/70 px-2.5 py-1.5 shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_25%,transparent)]">
+      <div className="flex min-w-0 items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setOpen((value) => !value)}
+          aria-expanded={open}
+          className="flex min-w-0 flex-1 items-center gap-1 py-0.5 text-left text-[12px] font-semibold text-ink-secondary hover:text-ink"
+        >
+          {open ? <ChevronDown size={13} className="shrink-0" /> : <ChevronRight size={13} className="shrink-0" />}
+          <span className="truncate">{t("Model and effort for each subtask")}</span>
+        </button>
+        {waiting > 0 && (
+          <button
+            type="button"
+            onClick={() => void applyAll()}
+            disabled={applying}
+            className="inline-flex shrink-0 items-center gap-1 text-[12px] font-semibold text-accent-text hover:underline disabled:opacity-50"
+          >
+            {applying ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+            {tn(waiting, "Use the recommendation", "Use all {count} recommendations")}
+          </button>
+        )}
+      </div>
+      {open && (
+        <div className="mt-1 flex flex-col">
+          {rows.map((subtask) => {
+            const assignee = bots.find((bot) => bot.id === subtask.assigneeBotId);
+            return (
+              <div key={subtask.id} className="flex min-w-0 flex-col gap-1 border-t border-hairline/25 py-2">
+                <div className="flex min-w-0 items-center gap-1.5 text-[12.5px]">
+                  <span className={cn("size-2 shrink-0 rounded-full", SUBTASK_DOT[subtask.status])} />
+                  <span className="min-w-0 truncate font-medium text-ink">{subtask.title}</span>
+                  {assignee && <span className="shrink-0 text-ink-secondary">@{assignee.name}</span>}
+                </div>
+                <SubtaskModelControls run={run} subtask={subtask} bot={assignee} />
+              </div>
+            );
+          })}
+          {hidden > 0 && (
+            <button
+              type="button"
+              onClick={() => dispatch({ type: "showTeamMap" })}
+              className="border-t border-hairline/25 pt-1.5 text-left text-[12px] font-semibold text-accent-text hover:underline"
+            >
+              {tn(hidden, "{count} more in the workbench ↗", "{count} more in the workbench ↗")}
+            </button>
+          )}
+          {error && <p className="text-[11.5px] text-danger">{error}</p>}
+        </div>
+      )}
+    </div>
   );
 }
 

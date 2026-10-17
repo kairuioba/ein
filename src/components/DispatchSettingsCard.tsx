@@ -8,10 +8,29 @@ import { api, useStore, type ConfigStatus } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import { DEFAULT_DISPATCH_SETTINGS, dispatchSettings, type DispatchSettings } from "../../shared/dispatch-types";
-import { policyLabel, RECOMMENDATION_POLICIES, type RecommendationPolicy } from "../../shared/model-recommender";
+import { difficultyLabel, effortLabel, policyLabel, RECOMMENDATION_POLICIES, wantedEffort, type RecommendationPolicy } from "../../shared/model-recommender";
 import { Card, Switch } from "./SettingsPrimitives";
 
 type StatusWithDispatch = ConfigStatus & { dispatch?: Partial<DispatchSettings> };
+
+/** Difficulty → effort under a strategy: very easy … very hard, each with
+ * the level it gets (an engine without that level uses its nearest one). */
+export function EffortLadder({ policy, className }: { policy: RecommendationPolicy; className?: string }) {
+  return (
+    <ol className={cn("flex flex-wrap items-center gap-1", className)} aria-label={t("Effort by difficulty")}>
+      {([1, 2, 3, 4, 5] as const).map((level) => (
+        <li
+          key={level}
+          className="inline-flex h-6 items-center gap-1 rounded-md bg-inset px-1.5 text-[11.5px] whitespace-nowrap text-ink-secondary shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_30%,transparent)]"
+        >
+          <span>{difficultyLabel(level)}</span>
+          <span className="text-ink-secondary/60">→</span>
+          <b className="font-semibold text-ink">{effortLabel(wantedEffort(level, policy))}</b>
+        </li>
+      ))}
+    </ol>
+  );
+}
 
 export function policyHint(policy: RecommendationPolicy): string {
   if (policy === "quality") return t("New specialists get the strongest model available for their task.");
@@ -90,7 +109,7 @@ export function DispatchSettingsCard() {
         />
         <ToggleRow
           label={t("Ask me before a plan starts")}
-          hint={t("New plans wait on the workbench until you press Start.")}
+          hint={t("New plans wait until you press Start, so you can first change each subtask's model and effort.")}
           checked={settings.requireApproval}
           disabled={disabled || !settings.enabled}
           onChange={(requireApproval) => save({ requireApproval })}
@@ -124,6 +143,17 @@ export function DispatchSettingsCard() {
             ))}
           </div>
           <div className="mt-1.5 text-[12px] leading-relaxed text-ink-secondary">{policyHint(settings.policy)}</div>
+        </div>
+
+        <div className="space-y-2 border-t border-hairline/40 pt-3.5">
+          <ToggleRow
+            label={t("Think as hard as each task needs")}
+            hint={t("A bot with no effort level of its own gets one from each task's difficulty; the strategy moves it a step. A level set on a bot or on one subtask always wins.")}
+            checked={settings.autoEffort}
+            disabled={disabled}
+            onChange={(autoEffort) => save({ autoEffort })}
+          />
+          {settings.autoEffort && <EffortLadder policy={settings.policy} />}
         </div>
 
         <div className="grid gap-3 border-t border-hairline/40 pt-3.5 sm:grid-cols-2">

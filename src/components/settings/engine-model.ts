@@ -3,7 +3,7 @@
 // fold away, and the task → engine examples the recommender gives.
 import { mascotForDriver, type MascotKind } from "@/lib/engine-mascots";
 import { msg } from "@/lib/i18n";
-import { recommendForText, type InstanceLike, type RecommendationPolicy } from "../../../shared/model-recommender";
+import { recommendForText, type Effort, type InstanceLike, type RecommendationPolicy } from "../../../shared/model-recommender";
 
 /** The engine this edition recommends first (Tencent WorkBuddy). */
 export const RECOMMENDED_DRIVER = "workbuddyAgent";
@@ -200,6 +200,8 @@ export interface StrategyExample {
   instanceId: string;
   engineName: string;
   model: string;
+  /** how hard it would think there (absent: the engine has no such setting) */
+  effort?: Effort;
 }
 
 /** For each sample job, the engine the dispatcher would hire under `policy`. */
@@ -207,7 +209,7 @@ export function strategyExamples(instances: readonly InstanceLike[], policy: Rec
   const out: StrategyExample[] = [];
   for (const example of STRATEGY_EXAMPLES) {
     const best = recommendForText(example.task, instances, policy, {}, { limit: 1 }).recommendations[0];
-    if (best) out.push({ id: example.id, label: example.label, instanceId: best.instanceId, engineName: best.engineName, model: best.modelLabel });
+    if (best) out.push({ id: example.id, label: example.label, instanceId: best.instanceId, engineName: best.engineName, model: best.modelLabel, ...(best.effort ? { effort: best.effort } : {}) });
   }
   return out;
 }

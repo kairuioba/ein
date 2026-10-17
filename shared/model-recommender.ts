@@ -163,17 +163,34 @@ const CAPABILITY_LABEL = (capability: Capability): string =>
     speed: t("speed"),
   })[capability];
 
-/** The reasoning effort that suits a difficulty on this engine, if it has the knob. */
-export function effortFor(difficulty: Level, levels: readonly string[]): Effort | undefined {
-  if (!levels.length) return undefined;
-  const wanted: Effort = difficulty <= 2 ? "low" : difficulty === 3 ? "medium" : difficulty === 4 ? "high" : "xhigh";
+/** Every effort level, lightest first ("none" = thinking off). */
+export const EFFORT_LEVELS: readonly Effort[] = EFFORT_ORDER;
+
+/** How hard to think for a task this difficult, before the engine's own
+ * knobs are considered. The whole ladder is used: very easy work gets low,
+ * then medium, high and xhigh, and very hard work max; the strategy moves
+ * it one step (Strongest up, Save money down — down to thinking off for
+ * the easiest work). */
+export function wantedEffort(difficulty: Level, policy: RecommendationPolicy = "balanced"): Effort {
+  const shift = policy === "quality" ? 1 : policy === "economy" ? -1 : 0;
+  return EFFORT_ORDER[Math.min(EFFORT_ORDER.length - 1, Math.max(0, difficulty + shift))]!;
+}
+
+/** The reasoning effort that suits a difficulty on this engine, if it has
+ * the knob: the wanted level, else the nearest one the engine offers below
+ * it, else the lightest one it offers above. */
+export function effortFor(difficulty: Level, levels: readonly string[], policy: RecommendationPolicy = "balanced"): Effort | undefined {
   const order = EFFORT_ORDER as readonly string[];
-  const available = levels.filter((level) => order.includes(level)) as Effort[];
+  const available = (levels.filter((level) => order.includes(level)) as Effort[]).sort((a, b) => order.indexOf(a) - order.indexOf(b));
   if (!available.length) return undefined;
-  // nearest available level at or below the wanted one, else the lowest above it
-  const wantedIndex = order.indexOf(wanted);
+  const wantedIndex = order.indexOf(wantedEffort(difficulty, policy));
   const below = available.filter((level) => order.indexOf(level) <= wantedIndex);
   return below.length ? below[below.length - 1] : available[0];
+}
+
+/** A short label for an effort level ("XHigh", "Max", "Off"). */
+export function effortLabel(effort: Effort): string {
+  return effort === "xhigh" ? "XHigh" : effort === "none" ? t("Off") : effort.charAt(0).toUpperCase() + effort.slice(1);
 }
 
 /** Score every candidate for the task and return the best `limit`, best first. */
@@ -216,7 +233,7 @@ export function recommendModels(
       engineName: candidate.engineName,
       model: candidate.model,
       modelLabel: candidate.modelLabel,
-      effort: effortFor(task.difficulty, candidate.effortLevels),
+      effort: effortFor(task.difficulty, candidate.effortLevels, policy),
       score: Math.round(score * 100) / 100,
       profile,
       reasons,

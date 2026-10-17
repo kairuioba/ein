@@ -16,6 +16,7 @@ import {
 import type { CloudBackend, EffortLevel } from "../../server/contracts.ts";
 import type { MausColor, MausMotion } from "@/lib/mascot";
 import type { BotAvatarCrop } from "../../shared/bot-avatar";
+import type { DispatchSettings } from "../../shared/dispatch-types";
 import type { RoutineRequestCardData } from "../../shared/routine-request";
 import type { RoutineRunCardData } from "../../shared/routine-run";
 import { reviewedSkillSha256, type SkillRequestCardData } from "../../shared/skill-request";
@@ -322,6 +323,9 @@ export interface ConfigStatus {
   features?: { skillRecorder: boolean; showToolCalls?: boolean; browser?: boolean };
   /** Named browser sessions any bot can be pointed at. */
   browserProfiles?: BrowserProfile[];
+  /** Automatic dispatch: strategy, limits, automatic effort (read it
+   * through dispatchSettings() — older servers send a partial object). */
+  dispatch?: Partial<DispatchSettings>;
 }
 
 export interface BrowserProfile {
@@ -334,7 +338,7 @@ export interface BrowserProfile {
 
 export type ConfigStatusFrame = Pick<
   ConfigStatus,
-  "xai" | "composio" | "box" | "vps" | "rooms" | "localVm" | "opencodeGo" | "tts" | "imageGen" | "profile" | "features" | "browserProfiles"
+  "xai" | "composio" | "box" | "vps" | "rooms" | "localVm" | "opencodeGo" | "tts" | "imageGen" | "profile" | "features" | "browserProfiles" | "dispatch"
 >;
 
 export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
@@ -351,6 +355,7 @@ export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
     profile: frame.profile,
     features: frame.features,
     browserProfiles: frame.browserProfiles,
+    dispatch: frame.dispatch,
   };
 }
 

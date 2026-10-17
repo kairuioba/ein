@@ -1,6 +1,6 @@
 import { track } from "@/lib/analytics";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type SetStateAction } from "react";
-import { ArrowUp, Check, Clock, Hand, Paperclip, ShieldCheck, Sparkles, Square, Users } from "lucide-react";
+import { ArrowUp, Check, Clock, Gauge, Hand, Paperclip, ShieldCheck, Sparkles, Square, Users } from "lucide-react";
 import { useStore, visibleMessages, type Bot, type Group, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
@@ -37,6 +37,9 @@ import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { ReplyQuote } from "./ReplyQuote";
 import { ErrorStrip, MenuDivider, MenuItem, MenuLabel, PopoverPanel, RING, useDismiss } from "./chat/primitives";
 import { IconAt, IconMic, IconPlus, IconSlash } from "./chat/icons";
+import { EffortSegments } from "./EffortPicker";
+import { assessTask, difficultyLabel, effortFor, effortLabel, type Effort } from "../../shared/model-recommender";
+import { dispatchSettings } from "../../shared/dispatch-types";
 import { filterSkills, skillInstruction, slashQueryAt, useSkillChoices, type SkillChoice } from "./chat/skills";
 
 /** The active @mention query at the caret: the text between an `@` that
@@ -351,6 +354,18 @@ export function Composer({
   const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null);
   // Auto mode belongs to one bot; a room has several, each with its own.
   const autoBot = group ? undefined : bot;
+  // How hard this bot thinks: its own level, or — with none set and
+  // automatic effort on — the level this message's difficulty calls for,
+  // shown while you type (server/index.ts autoEffort sends the same).
+  const effortLevels = ((autoBot && state.instances.find((instance) => instance.instanceId === autoBot.modelSelection.instanceId)?.capabilities?.effortLevels) ??
+    []) as readonly Effort[];
+  const effortPrefs = dispatchSettings(state.config?.dispatch);
+  const typedTask = autoBot && !autoBot.modelSelection.effort && effortPrefs.autoEffort && effortLevels.length && text.trim() ? assessTask(text) : null;
+  const autoLevel = typedTask ? effortFor(typedTask.difficulty, effortLevels, effortPrefs.policy) : undefined;
+  const setEffort = (level: Effort | undefined) => {
+    if (!autoBot) return;
+    dispatch({ type: "setModel", botId: autoBot.id, selection: { ...autoBot.modelSelection, effort: level } });
+  };
   const pickFiles = async (picked: FileList | null) => {
     if (!picked?.length) return;
     const { attachments: added, notice: intakeNotice } = await intakeFiles(Array.from(picked), {
@@ -767,6 +782,21 @@ export function Composer({
                     {t("Auto")}
                   </button>
                 )}
+                {/* the effort this message will get, recommended from its difficulty */}
+                {autoLevel && typedTask && (
+                  <button
+                    type="button"
+                    onClick={() => setPlusOpen(true)}
+                    title={t("Thinks as hard as this message calls for: {difficulty} → {level}. Click to fix a level.", {
+                      difficulty: difficultyLabel(typedTask.difficulty),
+                      level: effortLabel(autoLevel),
+                    })}
+                    className="flex h-6 items-center gap-1 rounded-full bg-control/70 px-2 text-[11.5px] font-semibold text-ink-secondary hover:text-ink"
+                  >
+                    <Gauge size={12} />
+                    {effortLabel(autoLevel)}
+                  </button>
+                )}
                 {plusOpen && (
                   <PopoverPanel label={t("Attach and options")} className="bottom-full left-0 mb-2 w-[300px]">
                     <MenuItem
@@ -815,6 +845,29 @@ export function Composer({
                         >
                           {t("Auto mode")}
                         </MenuItem>
+                      </>
+                    )}
+                    {autoBot && effortLevels.length > 0 && (
+                      <>
+                        <MenuDivider />
+                        <MenuLabel>{t("How hard {name} thinks", { name: autoBot.name })}</MenuLabel>
+                        <EffortSegments
+                          className="mx-1.5 mb-1"
+                          label={t("How hard {name} thinks", { name: autoBot.name })}
+                          levels={effortLevels}
+                          value={autoBot.modelSelection.effort}
+                          unsetLabel={effortPrefs.autoEffort ? t("Auto") : t("Default")}
+                          unsetTitle={effortPrefs.autoEffort ? t("Auto, by each task's difficulty") : t("Engine default")}
+                          onChange={(level) => {
+                            setPlusOpen(false);
+                            setEffort(level);
+                          }}
+                        />
+                        {autoLevel && typedTask && (
+                          <p className="px-2.5 pb-1.5 text-[11.5px] leading-[1.5] text-ink-secondary">
+                            {t("This message: {difficulty} → {level}", { difficulty: difficultyLabel(typedTask.difficulty), level: effortLabel(autoLevel) })}
+                          </p>
+                        )}
                       </>
                     )}
                   </PopoverPanel>

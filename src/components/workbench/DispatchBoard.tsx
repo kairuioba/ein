@@ -2,14 +2,15 @@
 // cancel, retry or open the work. Shown in the work tree's drawer when the
 // 总控 node is selected.
 import { useState } from "react";
-import { ChevronDown, ChevronRight, CirclePlay, ExternalLink, RotateCcw, Square } from "lucide-react";
+import { ChevronDown, ChevronRight, CirclePlay, ExternalLink, Loader2, RotateCcw, Sparkles, Square } from "lucide-react";
 
 import { BotAvatar } from "@/components/Avatar";
 import { cn } from "@/lib/cn";
 import { formatDateTime, t } from "@/lib/i18n";
 import { runProgress } from "@/lib/workbench";
-import type { Bot } from "@/state/store";
-import type { DispatchRun, DispatchSubtask } from "../../../shared/dispatch-types";
+import { useStore, type Bot } from "@/state/store";
+import { dispatchSettings, type DispatchRun, type DispatchSubtask } from "../../../shared/dispatch-types";
+import { applyAllRecommendations, pendingRecommendations, SubtaskModelControls } from "@/components/dispatch/SubtaskModel";
 
 const RUN_TONE: Record<DispatchRun["status"], string> = {
   "awaiting-approval": "bg-warning/12 text-warning",
@@ -66,6 +67,10 @@ interface Props {
 }
 
 export function RunList(props: Props) {
+  const { state } = useStore();
+  const settings = dispatchSettings(state.config?.dispatch);
+  const [applying, setApplying] = useState<string | null>(null);
+  const [applyError, setApplyError] = useState<{ runId: string; message: string } | null>(null);
   // a department lead's own plan shows under the subtask it belongs to
   const top = props.runs.filter((run) => !run.parentRunId);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(top.slice(0, 1).map((run) => run.id)));
@@ -92,6 +97,14 @@ export function RunList(props: Props) {
         const progress = runProgress(run);
         const open = expanded.has(run.id);
         const active = run.status === "running" || run.status === "awaiting-approval" || run.status === "synthesizing";
+        const waiting = pendingRecommendations(run, props.bots, state.instances, settings);
+        const applyAll = async () => {
+          setApplying(run.id);
+          setApplyError(null);
+          const message = await applyAllRecommendations(run, props.bots, state.instances, settings);
+          if (message) setApplyError({ runId: run.id, message });
+          setApplying(null);
+        };
         return (
           <div key={run.id} className="overflow-hidden rounded-[14px] bg-raised shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_55%,transparent)]">
             <div className="flex items-center gap-2 px-3 py-2.5">
@@ -121,8 +134,20 @@ export function RunList(props: Props) {
                     <Square size={10} /> {t("Cancel")}
                   </button>
                 )}
+                {waiting > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => void applyAll()}
+                    disabled={applying === run.id}
+                    className="ml-auto flex h-7 items-center gap-1 rounded-lg px-2 text-[12px] font-semibold text-accent-text hover:bg-control disabled:opacity-50"
+                  >
+                    {applying === run.id ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                    {waiting === 1 ? t("Use the recommendation") : t("Use all {count} recommendations", { count: waiting })}
+                  </button>
+                )}
               </div>
             )}
+            {applyError?.runId === run.id && <div className="px-3 pb-2 text-[11.5px] text-danger">{applyError.message}</div>}
             {open && run.report && (
               <div className="border-t border-hairline/30 px-3 py-2 text-[12.5px] leading-relaxed whitespace-pre-wrap text-ink">
                 <div className="mb-0.5 text-[11.5px] font-semibold text-ink-secondary">{t("The chief's report")}</div>
@@ -135,27 +160,35 @@ export function RunList(props: Props) {
                   const assignee = botOf(subtask.assigneeBotId);
                   const child = subtask.childRunId ? props.runs.find((entry) => entry.id === subtask.childRunId) : undefined;
                   return (
-                    <div key={subtask.id} className="flex items-center gap-2 border-b border-hairline/20 px-3 py-1.5 last:border-b-0">
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-[12.5px] text-ink">{subtask.title}</div>
-                        <div className="truncate text-[11px] text-ink-secondary">
-                          {assignee?.name ?? "?"}
-                          {subtask.dependsOn.length ? ` · ${t("After {ids}", { ids: subtask.dependsOn.join(t(", ")) })}` : ""}
-                          {child ? ` · ${t("Team plan {done}/{total}", { done: child.subtasks.filter((entry) => entry.status === "done").length, total: child.subtasks.length })}` : ""}
-                          {subtask.error && subtask.status !== "done" ? ` · ${subtask.error}` : ""}
+                    <div key={subtask.id} className="border-b border-hairline/20 px-3 py-2 last:border-b-0">
+                      <div className="flex items-start gap-2">
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-[12.5px] text-ink">{subtask.title}</div>
+                          <div className="truncate text-[11px] text-ink-secondary">
+                            {assignee?.name ?? "?"}
+                            {subtask.dependsOn.length
+                              ? ` · ${t("After {ids}", { ids: subtask.dependsOn.map((id) => run.subtasks.find((entry) => entry.id === id)?.title ?? id).join(t(", ")) })}`
+                              : ""}
+                            {child ? ` · ${t("Team plan {done}/{total}", { done: child.subtasks.filter((entry) => entry.status === "done").length, total: child.subtasks.length })}` : ""}
+                            {subtask.error && subtask.status !== "done" ? ` · ${subtask.error}` : ""}
+                          </div>
                         </div>
+                        <SubtaskPill status={subtask.status} />
+                        {(subtask.status === "failed" || subtask.status === "canceled") && run.status !== "canceled" && (
+                          <button type="button" onClick={() => props.onRetry(run.id, subtask.id)} className="shrink-0 rounded-md p-1 text-ink-secondary hover:bg-control hover:text-ink" title={t("Retry")} aria-label={t("Retry")}>
+                            <RotateCcw size={12} />
+                          </button>
+                        )}
+                        {subtask.threadId && (
+                          <button type="button" onClick={() => props.onOpenSubtask(subtask)} className="shrink-0 rounded-md p-1 text-ink-secondary hover:bg-control hover:text-ink" title={t("Open this subtask's conversation")} aria-label={t("Open this subtask's conversation")}>
+                            <ExternalLink size={12} />
+                          </button>
+                        )}
                       </div>
-                      <SubtaskPill status={subtask.status} />
-                      {(subtask.status === "failed" || subtask.status === "canceled") && run.status !== "canceled" && (
-                        <button type="button" onClick={() => props.onRetry(run.id, subtask.id)} className="shrink-0 rounded-md p-1 text-ink-secondary hover:bg-control hover:text-ink" title={t("Retry")} aria-label={t("Retry")}>
-                          <RotateCcw size={12} />
-                        </button>
-                      )}
-                      {subtask.threadId && (
-                        <button type="button" onClick={() => props.onOpenSubtask(subtask)} className="shrink-0 rounded-md p-1 text-ink-secondary hover:bg-control hover:text-ink" title={t("Open this subtask's conversation")} aria-label={t("Open this subtask's conversation")}>
-                          <ExternalLink size={12} />
-                        </button>
-                      )}
+                      {/* the full width of the row: model and effort side by side */}
+                      <div className="mt-1.5">
+                        <SubtaskModelControls run={run} subtask={subtask} bot={assignee} />
+                      </div>
                     </div>
                   );
                 })}

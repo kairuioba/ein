@@ -28,6 +28,8 @@
 //                     file exists — a deterministic busy window for the
 //                     steer-queue e2e, with the echo pinning exactly what a
 //                     drained turn was sent)
+//   FAKE_ACP_PLAN   chief-plan only: a JSON array of subtasks to submit
+//                   instead of the built-in two-step plan
 //   FAKE_ACP_DUMP   path to write {argv, env} as JSON, so a test can assert
 //                   argv shape (agent/stdio flags) and env hygiene
 //   FAKE_ACP_MODELS      comma-separated model ids. Enables the opencode-shaped
@@ -472,10 +474,12 @@ function handle(msg: any) {
               name: "submit_plan",
               args: () => ({
                 goal: "Prepare the launch kit",
-                subtasks: [
-                  { id: "research", title: "Competitor research", brief: "List three competitor prices.", role: "Market analyst", needs: ["reasoning"], difficulty: 2 },
-                  { id: "copy", title: "Launch copy", brief: "Write the launch post from the research.", role: "Copywriter", needs: ["writing"], difficulty: 2, depends_on: ["research"] },
-                ],
+                subtasks: process.env.FAKE_ACP_PLAN
+                  ? JSON.parse(process.env.FAKE_ACP_PLAN)
+                  : [
+                      { id: "research", title: "Competitor research", brief: "List three competitor prices.", role: "Market analyst", needs: ["reasoning"], difficulty: 2 },
+                      { id: "copy", title: "Launch copy", brief: "Write the launch post from the research.", role: "Copywriter", needs: ["writing"], difficulty: 2, depends_on: ["research"] },
+                    ],
               }),
             },
           ])

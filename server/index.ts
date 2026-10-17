@@ -64,7 +64,7 @@ import { handleDispatchApi } from "./dispatch-api.ts";
 import { handleOrgApi, isOrgApiPath, type OrgApiDeps } from "./org/api.ts";
 import { OrgEventLog } from "./org/events.ts";
 import { OrgLayer } from "./org/layer.ts";
-import { candidatesFromInstances, recommendModels, type InstanceLike } from "../shared/model-recommender.ts";
+import { assessTask, candidatesFromInstances, effortFor, recommendModels, type InstanceLike } from "../shared/model-recommender.ts";
 import { getLocale, isLocale, replyLanguageInstruction, setLocale } from "../shared/i18n.ts";
 import { openMausStatusSystemPrompt } from "./openmaus-status-capsule.ts";
 import {
@@ -107,6 +107,7 @@ import { describeSpawnFailure, execCli } from "./procs.ts";
 import { buildNotification, type Notification } from "./notify.ts";
 import {
   isEffortLevel,
+  type EffortLevel,
   type ModelSelection,
   type ProviderInstance,
   type RequestOutcome,
@@ -1240,7 +1241,7 @@ const watchdog = new TurnWatchdog({
     void releaseBrowserCapabilityForThread(turn.threadId);
     repeats.settle(turn.threadId);
     const bot = store.bot(turn.botId);
-    const instance = bot ? registry.get(bot.modelSelection.instanceId) : null;
+    const instance = bot ? engineOfThread(bot, turn.threadId) : null;
     void instance?.adapter.interruptTurn(turn.threadId).catch(() => {});
     const minutes = Math.round(TURN_STALL_MS / 60_000);
     store.appendMessage(turn.threadId, {
@@ -2089,17 +2090,43 @@ const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, text,
 // runs and synthesizes (server/dispatch.ts). Engine descriptions for the
 // model recommender are refreshed in the background so creating a bot never
 // waits on CLI probes.
+/** Automatic effort (Settings › Automatic dispatch): a bot with no level of
+ * its own thinks as hard as the work in front of it calls for — its
+ * difficulty, on the engine's levels, one step up or down by strategy. */
+function autoEffort(levels: readonly EffortLevel[] | undefined, text: string): EffortLevel | undefined {
+  const settings = dispatchSettings(cfg.dispatch);
+  if (!settings.autoEffort || !levels?.length || !text.trim()) return undefined;
+  return effortFor(assessTask(text).difficulty, levels, settings.policy);
+}
+
+/** The engine that runs (or last ran) each bot conversation. Usually the
+ * bot's own; a dispatched subtask can borrow another for its turn, so
+ * stopping, steering and answering a running turn must reach that one. */
+const threadEngines = new Map<string, string>();
+function engineOfThread(bot: { modelSelection: { instanceId: string } }, threadId: string) {
+  const ran = threadEngines.get(threadId);
+  return (ran ? registry.get(ran) : null) ?? registry.get(bot.modelSelection.instanceId);
+}
+
 let recommenderInstances: InstanceLike[] = [];
-const refreshRecommenderInstances = () => {
-  void registry
+// One scan at a time; callers that need fresh rows await the one in flight.
+let recommenderScan: Promise<void> | null = null;
+const refreshRecommenderInstances = (): Promise<void> => {
+  recommenderScan ??= registry
     .describe()
     .then((rows) => {
       recommenderInstances = rows as InstanceLike[];
     })
-    .catch(() => {});
+    .catch(() => {})
+    .finally(() => {
+      recommenderScan = null;
+    });
+  return recommenderScan;
 };
-setTimeout(refreshRecommenderInstances, 2_000).unref?.();
-setInterval(refreshRecommenderInstances, 60_000).unref?.();
+// engines come up over the first seconds; then a slow heartbeat, plus a
+// fresh scan before every plan, pick and staffing change (dispatch-api)
+for (const delay of [2_000, 8_000, 20_000]) setTimeout(() => void refreshRecommenderInstances(), delay).unref?.();
+setInterval(() => void refreshRecommenderInstances(), 60_000).unref?.();
 const dispatcher = new Dispatcher({
   bots: () => store.bots,
   bot: (id) => store.bot(id) ?? undefined,
@@ -2129,12 +2156,15 @@ const dispatcher = new Dispatcher({
       // setup runs after startTurn resolves and never emits turn.completed on
       // failure: report it so the subtask settles instead of running forever
       onDispatchError: (message, info) => opts.onError?.(info?.cancelled ? "interrupted" : message),
+      // the subtask's engine, model and effort (your pick, the bot's, or its difficulty's)
+      ...(opts.instanceId ? { instanceId: opts.instanceId } : {}),
+      ...(opts.model ? { model: opts.model } : {}),
+      ...(opts.effort ? { effort: opts.effort } : {}),
     });
   },
   interrupt: async (botId, threadId) => {
     const bot = store.bot(botId);
-    const instance = bot ? registry.get(bot.modelSelection.instanceId) : null;
-    await instance?.adapter.interruptTurn(threadId);
+    await (bot ? engineOfThread(bot, threadId) : null)?.adapter.interruptTurn(threadId);
   },
   // cost, engine names and the company timeline for adding people mid-run
   usage: (botId, threadId) => store.taskByThread(botId, threadId)?.usage ?? null,
@@ -2150,6 +2180,19 @@ const dispatcher = new Dispatcher({
     store.appendMessage(threadId, { role: "bot", kind: "activity", tool: { name: label, ...(ok === false ? { ok: false } : { system: true }) } });
   },
   recommend: (task, policy) => recommendModels(task, candidatesFromInstances(recommenderInstances), policy, { limit: 1 })[0] ?? null,
+  engineKnobs: (instanceId) => {
+    const instance = registry.get(instanceId);
+    if (!instance || instance.driverKind === "boxAgent") return { models: [], effortLevels: [] };
+    // signed in and running, as the last engine scan saw it (unknown = assume so)
+    const scanned = recommenderInstances.find((row) => row.instanceId === instanceId)?.snapshot;
+    return {
+      models: instance.models.options.map((option) => option.id),
+      defaultModel: instance.models.default,
+      effortLevels: instance.adapter.capabilities.effortLevels ?? [],
+      ready: scanned ? scanned.state === "available" && scanned.authenticated !== false : true,
+      coordinates: instance.adapter.capabilities.agentsMcp === true,
+    };
+  },
   // SSE frames are keyed on `kind` (broadcast() reads payload.kind; `type`
   // sent them unnamed). Company layer: run/subtask transitions → org events.
   broadcast: (run) => {
@@ -2382,6 +2425,12 @@ async function startTurn(
     dispatchOnly?: boolean;
     /** `cancelled`: someone stopped the turn during setup (not a failure). */
     onDispatchError?: (message: string, info?: { cancelled?: boolean }) => void;
+    /** this turn only (a dispatched subtask): another engine you are signed
+     * in to (absent = the bot's own), a model on it and how hard to think —
+     * a model or level the engine does not offer is dropped */
+    instanceId?: string;
+    model?: string;
+    effort?: EffortLevel;
   },
 ) {
   const bot = store.bot(botId);
@@ -2403,24 +2452,36 @@ async function startTurn(
   // a task takes its name from the first thing you asked it to do
   if (text.trim() && !opts?.cardContinuation) store.titleTaskFromFirstMessage(bot.id, text, threadId);
 
+  // a dispatched subtask may borrow another engine you are signed in to for
+  // this one turn (server/dispatch.ts turnPick); the bot keeps its own
+  const borrowedId = opts?.runOn !== "cloud" && opts?.instanceId && opts.instanceId !== bot.modelSelection.instanceId ? opts.instanceId : undefined;
   const instance = opts?.runOn === "cloud"
     ? registry.instances().find((candidate) => candidate.driverKind === "boxAgent") ?? null
-    : registry.get(bot.modelSelection.instanceId);
+    : registry.get(borrowedId ?? bot.modelSelection.instanceId);
   if (!instance) {
     throw Object.assign(
       new Error(
         opts?.runOn === "cloud"
           ? t("the Cloud VM runner is unavailable — configure Box in App Settings")
-          : t('provider instance "{id}" is unavailable — pick another model in settings', { id: bot.modelSelection.instanceId }),
+          : t('provider instance "{id}" is unavailable — pick another model in settings', { id: borrowedId ?? bot.modelSelection.instanceId }),
       ),
       { status: 409 },
     );
   }
   const instanceId = instance.instanceId;
-  const model = opts?.runOn === "cloud" ? instance.models.default : bot.modelSelection.model;
+  threadEngines.set(threadId, instanceId);
+  // …and may run on another model, or think harder or lighter, for this turn only
+  const turnModel = opts?.model && instance.models.options.some((option) => option.id === opts.model) ? opts.model : undefined;
+  const turnEffort = opts?.effort && instance.adapter.capabilities.effortLevels?.includes(opts.effort) ? opts.effort : undefined;
+  const model = opts?.runOn === "cloud" ? instance.models.default : (turnModel ?? (borrowedId ? instance.models.default : bot.modelSelection.model));
   // a cloud routine borrows the instance default model, so it borrows no
-  // per-bot effort either
-  const effort = opts?.runOn === "cloud" ? undefined : bot.modelSelection.effort;
+  // per-bot effort either; nor does a borrowed engine (its pick names one).
+  // A bot with no level of its own thinks as hard as this message calls for
+  // (automatic effort); a dispatched subtask brings its difficulty's level.
+  const effort =
+    opts?.runOn === "cloud"
+      ? undefined
+      : (turnEffort ?? (borrowedId ? undefined : (bot.modelSelection.effort ?? autoEffort(instance.adapter.capabilities.effortLevels, text))));
   // A selection can be persisted while its engine is offline. Re-check when
   // the engine returns so an old or unsupported value never reaches a CLI.
   if (effort && !instance.adapter.capabilities.effortLevels?.includes(effort)) {
@@ -4499,6 +4560,7 @@ const dispatchApiDeps = {
   dispatcher,
   readBody,
   json,
+  refreshEngines: refreshRecommenderInstances,
   teamMapSnapshot,
   ownsThread: (botId: string, threadId: string) => Boolean(connectorThread(botId, threadId)),
   botName: (botId: string) => store.bot(botId)?.name,
@@ -6807,7 +6869,7 @@ const server = createServer(async (req, res) => {
         directTurnGenerationByBot.delete(bot.id);
         await releaseBrowserCapabilitiesForBot(bot.id);
         const directThreadId = directClaim?.threadId ?? bot.threadId;
-        await registry.get(bot.modelSelection.instanceId)?.adapter.interruptTurn(directThreadId).catch(() => {});
+        await engineOfThread(bot, directThreadId)?.adapter.interruptTurn(directThreadId).catch(() => {});
         closeOpenApprovals(directThreadId);
         stopScreenPoller(bot.id);
         activeVpsThreads.delete(bot.id);
@@ -7101,7 +7163,7 @@ const server = createServer(async (req, res) => {
           // loses a race with turn settlement, or the engine cannot steer, the
           // existing server-side queue records it atomically for the next turn.
           if (currentAtStart.busy) {
-            const instance = registry.get(currentAtStart.modelSelection.instanceId);
+            const instance = engineOfThread(currentAtStart, threadId);
             let steered = false;
             if (instance?.adapter.capabilities.queueing && instance.adapter.steer) {
               steered = await instance.adapter
@@ -7246,7 +7308,7 @@ const server = createServer(async (req, res) => {
       if (resolvePeerComms(approvalBus, String(body.requestId), behavior)) {
         return json(res, 200, { ok: true, outcome: behavior === "allow" ? "allowed-once" : "rejected" });
       }
-      const outcome = await answerRequest(bot.threadId, bot.modelSelection.instanceId, String(body.requestId), behavior, body.message, { id: bot.id, name: bot.name });
+      const outcome = await answerRequest(bot.threadId, engineOfThread(bot, bot.threadId)?.instanceId ?? bot.modelSelection.instanceId, String(body.requestId), behavior, body.message, { id: bot.id, name: bot.name });
       return json(res, 200, { ok: true, outcome });
     }
     // Answer by THREAD, so a request raised inside a room can be answered
@@ -7312,7 +7374,7 @@ const server = createServer(async (req, res) => {
           (pending?.from ? store.bot(pending.from.botId) : undefined)
         : store.botByThread(threadId);
       if (!owner && !pending) return json(res, 404, { error: t("nothing is waiting on an answer in this conversation") });
-      const outcome = await answerRequest(threadId, owner?.modelSelection.instanceId ?? "", requestId, behavior, body.message, owner ? { id: owner.id, name: owner.name } : undefined);
+      const outcome = await answerRequest(threadId, (owner ? (group ? owner.modelSelection.instanceId : engineOfThread(owner, threadId)?.instanceId ?? owner.modelSelection.instanceId) : ""), requestId, behavior, body.message, owner ? { id: owner.id, name: owner.name } : undefined);
       return json(res, 200, { ok: true, outcome });
     }
     m = path.match(/^\/api\/bots\/([\w-]+)\/interrupt$/);
@@ -7364,7 +7426,7 @@ const server = createServer(async (req, res) => {
       const cancelledDirect = cancelDirectTurnDispatch(bot.id, expectedThreadId);
       const directThreadId = cancelledDirect?.threadId ?? bot.threadId;
       await releaseBrowserCapabilityForThread(directThreadId);
-      await instance?.adapter.interruptTurn(directThreadId).catch(() => {});
+      await engineOfThread(bot, directThreadId)?.adapter.interruptTurn(directThreadId).catch(() => {});
       closeOpenApprovals(directThreadId);
       return json(res, 200, { ok: true });
     }
@@ -7597,7 +7659,10 @@ const server = createServer(async (req, res) => {
       // Windows never pushes PATH changes into a live process, so without
       // this the answer is frozen at boot and "check again" is a no-op.
       resetPathCache();
-      return json(res, 200, { instances: await registry.describe() });
+      const rows = await registry.describe();
+      // the recommender sees what the app sees
+      recommenderInstances = rows as InstanceLike[];
+      return json(res, 200, { instances: rows });
     }
 
     // ── CLI binary discovery for the Engines "detected" dropdown ──

@@ -12,10 +12,11 @@ import { Button, Dialog, Panel, Segmented } from "@/components/ui";
 import { EngineSetup } from "@/components/EngineSetup";
 import { EngineRow as EngineCliRow, EnginesSettings } from "@/components/EnginesSettings";
 import { WorkBuddySettings } from "@/components/WorkBuddySettings";
-import { useDispatchSettings } from "@/components/DispatchSettingsCard";
+import { EffortLadder, useDispatchSettings } from "@/components/DispatchSettingsCard";
+import { Switch } from "@/components/SettingsPrimitives";
 import { cn } from "@/lib/cn";
 import { t, tn } from "@/lib/i18n";
-import type { RecommendationPolicy } from "../../../shared/model-recommender";
+import { effortLabel, type RecommendationPolicy } from "../../../shared/model-recommender";
 import {
   ENGINE_STATE_LABEL,
   engineAction,
@@ -220,6 +221,20 @@ function StrategyCard() {
         {t(": ")}
         {hint[settings.policy]}
       </p>
+      <div className="mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-1.5">
+        <span className="text-[12.5px] text-ink">{t("Effort by difficulty")}</span>
+        <Switch
+          checked={settings.autoEffort}
+          disabled={!loaded || saving}
+          aria-label={t("Think as hard as each task needs")}
+          onClick={() => save({ autoEffort: !settings.autoEffort })}
+        />
+        {settings.autoEffort ? (
+          <EffortLadder policy={settings.policy} />
+        ) : (
+          <span className="text-[12px] text-ink-secondary">{t("Off: a bot without its own level lets the engine decide.")}</span>
+        )}
+      </div>
       <div className="mt-2 flex flex-wrap gap-1.5">
         {examples.length === 0 && <span className="text-[12px] text-ink-secondary">{t("Sign in to an engine and examples show here.")}</span>}
         {examples.map((example) => {
@@ -234,6 +249,7 @@ function StrategyCard() {
               <span>{t(example.label)}</span>
               <span className="text-ink-secondary/60">→</span>
               <b className="font-semibold text-ink">{example.engineName}</b>
+              {example.effort && settings.autoEffort && <span className="text-ink-secondary">· {effortLabel(example.effort)}</span>}
             </span>
           );
         })}

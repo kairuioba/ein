@@ -8,6 +8,7 @@ import { filterCustomModels, partitionCustomModels, suggestedModels } from "@/li
 import { isCustomOnly, splitEngineRail } from "@/lib/engine-rail";
 import { ProviderMark } from "./ProviderIcons";
 import { EngineSetup, needsCli, needsSignIn } from "./EngineSetup";
+import { engineReady } from "@/lib/subtask-model";
 import { EngineGroupLabel } from "./EngineGroupLabel";
 import { cn } from "@/lib/cn";
 import { COMPACT_SQUARE } from "@/lib/compact-chip";
@@ -30,11 +31,14 @@ function ModelRow({
   option,
   current,
   defaultId,
+  recommended = false,
   onPick,
 }: {
   option: ModelOption;
   current: boolean;
   defaultId: string;
+  /** the recommender's pick for the task at hand */
+  recommended?: boolean;
   onPick: () => void;
 }) {
   return (
@@ -53,6 +57,9 @@ function ModelRow({
         )}
         {option.loaded && (
           <span className="shrink-0 rounded bg-accent/10 px-1.5 py-px text-[10px] text-accent">{t("Loaded")}</span>
+        )}
+        {recommended && (
+          <span className="shrink-0 rounded bg-success/12 px-1.5 py-px text-[10px] font-semibold text-success">{t("Recommended")}</span>
         )}
       </span>
       {current && <Check size={14} className="shrink-0 text-accent" />}
@@ -94,6 +101,10 @@ function ModelSearch({
 
 export function ModelPicker({
   bot,
+  value,
+  onPick,
+  recommended,
+  align = "right",
   className,
   contained = false,
   label,
@@ -101,7 +112,17 @@ export function ModelPicker({
   defaultOpen = false,
   onClose,
 }: {
-  bot: Bot;
+  /** the bot whose model this sets (dispatches setModel) … */
+  bot?: Bot;
+  /** … or a controlled pick, e.g. one dispatched subtask's: only engines you
+   * are signed in to are offered, and the choice goes to onPick */
+  value?: ModelSelection;
+  onPick?: (selection: ModelSelection) => void;
+  /** marks the recommender's pick for the task at hand */
+  recommended?: { instanceId: string; model: string };
+  /** which edge of the trigger the menu lines up with (a trigger near the
+   * left of its card opens rightwards) */
+  align?: "left" | "right";
   className?: string;
   /** Expand the menu in-flow under the trigger so it cannot overflow a
    * narrow parent (the Agent profile sidebar). */
@@ -115,17 +136,20 @@ export function ModelPicker({
 }) {
   const { state, dispatch, refreshInstances } = useStore();
   const [open, setOpen] = useState(defaultOpen);
-  const [railId, setRailId] = useState<string | null>(defaultOpen ? bot.modelSelection.instanceId : null);
+  const [railId, setRailId] = useState<string | null>(defaultOpen ? (value ?? bot?.modelSelection)?.instanceId ?? null : null);
   const [pane, setPane] = useState<"main" | "custom">("main");
   const [query, setQuery] = useState("");
   const [showAll, setShowAll] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const wasOpen = useRef(open);
 
-  const selection = bot.modelSelection;
+  const selection = value ?? bot!.modelSelection;
+  // a subtask can move only to an engine that can run it right now
+  const controlled = Boolean(onPick);
+  const instances = controlled ? state.instances.filter(engineReady) : state.instances;
   const active = state.instances.find((instance) => instance.instanceId === selection.instanceId);
   const railInstance =
-    state.instances.find((instance) => instance.instanceId === (railId ?? selection.instanceId)) ?? state.instances[0];
+    instances.find((instance) => instance.instanceId === (railId ?? selection.instanceId)) ?? instances[0];
 
   useEffect(() => {
     if (open) void refreshInstances();
@@ -190,11 +214,14 @@ export function ModelPicker({
       model,
     };
     if (sameInstance && selection.effort) nextSelection.effort = selection.effort;
-    dispatch({
-      type: "setModel",
-      botId: bot.id,
-      selection: nextSelection,
-    });
+    if (onPick) onPick(nextSelection);
+    else if (bot) {
+      dispatch({
+        type: "setModel",
+        botId: bot.id,
+        selection: nextSelection,
+      });
+    }
     setOpen(false);
   };
 
@@ -222,6 +249,7 @@ export function ModelPicker({
       option={option}
       current={selection.instanceId === railInstance?.instanceId && selection.model === option.id}
       defaultId={railInstance?.models.default ?? ""}
+      recommended={recommended?.instanceId === railInstance?.instanceId && recommended?.model === option.id}
       onPick={() => railInstance && pick(railInstance, option.id)}
     />
   );
@@ -283,12 +311,15 @@ export function ModelPicker({
             "flex overflow-hidden rounded-2xl border border-hairline/50 bg-card",
             contained
               ? "relative mt-3 w-full max-h-[min(420px,50dvh)]"
-              : "absolute right-0 top-full z-30 mt-2 w-[380px] max-h-[min(480px,calc(100dvh-7rem))] shadow-2xl shadow-black/50",
+              : cn(
+                  "absolute top-full z-30 mt-2 w-[min(380px,calc(100vw-2rem))] max-h-[min(480px,calc(100dvh-7rem))] shadow-2xl shadow-black/50",
+                  align === "left" ? "left-0" : "right-0",
+                ),
           )}
         >
           <div className="flex w-14 shrink-0 flex-col gap-1 overflow-y-auto border-r border-hairline/40 bg-panel p-2">
             {(() => {
-              const { subscription, custom: local } = splitEngineRail(state.instances);
+              const { subscription, custom: local } = splitEngineRail(instances);
               const railButton = (instance: InstanceInfo) => {
                 const selected = instance.instanceId === railInstance?.instanceId;
                 const attention = needsCli(instance) || needsSignIn(instance);
@@ -345,7 +376,9 @@ export function ModelPicker({
                   <div className="mt-0.5 text-[11.5px] text-ink-secondary">
                     {pane === "custom"
                       ? t("Run this agent with a model already on your machine.")
-                      : t("Choose a model for this bot.")}
+                      : controlled
+                        ? t("Choose a model for this task. The bot keeps its own.")
+                        : t("Choose a model for this bot.")}
                   </div>
                 </div>
 

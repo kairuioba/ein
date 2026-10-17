@@ -7,6 +7,8 @@ import {
   assessTask,
   candidatesFromInstances,
   effortFor,
+  effortLabel,
+  wantedEffort,
   recommendForText,
   recommendModels,
   type InstanceLike,
@@ -90,7 +92,7 @@ describe("recommendations", () => {
     const task = assessTask("设计并实现一个复杂的分布式任务调度系统架构，端到端完成", { difficulty: 5 });
     const [best] = recommendModels(task, candidates, "quality");
     expect(best?.model).toBe("opus");
-    expect(best?.effort).toBe("xhigh");
+    expect(best?.effort).toBe("max");
   });
 
   it("prefers a fast, inexpensive model for easy writing under the economy policy", () => {
@@ -122,6 +124,25 @@ describe("profiles and effort", () => {
 
   it("applies a team override to a family", () => {
     expect(profileFor("hunyuan-t1", "", { hunyuan: { tier: 5 } }).tier).toBe(5);
+  });
+
+  it("uses the whole ladder: harder work thinks harder, one step up or down by policy", () => {
+    const all = ["low", "medium", "high", "xhigh", "max"];
+    expect([1, 2, 3, 4, 5].map((level) => effortFor(level as 1, all))).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    expect([1, 2, 3, 4, 5].map((level) => effortFor(level as 1, all, "quality"))).toEqual(["medium", "high", "xhigh", "max", "max"]);
+    expect([1, 2, 3, 4, 5].map((level) => effortFor(level as 1, all, "economy"))).toEqual(["low", "low", "medium", "high", "xhigh"]);
+    // an engine that can switch thinking off does so for the easiest work, on Save money only
+    const withOff = ["none", ...all];
+    expect(effortFor(1, withOff, "economy")).toBe("none");
+    expect(effortFor(1, withOff)).toBe("low");
+    expect(wantedEffort(3, "quality")).toBe("xhigh");
+    expect(effortLabel("xhigh")).toBe("XHigh");
+    expect(effortLabel("max")).toBe("Max");
+  });
+
+  it("reads an engine's levels in any order", () => {
+    expect(effortFor(4, ["max", "low", "high"])).toBe("high");
+    expect(effortFor(5, ["high", "low", "max", "medium"])).toBe("max");
   });
 
   it("picks the nearest effort the engine supports", () => {

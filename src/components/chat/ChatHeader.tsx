@@ -12,7 +12,7 @@
 // (<512px), export moves into "more" (<448px), and below 320px the task
 // switch leaves too. The name truncates last.
 import { useCallback, useRef, useState } from "react";
-import { Bug, Check, ClipboardCopy, Clock, Cpu, FileJson, FileText, Folder, Plus, Search, Settings2 } from "lucide-react";
+import { Bug, Check, ClipboardCopy, Clock, Cpu, FileJson, FileText, Folder, Gauge, Plus, Search, Settings2 } from "lucide-react";
 import { useStore, type Bot, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { t, tn } from "@/lib/i18n";
@@ -21,6 +21,9 @@ import { costCaption, formatTokens, formatUsd, hasFiniteCost, usageChip, usageDe
 import { BotAvatar } from "@/components/Avatar";
 import { RenameTitle } from "@/components/RenameTitle";
 import { ModelPicker } from "@/components/ModelPicker";
+import { EffortSegments } from "@/components/EffortPicker";
+import type { Effort } from "../../../shared/model-recommender";
+import { dispatchSettings } from "../../../shared/dispatch-types";
 import { CallButton } from "@/components/CallView";
 import { TaskPicker } from "@/components/TaskPicker";
 import { Pill } from "@/components/ui/index";
@@ -260,6 +263,9 @@ function MoreMenu({
         .filter(Boolean)
         .join("\n")
     : undefined;
+  // how hard this bot thinks: a level of its own, or automatic / the engine's default
+  const effortLevels = (state.instances.find((instance) => instance.instanceId === bot.modelSelection.instanceId)?.capabilities?.effortLevels ?? []) as readonly Effort[];
+  const autoEffortOn = dispatchSettings(state.config?.dispatch).autoEffort;
   const folder = task?.cwd === undefined ? bot.cwd : (task.cwd ?? undefined);
   const folderName = folder ? folder.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || folder : undefined;
 
@@ -305,6 +311,22 @@ function MoreMenu({
               }
             />
           </div>
+          {effortLevels.length > 0 && (
+            <div className="px-2.5 pt-1 pb-1.5">
+              <div className="mb-1.5 flex items-center gap-2.5 text-[13px] text-ink">
+                <Gauge size={14} className="text-ink-secondary" />
+                {t("Effort")}
+              </div>
+              <EffortSegments
+                label={t("How hard {name} thinks", { name: bot.name })}
+                levels={effortLevels}
+                value={bot.modelSelection.effort}
+                unsetLabel={autoEffortOn ? t("Auto") : t("Default")}
+                unsetTitle={autoEffortOn ? t("Auto, by each task's difficulty") : t("Engine default")}
+                onChange={(level) => dispatch({ type: "setModel", botId: bot.id, selection: { ...bot.modelSelection, effort: level } })}
+              />
+            </div>
+          )}
           <MenuDivider />
           <MenuItem
             icon={<Bug size={14} />}

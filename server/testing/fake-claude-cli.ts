@@ -15,9 +15,11 @@
 //                      so a test cannot open it after the fact.
 //   FAKE_CLAUDE_AUTH   in (default) | out | unsupported | malformed |
 //                      inherited-api-key — what `auth status` reports
+//   FAKE_CLAUDE_ARGV_LOG  path to APPEND one JSON line per turn: {argv,
+//                      prompt} — for runs where several turns share one path
 //
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 
 const mode = process.env.FAKE_CLAUDE_MODE ?? "happy";
 
@@ -115,6 +117,9 @@ const finishIfDone = () => {
 const playTurn = (prompt: JsonValue) => {
   turnRunning = true;
   steered = [];
+  if (process.env.FAKE_CLAUDE_ARGV_LOG) {
+    appendFileSync(process.env.FAKE_CLAUDE_ARGV_LOG, JSON.stringify({ argv, prompt: JSON.stringify(prompt).slice(0, 400) }) + "\n");
+  }
   if (!dumped && process.env.FAKE_CLAUDE_DUMP) {
     dumped = true;
     const configPath = argAfter("--mcp-config");

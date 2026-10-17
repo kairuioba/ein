@@ -27,8 +27,11 @@ import { BotAvatar } from "./Avatar";
 import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
 import { VoiceSettings } from "./VoiceSettings";
 import { BOT_PROFILE_LIMITS } from "../../shared/bot-profile";
+import { effortLabel, type Effort } from "../../shared/model-recommender";
+import { effortHint, EffortSegments } from "./EffortPicker";
+import { dispatchSettings } from "../../shared/dispatch-types";
 import { Switch } from "./SettingsPrimitives";
-import { msg, t, tn, tRich } from "@/lib/i18n";
+import { t, tn, tRich } from "@/lib/i18n";
 import { useAppCatalog } from "./settings/app-catalog";
 import { countMemoryNotes, heroStatus, superiorOf, teamSize } from "./settings/bot-panel-model";
 import { recommendedFor } from "./settings/engine-model";
@@ -321,15 +324,6 @@ function LearnedSkillsCard({ bot }: { bot: Bot }) {
   );
 }
 
-/** Effort button captions; the level values stay the engine's identifiers. */
-const EFFORT_LABELS: Partial<Record<string, string>> = {
-  none: msg("None"),
-  low: msg("Low"),
-  medium: msg("Medium"),
-  high: msg("High"),
-  xhigh: msg("X-High"),
-  max: msg("Max"),
-};
 
 /** Where a bot's shell tools run. Set per bot; each task pins its own copy
  * on its first turn (the server does the pinning — Claude keeps sessions
@@ -766,6 +760,8 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
   const activeState = stateForBot(bot);
   const mascotMotion = state.mascotMotion?.botId === bot.id ? state.mascotMotion : null;
   const engine = state.instances.find((instance) => instance.instanceId === bot.modelSelection.instanceId);
+  // with no level of its own, the bot thinks as hard as each task calls for
+  const autoEffortOn = dispatchSettings(state.config?.dispatch).autoEffort;
   const kind = mascotForBot(bot, state.instances);
   const canAutoReview = engine?.capabilities?.approvalReview === true;
   const canCoordinate = engine?.capabilities?.agentsMcp === true;
@@ -903,6 +899,29 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
             {picking && (
               <div className="pb-3">
                 <ModelPicker bot={bot} contained hideTrigger defaultOpen onClose={() => setPicking(false)} />
+              </div>
+            )}
+            {/* how hard it thinks: a level of its own, or each task's difficulty decides */}
+            {!!engine?.capabilities?.effortLevels?.length && (
+              <div className="flex flex-col gap-1.5 py-2">
+                <div className="flex items-center gap-2.5">
+                  <span className="flex-1 text-[13px] font-semibold text-ink">{t("Effort")}</span>
+                  <span className="truncate text-[12px] text-ink-secondary">
+                    {bot.modelSelection.effort
+                      ? effortHint(bot.modelSelection.effort)
+                      : autoEffortOn
+                        ? t("Auto, by each task's difficulty")
+                        : t("Engine default")}
+                  </span>
+                </div>
+                <EffortSegments
+                  label={t("How hard {name} thinks", { name: bot.name })}
+                  levels={engine.capabilities.effortLevels as readonly Effort[]}
+                  value={bot.modelSelection.effort}
+                  unsetLabel={autoEffortOn ? t("Auto") : t("Default")}
+                  unsetTitle={autoEffortOn ? t("Auto, by each task's difficulty") : t("Engine default")}
+                  onChange={(level) => patch({ modelSelection: { ...bot.modelSelection, effort: level } })}
+                />
               </div>
             )}
             <button
@@ -1135,7 +1154,11 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
                       we could not keep for a thread that had already been sent
                       one. Sending nothing is true on every engine. */}
                   <div className={cardSub}>
-                    {bot.modelSelection.effort ? t("How hard this bot thinks") : t("How hard this bot thinks (Default: no level is sent)")}
+                    {bot.modelSelection.effort
+                      ? t("How hard this bot thinks")
+                      : autoEffortOn
+                        ? t("How hard this bot thinks (Auto: each task gets the level its difficulty calls for, from Low for easy work to Max for the hardest)")
+                        : t("How hard this bot thinks (Default: no level is sent)")}
                   </div>
                   <div className="mt-2.5 flex overflow-hidden rounded-lg border border-hairline/40">
                     {([undefined, ...engine.capabilities.effortLevels] as const).map((level, i) => (
@@ -1144,13 +1167,13 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
                         aria-pressed={bot.modelSelection.effort === level}
                         onClick={() => patch({ modelSelection: { ...bot.modelSelection, effort: level } })}
                         className={cn(
-                          "flex-1 py-1.5 text-[12.5px] capitalize",
+                          "flex-1 py-1.5 text-[12.5px]",
                           i > 0 && "border-l border-hairline/40",
                           bot.modelSelection.effort === level ? "bg-control text-ink" : "text-ink-secondary hover:bg-control/60 hover:text-ink",
                         )}
                       >
-                        {/* the others capitalize cleanly; "xhigh" would read "Xhigh" */}
-                        {level ? t(EFFORT_LABELS[level] ?? level) : t("Default")}
+                        {/* the engines' own names: Low … XHigh, Max ("xhigh" would capitalize to "Xhigh") */}
+                        {level ? effortLabel(level) : autoEffortOn ? t("Auto") : t("Default")}
                       </button>
                     ))}
                   </div>
@@ -1179,7 +1202,7 @@ export function SettingsPanel({ bot }: { bot: Bot }) {
                         else patch({ computer: mode });
                       }}
                       className={cn(
-                        "flex-1 py-1.5 text-[12.5px] capitalize",
+                        "flex-1 py-1.5 text-[12.5px]",
                         i > 0 && "border-l border-hairline/40",
                         mode === "local" && !localSelectable && "cursor-not-allowed opacity-40",
                         bot.computer === mode ? "bg-control text-ink" : "text-ink-secondary hover:bg-control/60 hover:text-ink",

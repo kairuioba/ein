@@ -18,10 +18,15 @@ export interface DispatchApiDeps {
   ownsThread(botId: string, threadId: string): boolean;
   botName(botId: string): string | undefined;
   modelLabel(botId: string): string | undefined;
+  /** Rescan the engines (signed in? which models and levels?) before a
+   * change that recommends or checks one: a plan, a pick, adding people. */
+  refreshEngines?(): Promise<void>;
 }
 
 const RUN_ACTION = /^\/api\/dispatch\/runs\/([\w-]+)\/(approve|cancel|diagnose|amend)$/;
 const RETRY = /^\/api\/dispatch\/runs\/([\w-]+)\/subtasks\/([\w-]+)\/retry$/;
+/** PATCH: your pick of model and effort for a subtask that has not started. */
+const SUBTASK = /^\/api\/dispatch\/runs\/([\w-]+)\/subtasks\/([\w-]+)$/;
 
 const optionalNumber = (value: unknown): number | undefined => {
   if (value === undefined || value === null || value === "") return undefined;
@@ -92,11 +97,30 @@ export async function handleDispatchApi(
     if (verb === "amend") {
       // the owner's call from the workbench always goes through
       const body = (await deps.readBody(req)) ?? {};
+      await deps.refreshEngines?.();
       const result = dispatcher.amend(runId!, Number(body.add), { by: "owner" });
       json(res, "error" in result ? 400 : 200, result);
       return true;
     }
     const result = verb === "approve" ? dispatcher.approve(runId!) : await dispatcher.cancel(runId!);
+    json(res, "error" in result ? 400 : 200, "error" in result ? result : { run: result });
+    return true;
+  }
+
+  const pick = method === "PATCH" ? SUBTASK.exec(path) : null;
+  if (pick) {
+    // body: { instanceId?, model?, effort? } — each a string, or null to
+    // clear that part of the pick (the bot's own engine and model, or the
+    // bot's own / automatic effort)
+    const body = (await deps.readBody(req)) ?? {};
+    await deps.refreshEngines?.();
+    const text = (value: unknown): string | null | undefined =>
+      value === null ? null : typeof value === "string" && value.trim() ? value.trim() : undefined;
+    const result = dispatcher.chooseModel(pick[1]!, pick[2]!, {
+      instanceId: text(body.instanceId),
+      model: text(body.model),
+      effort: text(body.effort),
+    });
     json(res, "error" in result ? 400 : 200, "error" in result ? result : { run: result });
     return true;
   }
@@ -120,6 +144,7 @@ export async function handleDispatchApi(
       json(res, 403, { error: "source conversation does not belong to sender" });
       return true;
     }
+    await deps.refreshEngines?.();
     const result = dispatcher.submitPlan(fromBotId, fromThreadId, { goal: body.goal, subtasks: body.subtasks });
     // 200 with an error body: the agent reads the message and fixes its plan
     if ("error" in result) {
@@ -156,6 +181,7 @@ export async function handleDispatchApi(
       json(res, 200, { error: `Adding people would not help: ${diagnosis.reason ?? ""}`.trim(), checks: checkLines(diagnosis) });
       return true;
     }
+    await deps.refreshEngines?.();
     const result = dispatcher.amend(run.id, asked ?? diagnosis.suggestion.add, { by: "chief", botId: fromBotId });
     if ("error" in result) {
       json(res, 200, { error: result.error, checks: checkLines(diagnosis) });

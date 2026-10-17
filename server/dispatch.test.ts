@@ -36,6 +36,9 @@ interface Turn {
   continuation?: boolean;
   mayPlan?: boolean;
   sourceThreadId?: string;
+  instanceId?: string;
+  model?: string;
+  effort?: string;
 }
 
 const MIN = 60_000;
@@ -92,7 +95,7 @@ class FakeHost implements DispatchHost {
     if (this.failStart.has(botId)) throw new Error("engine unavailable");
     const bot = this.bot(botId)!;
     bot.busy = true;
-    this.turns.push({ botId, text, threadId: opts.threadId, continuation: opts.continuation, mayPlan: opts.mayPlan, sourceThreadId: opts.sourceThreadId });
+    this.turns.push({ botId, text, threadId: opts.threadId, continuation: opts.continuation, mayPlan: opts.mayPlan, sourceThreadId: opts.sourceThreadId, instanceId: opts.instanceId, model: opts.model, effort: opts.effort });
     const failure = this.setupFailures.get(botId)?.shift();
     if (failure !== undefined) {
       // like index.ts: the setup runs after startTurn resolved; on failure the
@@ -112,6 +115,15 @@ class FakeHost implements DispatchHost {
   }
   recommend() {
     return this.recommendation;
+  }
+  /** Claude: three models and every effort level; Codex: two models, no
+   * effort knob; Gemini: low–high and cannot coordinate; Grok: signed out */
+  engineKnobs(instanceId: string) {
+    if (instanceId === "claude") return { models: ["sonnet", "opus", "haiku"], defaultModel: "sonnet", effortLevels: ["low", "medium", "high", "xhigh", "max"], ready: true, coordinates: true };
+    if (instanceId === "codex") return { models: ["gpt-5.5", "gpt-5.5-mini"], defaultModel: "gpt-5.5", effortLevels: [] as string[], ready: true, coordinates: true };
+    if (instanceId === "gemini") return { models: ["gemini-pro", "gemini-flash"], defaultModel: "gemini-flash", effortLevels: ["low", "medium", "high"], ready: true, coordinates: false };
+    if (instanceId === "grok") return { models: ["grok-4"], defaultModel: "grok-4", effortLevels: ["low", "medium", "high"], ready: false, coordinates: true };
+    return { models: [], effortLevels: [] as string[] };
   }
   broadcast(_run: DispatchRun) {
     this.broadcasts += 1;
@@ -269,7 +281,9 @@ describe("Dispatcher", () => {
     if ("error" in result) return;
     expect(result.run.subtasks[0]!.assigneeBotId).toBe("writer");
     expect(host.created).toHaveLength(1);
-    expect(host.created[0]).toMatchObject({ name: "数据分析师", title: "数据分析师", section: "市场部", modelSelection: { instanceId: "claude", model: "sonnet", effort: "medium" } });
+    expect(host.created[0]).toMatchObject({ name: "数据分析师", title: "数据分析师", section: "市场部", modelSelection: { instanceId: "claude", model: "sonnet" } });
+    // the effort is left open: each task it gets thinks as hard as that task needs
+    expect(host.created[0]!.modelSelection.effort).toBeUndefined();
     expect(result.run.subtasks[1]).toMatchObject({ assigneeBotId: host.created[0]!.id, createdBot: true });
     // the new specialist is wired to its Chief
     expect(dispatcher.routes()).toContainEqual(expect.objectContaining({ fromBotId: "chief", toBotId: host.created[0]!.id, enabled: true }));
@@ -281,6 +295,188 @@ describe("Dispatcher", () => {
     const result = submit([{ id: "x", title: "视频剪辑", brief: "剪一条 30 秒预告片", role: "视频剪辑师" }]);
     expect("error" in result).toBe(false);
     expect(host.created[0]?.modelSelection).toEqual({ instanceId: "codex", model: "gpt-5.5" });
+  });
+
+  it("recommends a model and an effort for every subtask, and runs at the effort its difficulty calls for", async () => {
+    host.bot("writer")!.modelSelection = { instanceId: "claude", model: "sonnet" };
+    const result = submit([
+      { id: "easy", title: "改一句标语", brief: "简单改一下标语", role: "文案策划", difficulty: 1 },
+      { id: "hard", title: "全套发布会方案", brief: "从零设计完整的发布会方案，端到端", role: "文案策划", difficulty: 5 },
+    ]);
+    if ("error" in result) throw new Error(result.error);
+    // the recommendation rides on each subtask, for you to take or leave
+    expect(result.run.subtasks.map((subtask) => subtask.recommended?.modelLabel)).toEqual(["Claude Sonnet", "Claude Sonnet"]);
+    await flush();
+    const [first] = host.workerTurns();
+    expect(first).toMatchObject({ botId: "writer" });
+    // the bot set no effort, so each task gets the one its difficulty calls for
+    expect(result.run.subtasks[0]!.ranWith).toEqual({ instanceId: "claude", model: "sonnet", effort: "low", autoEffort: true });
+    expect(first!.effort).toBe("low");
+    host.finish(dispatcher, first!.threadId, true, "改好了");
+    await flush();
+    const second = host.workerTurns()[1]!;
+    expect(dispatcher.get(result.run.id)!.subtasks[1]!.ranWith).toMatchObject({ effort: "max", autoEffort: true });
+    expect(second.effort).toBe("max");
+  });
+
+  it("lets you pick a model and an effort for a subtask that has not started; the bot's own effort beats the automatic one", async () => {
+    host.settingsValue = dispatchSettings({ requireApproval: true });
+    host.bot("writer")!.modelSelection = { instanceId: "claude", model: "sonnet", effort: "high" };
+    const result = submit([
+      { id: "a", title: "发布会主持稿", brief: "写主持稿", role: "文案策划", difficulty: 2 },
+      { id: "b", title: "公众号推文", brief: "写推文", role: "文案策划", difficulty: 5 },
+    ]);
+    if ("error" in result) throw new Error(result.error);
+    const runId = result.run.id;
+    expect(dispatcher.chooseModel(runId, "a", { model: "opus", effort: "max" })).not.toHaveProperty("error");
+    expect(dispatcher.get(runId)!.subtasks[0]!.choice).toEqual({ model: "opus", effort: "max" });
+    // what the engine does not offer is refused
+    expect(dispatcher.chooseModel(runId, "a", { model: "gpt-9" })).toMatchObject({ error: expect.any(String) });
+    expect(dispatcher.chooseModel(runId, "a", { effort: "turbo" })).toMatchObject({ error: expect.any(String) });
+    expect(dispatcher.chooseModel(runId, "nope", { effort: "low" })).toMatchObject({ error: expect.any(String) });
+    // the bot's own model clears the pick
+    expect(dispatcher.chooseModel(runId, "b", { model: "sonnet" })).not.toHaveProperty("error");
+    expect(dispatcher.get(runId)!.subtasks[1]!.choice).toBeUndefined();
+    dispatcher.approve(runId);
+    await flush();
+    const turns = host.workerTurns();
+    expect(turns[0]).toMatchObject({ model: "opus", effort: "max" });
+    expect(dispatcher.get(runId)!.subtasks[0]!.ranWith).toEqual({ instanceId: "claude", model: "opus", effort: "max" });
+    // started work cannot change any more
+    expect(dispatcher.chooseModel(runId, "a", { effort: "low" })).toMatchObject({ error: expect.stringContaining("not started") });
+    host.finish(dispatcher, turns[0]!.threadId, true, "好了");
+    await flush();
+    // no pick: the bot's own effort, not the automatic one (the bot is the default, so nothing is overridden)
+    expect(dispatcher.get(runId)!.subtasks[1]!.ranWith).toEqual({ instanceId: "claude", model: "sonnet", effort: "high" });
+    expect(host.workerTurns()[1]).toMatchObject({ model: undefined, effort: undefined });
+  });
+
+  it("leaves the effort alone when automatic effort is off or the engine has no such knob", async () => {
+    host.settingsValue = dispatchSettings({ autoEffort: false });
+    host.bot("writer")!.modelSelection = { instanceId: "claude", model: "sonnet" };
+    const off = submit([{ id: "a", title: "主持稿", brief: "写主持稿", role: "文案策划", difficulty: 5 }]);
+    if ("error" in off) throw new Error(off.error);
+    await flush();
+    expect(dispatcher.get(off.run.id)!.subtasks[0]!.ranWith).toEqual({ instanceId: "claude", model: "sonnet" });
+    // Codex here has no effort levels
+    host.settingsValue = dispatchSettings({});
+    host.bot("other")!.modelSelection = { instanceId: "codex", model: "gpt-5.5" };
+    expect(dispatcher.turnPick({ difficulty: 5 } as never, host.bot("other")!)).toEqual({ instanceId: "codex", model: "gpt-5.5" });
+  });
+
+  it("lets you pick any model on any engine you are signed in to; the bot keeps its own", async () => {
+    host.settingsValue = dispatchSettings({ requireApproval: true });
+    host.bot("writer")!.modelSelection = { instanceId: "claude", model: "sonnet" };
+    const result = submit([
+      { id: "a", title: "主持稿", brief: "写主持稿", role: "文案策划", difficulty: 2 },
+      { id: "b", title: "推文", brief: "写推文", role: "文案策划", difficulty: 5 },
+      { id: "c", title: "标语", brief: "改标语", role: "文案策划", difficulty: 3 },
+    ]);
+    if ("error" in result) throw new Error(result.error);
+    const runId = result.run.id;
+    const sub = (id: string) => dispatcher.get(runId)!.subtasks.find((subtask) => subtask.id === id)!;
+    // another engine and one of its models
+    expect(dispatcher.chooseModel(runId, "a", { instanceId: "codex", model: "gpt-5.5-mini" })).not.toHaveProperty("error");
+    expect(sub("a").choice).toEqual({ instanceId: "codex", model: "gpt-5.5-mini" });
+    // an engine alone starts on its default model; a level it lacks is dropped
+    expect(dispatcher.chooseModel(runId, "b", { effort: "max" })).not.toHaveProperty("error");
+    expect(dispatcher.chooseModel(runId, "b", { instanceId: "gemini" })).not.toHaveProperty("error");
+    expect(sub("b").choice).toEqual({ instanceId: "gemini", model: "gemini-flash" });
+    expect(dispatcher.chooseModel(runId, "b", { model: "gemini-pro", effort: "high" })).not.toHaveProperty("error");
+    expect(sub("b").choice).toEqual({ instanceId: "gemini", model: "gemini-pro", effort: "high" });
+    // refused: an engine you are not signed in to, one that is gone, a model or level it lacks
+    expect(dispatcher.chooseModel(runId, "c", { instanceId: "grok" })).toMatchObject({ error: expect.stringContaining("Sign in") });
+    expect(dispatcher.chooseModel(runId, "c", { instanceId: "nowhere" })).toMatchObject({ error: expect.any(String) });
+    expect(dispatcher.chooseModel(runId, "c", { instanceId: "codex", model: "opus" })).toMatchObject({ error: expect.any(String) });
+    expect(dispatcher.chooseModel(runId, "c", { instanceId: "codex", effort: "high" })).toMatchObject({ error: expect.any(String) });
+    expect(sub("c").choice).toBeUndefined();
+    // back to the bot's own engine clears the borrowed engine and its model
+    expect(dispatcher.chooseModel(runId, "c", { instanceId: "gemini", effort: "low" })).not.toHaveProperty("error");
+    expect(dispatcher.chooseModel(runId, "c", { instanceId: null })).not.toHaveProperty("error");
+    expect(sub("c").choice).toEqual({ effort: "low" });
+    expect(dispatcher.chooseModel(runId, "c", { effort: null })).not.toHaveProperty("error");
+    expect(sub("c").choice).toBeUndefined();
+    dispatcher.approve(runId);
+    await flush();
+    const [first] = host.workerTurns();
+    // the borrowed engine runs this turn only; Codex has no effort knob
+    expect(first).toMatchObject({ botId: "writer", instanceId: "codex", model: "gpt-5.5-mini", effort: undefined });
+    expect(sub("a").ranWith).toEqual({ instanceId: "codex", model: "gpt-5.5-mini" });
+    expect(host.bot("writer")!.modelSelection).toEqual({ instanceId: "claude", model: "sonnet" });
+    host.finish(dispatcher, first!.threadId, true, "好了");
+    await flush();
+    expect(host.workerTurns()[1]).toMatchObject({ instanceId: "gemini", model: "gemini-pro", effort: "high" });
+    host.finish(dispatcher, host.workerTurns()[1]!.threadId, true, "好了");
+    await flush();
+    // no pick: the bot's own engine, at the effort a moderate task calls for
+    expect(host.workerTurns()[2]).toMatchObject({ instanceId: undefined, model: undefined, effort: "high" });
+    expect(sub("c").ranWith).toEqual({ instanceId: "claude", model: "sonnet", effort: "high", autoEffort: true });
+  });
+
+  it("thinks as hard as the task needs on a borrowed engine too, within that engine's levels", () => {
+    host.bot("writer")!.modelSelection = { instanceId: "claude", model: "sonnet", effort: "xhigh" };
+    const subtask = { difficulty: 5, choice: { instanceId: "gemini", model: "gemini-pro" } } as never;
+    // the bot's own xhigh is not on Gemini; the difficulty's max falls to its top level
+    expect(dispatcher.turnPick(subtask, host.bot("writer")!)).toEqual({ instanceId: "gemini", model: "gemini-pro", effort: "high", autoEffort: true });
+    // a borrowed engine that signed out since: back to the bot's own
+    const signedOut = { difficulty: 5, choice: { instanceId: "grok", model: "grok-4" } } as never;
+    expect(dispatcher.turnPick(signedOut, host.bot("writer")!)).toEqual({ instanceId: "claude", model: "sonnet", effort: "xhigh" });
+  });
+
+  it("takes your pick over HTTP: PATCH a subtask with an engine, a model and an effort", async () => {
+    host.settingsValue = dispatchSettings({ requireApproval: true });
+    host.bot("writer")!.modelSelection = { instanceId: "claude", model: "sonnet" };
+    const result = submit([{ id: "a", title: "主持稿", brief: "写主持稿", role: "文案策划", difficulty: 3 }]);
+    if ("error" in result) throw new Error(result.error);
+    const patch = async (body: unknown) => {
+      let status = 0;
+      let payload: any;
+      const path = `/api/dispatch/runs/${result.run.id}/subtasks/a`;
+      await handleDispatchApi(
+        "PATCH",
+        path,
+        new URL(`http://localhost${path}`),
+        {} as IncomingMessage,
+        {} as ServerResponse,
+        {
+          dispatcher,
+          readBody: async () => body,
+          json: (_res, code, value) => {
+            status = code;
+            payload = value;
+          },
+          teamMapSnapshot: () => null,
+          ownsThread: () => true,
+          botName: (id) => host.bot(id)?.name,
+          modelLabel: () => "Claude · Sonnet",
+        },
+        () => host.settings(),
+      );
+      return { status, payload };
+    };
+    const picked = await patch({ instanceId: "codex", model: "gpt-5.5-mini" });
+    expect(picked.status).toBe(200);
+    expect(picked.payload.run.subtasks[0].choice).toEqual({ instanceId: "codex", model: "gpt-5.5-mini" });
+    expect(await patch({ effort: "turbo" })).toMatchObject({ status: 400 });
+    // null clears: back to the bot's own engine and model
+    expect((await patch({ instanceId: null })).payload.run.subtasks[0].choice).toBeUndefined();
+    expect((await patch({ effort: "xhigh" })).payload.run.subtasks[0].choice).toEqual({ effort: "xhigh" });
+  });
+
+  it("lets a failed subtask change its model before it is retried", async () => {
+    host.settingsValue = dispatchSettings({ maxAttempts: 1 });
+    host.bot("writer")!.modelSelection = { instanceId: "claude", model: "sonnet" };
+    const result = submit([{ id: "a", title: "主持稿", brief: "写主持稿", role: "文案策划", difficulty: 4 }]);
+    if ("error" in result) throw new Error(result.error);
+    await flush();
+    expect(dispatcher.chooseModel(result.run.id, "a", { model: "opus" })).toMatchObject({ error: expect.stringContaining("not started") });
+    host.finish(dispatcher, host.workerTurns()[0]!.threadId, false, "", "provider error");
+    await flush();
+    expect(dispatcher.get(result.run.id)!.subtasks[0]!.status).toBe("failed");
+    expect(dispatcher.chooseModel(result.run.id, "a", { model: "opus", effort: "max" })).not.toHaveProperty("error");
+    dispatcher.retry(result.run.id, "a");
+    await flush();
+    expect(host.workerTurns().at(-1)).toMatchObject({ model: "opus", effort: "max" });
   });
 
   it("respects a named assignee and refuses one outside the team", () => {
@@ -647,6 +843,21 @@ describe("Dispatcher", () => {
       expect("error" in orgPlan([{ id: "x", title: "英文版", brief: "翻译", role: "翻译" }])).toBe(false);
     });
 
+    it("keeps a lead that plans its department's share on an engine that can coordinate", () => {
+      writeOrg({ chiefBotId: "boss" });
+      host.settingsValue = dispatchSettings({ requireApproval: true });
+      host.bot("tech")!.modelSelection = { instanceId: "claude", model: "sonnet" };
+      const result = orgPlan([
+        { id: "page", title: "落地页", brief: "做发布会落地页", role: "前端工程师" },
+        { id: "en", title: "英文版", brief: "翻译新闻稿", role: "翻译" },
+      ]);
+      if ("error" in result) throw new Error(result.error);
+      expect(dispatcher.chooseModel(result.run.id, "page", { instanceId: "gemini" })).toMatchObject({ error: expect.stringContaining("coordinate") });
+      expect(dispatcher.chooseModel(result.run.id, "page", { instanceId: "codex" })).not.toHaveProperty("error");
+      // a plain worker may use any engine
+      expect(dispatcher.chooseModel(result.run.id, "en", { instanceId: "gemini" })).not.toHaveProperty("error");
+    });
+
     it("does not hire specialists when the company rules say the chief may not", () => {
       writeOrg({ chiefBotId: "boss", rules: { chiefMay: { newSpecialist: false } } });
       const refused = orgPlan([{ id: "video", title: "发布会视频", brief: "剪一条 30 秒视频", role: "视频剪辑师" }]);
@@ -863,7 +1074,7 @@ describe("Dispatcher", () => {
       expect(result.run.id).toBe(run.id);
       // made like the dispatcher's own specialists: same section, recommended model, wired to the chief
       for (const id of result.added) {
-        expect(host.bot(id)).toMatchObject({ section: "市场部", title: "文案策划", modelSelection: { instanceId: "claude", model: "sonnet", effort: "medium" } });
+        expect(host.bot(id)).toMatchObject({ section: "市场部", title: "文案策划", modelSelection: { instanceId: "claude", model: "sonnet" } });
         expect(dispatcher.routes()).toContainEqual(expect.objectContaining({ fromBotId: "chief", toBotId: id, enabled: true }));
       }
       // done and running work stays put; only pending work moved

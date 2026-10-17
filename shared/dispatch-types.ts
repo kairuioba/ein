@@ -1,7 +1,7 @@
 // Dispatch hub records and settings, shared by the harness (server/dispatch.ts)
 // and the workbench UI. See server/dispatch.ts for how runs execute.
 import type { Capability, Level } from "./model-profiles.ts";
-import type { RecommendationPolicy } from "./model-recommender.ts";
+import type { Effort, RecommendationPolicy } from "./model-recommender.ts";
 import type { RunDiagnosis } from "./org-types.ts";
 
 // ── settings ───────────────────────────────────────────────────────────
@@ -25,6 +25,9 @@ export interface DispatchSettings {
   requireApproval: boolean;
   /** Attempts per subtask before it is marked failed. */
   maxAttempts: number;
+  /** A subtask whose bot has no effort of its own thinks as hard as its
+   * difficulty calls for (very hard → max, hard → xhigh …). */
+  autoEffort: boolean;
 }
 
 export const DEFAULT_DISPATCH_SETTINGS: DispatchSettings = {
@@ -37,6 +40,7 @@ export const DEFAULT_DISPATCH_SETTINGS: DispatchSettings = {
   autoSynthesize: true,
   requireApproval: false,
   maxAttempts: 2,
+  autoEffort: true,
 };
 
 /** The largest plan a chief may submit (the org chief plans across departments). */
@@ -59,6 +63,7 @@ export function dispatchSettings(raw: Partial<DispatchSettings> | undefined): Di
     autoSynthesize: typeof raw?.autoSynthesize === "boolean" ? raw.autoSynthesize : d.autoSynthesize,
     requireApproval: typeof raw?.requireApproval === "boolean" ? raw.requireApproval : d.requireApproval,
     maxAttempts: clampInt(raw?.maxAttempts, 1, 3, d.maxAttempts),
+    autoEffort: typeof raw?.autoEffort === "boolean" ? raw.autoEffort : d.autoEffort,
   };
 }
 
@@ -97,6 +102,25 @@ export interface DispatchSubtask {
   rateLimitedAt?: number[];
   /** Attempts that ended because the engine was rate limited (not the worker's fault). */
   throttledAttempts?: number;
+  /** The model and effort the recommender suggests for this subtask, made
+   * with the plan. Advisory: the assignee keeps the model you chose for it. */
+  recommended?: SubtaskModelPick;
+  /** Your pick for this subtask before it starts: any model on any engine
+   * you are signed in to (instanceId when it is not the assignee's own),
+   * and/or an effort level. The assignee keeps its own settings. */
+  choice?: { instanceId?: string; model?: string; effort?: Effort };
+  /** What the latest attempt ran with; autoEffort when the effort came from
+   * the difficulty rather than from you or the bot. */
+  ranWith?: { instanceId: string; model: string; effort?: Effort; autoEffort?: boolean };
+}
+
+/** A model on one engine, with how hard to think. */
+export interface SubtaskModelPick {
+  instanceId: string;
+  engineName: string;
+  model: string;
+  modelLabel: string;
+  effort?: Effort;
 }
 
 /** The 30-minute check after people were added: did the run speed up? */

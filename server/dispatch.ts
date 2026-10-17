@@ -31,7 +31,7 @@ import { join } from "node:path";
 import { t } from "../shared/i18n.ts";
 import { reasonLabel } from "./reason-labels.ts";
 import { profileFor, type Capability } from "../shared/model-profiles.ts";
-import { assessTask, type Recommendation, type RecommendationPolicy, type TaskProfile } from "../shared/model-recommender.ts";
+import { assessTask, effortFor, type Effort, type Recommendation, type RecommendationPolicy, type TaskProfile } from "../shared/model-recommender.ts";
 import { DEFAULT_ORG_RULES, type OrgEventKind, type OrgRules } from "../shared/org-types.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
@@ -107,7 +107,26 @@ export interface DispatchTurnOptions {
    * reported here instead (it never emits turn.completed). "interrupted"
    * when the owner stopped the turn during setup. */
   onError?: (message: string) => void;
+  /** this turn only: another engine you are signed in to (absent = the
+   * bot's own), a model on it, and how hard to think */
+  instanceId?: string;
+  model?: string;
+  effort?: Effort;
 }
+
+/** What one engine offers a subtask: its models and effort levels. */
+export interface EngineKnobs {
+  models: string[];
+  /** the model a pick on this engine falls back to */
+  defaultModel?: string;
+  effortLevels: readonly string[];
+  /** signed in and running; false when it needs setup */
+  ready?: boolean;
+  /** can coordinate teammates (a department lead's plan needs this) */
+  coordinates?: boolean;
+}
+
+const NO_KNOBS: EngineKnobs = { models: [], effortLevels: [] };
 
 /** An entry for the company timeline (shared/org-types.ts OrgEvent). */
 export interface DispatchOrgEvent {
@@ -133,6 +152,8 @@ export interface DispatchHost {
   /** A status chip in a conversation. */
   activity(threadId: string, label: string, ok?: boolean): void;
   recommend(task: TaskProfile, policy: RecommendationPolicy): Recommendation | null;
+  /** an engine's models and effort levels (empty when it has none, or is gone) */
+  engineKnobs?(instanceId: string): EngineKnobs;
   broadcast(run: DispatchRun): void;
   broadcastRoutes(routes: DispatchRoute[]): void;
   settings(): DispatchSettings;
@@ -624,6 +645,8 @@ export class Dispatcher {
           // reuse this planned specialist exactly like an existing member.
           const recommendation = this.host.recommend(task, policy);
           const takenNames = [...this.host.bots().map((b) => b.name), ...created.map((b) => b.name)];
+          // the model is the recommender's; the effort is left open so each
+          // task it gets thinks as hard as that task needs (autoEffort)
           const bot: DispatchBot = {
             id: `${PLANNED_PREFIX}${created.length}`,
             name: uniqueName(item.role, takenNames),
@@ -631,13 +654,15 @@ export class Dispatcher {
             description: t("{role} — created by @{chief} for dispatched work.", { role: item.role, chief: chief.name }),
             section: chief.section,
             modelSelection: recommendation
-              ? { instanceId: recommendation.instanceId, model: recommendation.model, ...(recommendation.effort ? { effort: recommendation.effort } : {}) }
+              ? { instanceId: recommendation.instanceId, model: recommendation.model }
               : { ...chief.modelSelection },
           };
           created.push(bot);
           assignee = bot;
         }
       }
+      // what this machine's best fit would be, model and effort, for you to take or leave
+      const suggested = this.host.recommend(task, policy);
       subtasks.push({
         id: item.id,
         title: item.title,
@@ -646,6 +671,17 @@ export class Dispatcher {
         needs: task.needs,
         difficulty: task.difficulty,
         dependsOn: item.dependsOn,
+        ...(suggested
+          ? {
+              recommended: {
+                instanceId: suggested.instanceId,
+                engineName: suggested.engineName,
+                model: suggested.model,
+                modelLabel: suggested.modelLabel,
+                ...(suggested.effort ? { effort: suggested.effort } : {}),
+              },
+            }
+          : {}),
         ...(item.acceptance ? { acceptance: item.acceptance } : {}),
         assigneeBotId: assignee.id,
         ...(created.some((bot) => bot.id === assignee!.id) ? { createdBot: true } : {}),
@@ -1065,6 +1101,8 @@ export class Dispatcher {
     // path so retry and dependent-skipping rules apply (the watch makes the
     // second report of the same failure a no-op)
     const settle = (message: string) => this.onTurnSettled(threadId, false, "", message);
+    const pick = this.turnPick(subtask, bot);
+    subtask.ranWith = pick;
     this.host
       .startTurn(
         bot.id,
@@ -1073,9 +1111,101 @@ export class Dispatcher {
           ...(lead ? { leadOf: sectionKey(bot.section) } : {}),
           ...(subtask.squad ? { squad: this.squadBrief(run, subtask) } : {}),
         }),
-        { threadId, sourceThreadId: run.sourceThreadId, ...(lead ? { mayPlan: true } : {}), onError: settle },
+        {
+          threadId,
+          sourceThreadId: run.sourceThreadId,
+          ...(lead ? { mayPlan: true } : {}),
+          ...turnOverrides(pick, bot.modelSelection),
+          onError: settle,
+        },
       )
       .catch((error: unknown) => settle(error instanceof Error ? error.message : String(error)));
+  }
+
+  /** The engine, model and effort a subtask runs with. Your pick for it
+   * comes first — any model on any engine you are signed in to — else the
+   * bot's own. Effort: your pick, else the bot's own level, else the one the
+   * subtask's difficulty calls for (autoEffort, when the engine has the knob). */
+  turnPick(subtask: DispatchSubtask, bot: DispatchBot): NonNullable<DispatchSubtask["ranWith"]> {
+    const own = bot.modelSelection;
+    const knobsOf = (instanceId: string) => this.host.engineKnobs?.(instanceId) ?? NO_KNOBS;
+    // borrow the chosen engine only while it is still there and signed in
+    const wanted = subtask.choice?.instanceId && subtask.choice.instanceId !== own.instanceId ? subtask.choice.instanceId : undefined;
+    const borrowed = wanted ? knobsOf(wanted) : undefined;
+    const usable = borrowed && borrowed.ready !== false && borrowed.models.length > 0 ? borrowed : undefined;
+    const instanceId = usable ? wanted! : own.instanceId;
+    const knobs = usable ?? knobsOf(own.instanceId);
+    const chosenModel = subtask.choice?.model && (!subtask.choice.instanceId || subtask.choice.instanceId === instanceId) ? subtask.choice.model : undefined;
+    const model =
+      chosenModel && knobs.models.includes(chosenModel)
+        ? chosenModel
+        : usable
+          ? (usable.defaultModel && usable.models.includes(usable.defaultModel) ? usable.defaultModel : usable.models[0]!)
+          : own.model;
+    const offered = (level: string | undefined): level is Effort => Boolean(level && knobs.effortLevels.includes(level));
+    if (offered(subtask.choice?.effort)) return { instanceId, model, effort: subtask.choice!.effort };
+    if (offered(own.effort)) return { instanceId, model, effort: own.effort };
+    const settings = this.host.settings();
+    const auto = settings.autoEffort ? effortFor(subtask.difficulty, knobs.effortLevels, settings.policy) : undefined;
+    return auto ? { instanceId, model, effort: auto, autoEffort: true } : { instanceId, model };
+  }
+
+  /** Your pick for a subtask that has not run yet (or failed and will be
+   * retried): `instanceId` + `model` — any model on any engine you are
+   * signed in to — and/or `effort`, one of that engine's levels. null clears
+   * that part of the pick: back to the bot's own engine and model, or to the
+   * bot's own / automatic effort. */
+  chooseModel(
+    runId: string,
+    subtaskId: string,
+    input: { instanceId?: string | null; model?: string | null; effort?: string | null },
+  ): DispatchRun | { error: string } {
+    const run = this.get(runId);
+    if (!run) return { error: t("No such dispatch run") };
+    const subtask = run.subtasks.find((entry) => entry.id === subtaskId);
+    if (!subtask) return { error: t("No such subtask") };
+    const waiting = subtask.status === "pending" && !isFinished(run.status);
+    const retryable = (subtask.status === "failed" || subtask.status === "canceled") && run.status !== "canceled";
+    if (!waiting && !retryable) return { error: t("Only a subtask that has not started yet (or failed) can change its model") };
+    const bot = this.host.bot(subtask.assigneeBotId);
+    if (!bot) return { error: t("No such bot") };
+    const own = bot.modelSelection;
+    const knobsOf = (instanceId: string) => this.host.engineKnobs?.(instanceId) ?? NO_KNOBS;
+    const choice = { ...(subtask.choice ?? {}) };
+    const previousInstance = choice.instanceId ?? own.instanceId;
+    // which engine: null or the bot's own engine clears a borrowed one
+    let instanceId = previousInstance;
+    if (input.instanceId !== undefined) instanceId = input.instanceId === null ? own.instanceId : input.instanceId;
+    const knobs = knobsOf(instanceId);
+    if (instanceId !== own.instanceId) {
+      if (!knobs.models.length) return { error: t("That engine is not available") };
+      if (knobs.ready === false) return { error: t("Sign in to that engine first") };
+      if (this.mayPlan(run, subtask) && knobs.coordinates === false) {
+        return { error: t("{name} plans its department's share, and that engine cannot coordinate teammates", { name: bot.name }) };
+      }
+    }
+    if (instanceId === own.instanceId) delete choice.instanceId;
+    else choice.instanceId = instanceId;
+    // which model: a new engine without one starts on its default
+    if (input.model !== undefined && input.model !== null) {
+      if (!knobs.models.includes(input.model)) return { error: t("That engine does not offer this model") };
+      choice.model = input.model;
+    } else if (input.model === null || instanceId !== previousInstance) {
+      if (instanceId === own.instanceId) delete choice.model;
+      else choice.model = knobs.defaultModel && knobs.models.includes(knobs.defaultModel) ? knobs.defaultModel : knobs.models[0]!;
+    }
+    if (instanceId === own.instanceId && choice.model === own.model) delete choice.model;
+    // which effort: one the chosen engine offers; a switch drops one it lacks
+    if (input.effort !== undefined && input.effort !== null) {
+      if (!knobs.effortLevels.includes(input.effort)) return { error: t("That engine does not offer this effort level") };
+      choice.effort = input.effort as Effort;
+    } else if (input.effort === null || (choice.effort && !knobs.effortLevels.includes(choice.effort))) {
+      delete choice.effort;
+    }
+    if (choice.instanceId || choice.model || choice.effort) subtask.choice = choice;
+    else delete subtask.choice;
+    this.touch(run);
+    return run;
   }
 
   private startSynthesis(run: DispatchRun): void {
@@ -1222,7 +1352,8 @@ export class Dispatcher {
     const recommendation = this.host.recommend(task, run.policy);
     if (recommendation) {
       return {
-        selection: { instanceId: recommendation.instanceId, model: recommendation.model, ...(recommendation.effort ? { effort: recommendation.effort } : {}) },
+        // like a specialist: the effort follows each task it takes (autoEffort)
+        selection: { instanceId: recommendation.instanceId, model: recommendation.model },
         label: recommendation.modelLabel,
         costLevel: recommendation.profile.cost,
       };
@@ -1473,6 +1604,20 @@ function isSettled(status: SubtaskStatus): boolean {
 
 function isFinished(status: RunStatus): boolean {
   return status === "done" || status === "failed" || status === "canceled";
+}
+
+/** The parts of a subtask's pick that differ from the bot's own settings,
+ * as turn options (a borrowed engine always names its model and effort). */
+function turnOverrides(
+  pick: NonNullable<DispatchSubtask["ranWith"]>,
+  own: ModelSelection,
+): Pick<DispatchTurnOptions, "instanceId" | "model" | "effort"> {
+  const borrowed = pick.instanceId !== own.instanceId;
+  return {
+    ...(borrowed ? { instanceId: pick.instanceId } : {}),
+    ...(borrowed || pick.model !== own.model ? { model: pick.model } : {}),
+    ...(pick.effort && (borrowed || pick.effort !== own.effort) ? { effort: pick.effort } : {}),
+  };
 }
 
 function clip(value: string, max: number): string {

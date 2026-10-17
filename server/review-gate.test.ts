@@ -25,8 +25,8 @@ describe("acceptance gate", () => {
     expect(evaluateGate({ subtask: { ...base } })).toMatchObject({ status: "pass", provisional: true, criteria: [] });
   });
 
-  it("a missing handoff or empty result fails deterministically", () => {
-    const gate = evaluateGate({
+  it("an empty result fails, a missing envelope only needs a human", () => {
+    const empty = evaluateGate({
       subtask: {
         ...base,
         criteria: [{ id: "c1", text: "写三段", required: true, kind: "deterministic", check: "handoff" }],
@@ -34,9 +34,18 @@ describe("acceptance gate", () => {
         handoff: undefined,
       },
     });
-    expect(gate.status).toBe("fail");
-    expect(gate.deterministic?.find((check) => check.name === "result")?.ok).toBe(false);
-    expect(gate.deterministic?.find((check) => check.name === "handoff")?.ok).toBe(false);
+    expect(empty.status).toBe("fail");
+    expect(empty.deterministic?.find((check) => check.name === "result")?.ok).toBe(false);
+    const envelopeMissing = evaluateGate({
+      subtask: {
+        ...base,
+        criteria: [{ id: "c1", text: "写三段", required: true, kind: "deterministic", check: "handoff" }],
+        result: "写了三段，但没有信封",
+        handoff: undefined,
+      },
+    });
+    expect(envelopeMissing.status).toBe("needs_human");
+    expect(envelopeMissing.deterministic?.find((check) => check.name === "handoff")?.unverifiable).toBe(true);
   });
 
   it("a subjective criterion without a reviewer becomes needs_human, never a silent pass", () => {

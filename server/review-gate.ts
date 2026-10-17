@@ -35,7 +35,7 @@ export function criteriaFor(subtask: GateInput["subtask"]): AcceptanceCriterion[
 function artifactCheck(handoff: DispatchHandoff | undefined, cwd: string | undefined): GateCheck {
   const artifacts = handoff?.artifacts ?? [];
   if (!artifacts.length) return { name: "artifacts", ok: true, detail: "no artifact paths declared" };
-  if (!cwd) return { name: "artifacts", ok: false, detail: "cannot resolve artifact paths (no working folder)" };
+  if (!cwd) return { name: "artifacts", ok: false, unverifiable: true, detail: "cannot resolve artifact paths (no working folder)" };
   const missing = artifacts.filter((path) => {
     const full = isAbsolute(path) ? path : resolve(cwd, path);
     return !existsSync(full);
@@ -56,6 +56,9 @@ export function deterministicChecks(subtask: GateInput["subtask"], cwd?: string)
   checks.push({
     name: "handoff",
     ok: Boolean(subtask.handoff?.summary?.trim()),
+    // a weaker model may answer without the envelope: ask a human instead of
+    // declaring the work failed
+    unverifiable: !subtask.handoff?.summary?.trim(),
     detail: subtask.handoff ? `status ${subtask.handoff.status}` : "no structured handoff",
   });
   checks.push(artifactCheck(subtask.handoff, cwd));
@@ -73,6 +76,7 @@ export function evaluateGate(input: GateInput): SubtaskGate {
   }
   const deterministic = deterministicChecks(input.subtask, input.cwd);
   const failedChecks = deterministic.filter((check) => !check.ok);
+  const hardFailures = failedChecks.filter((check) => !check.unverifiable);
   const handoff = input.subtask.handoff;
   const verdicts: GateCriterionVerdict[] = criteria.map((criterion) => {
     if (handoff?.acceptanceMet === false) {
@@ -86,8 +90,18 @@ export function evaluateGate(input: GateInput): SubtaskGate {
     // subjective criteria need a reviewer; without one they are unverifiable
     return { id: criterion.id, status: "unverifiable", evidence: "no independent reviewer yet" };
   });
-  if (failedChecks.length) {
-    return { status: "fail", criteria: verdicts, deterministic, reason: `deterministic: ${failedChecks.map((check) => check.name).join(", ")}`, at: input.now ?? Date.now(), provisional: true };
+  if (failedChecks.length && !hardFailures.length) {
+    return {
+      status: "needs_human",
+      criteria: verdicts,
+      deterministic,
+      reason: `cannot verify: ${failedChecks.map((check) => check.name).join(", ")}`,
+      at: input.now ?? Date.now(),
+      provisional: true,
+    };
+  }
+  if (hardFailures.length) {
+    return { status: "fail", criteria: verdicts, deterministic, reason: `deterministic: ${hardFailures.map((check) => check.name).join(", ")}`, at: input.now ?? Date.now(), provisional: true };
   }
   const required = criteria.filter((criterion) => criterion.required);
   const requiredVerdicts = verdicts.filter((verdict) => required.some((criterion) => criterion.id === verdict.id));

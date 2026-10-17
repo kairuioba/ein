@@ -123,6 +123,9 @@ export interface AcceptanceCriterion {
 export interface GateCheck {
   name: string;
   ok: boolean;
+  /** the check could not be evaluated (missing folder, optional envelope):
+   * not a failure — the gate becomes needs_human instead */
+  unverifiable?: boolean;
   detail?: string;
 }
 

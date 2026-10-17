@@ -1341,6 +1341,9 @@ export class Dispatcher {
       squadName: nextSquadName(run),
       leadName: chief?.name ?? "?",
       ...(requested !== undefined ? { requested } : {}),
+      // a department's share of the 主 Bot's plan stays with its lead, who
+      // staffs it with its own team: newcomers never take it past the lead
+      keep: (subtask) => this.mayPlan(run, subtask),
     };
   }
 
@@ -1386,8 +1389,16 @@ export class Dispatcher {
     count = Math.min(count, Math.max(0, this.host.maxBots - this.host.bots().length));
     if (count < 1) return { error: t("The workspace has no room for more bots.") };
     const now = Date.now();
-    const plan = planSquad(run, count, { now, maxConcurrent: this.host.settings().maxConcurrent, roleKey: roleCore }, typicalDuration(run));
-    if (!plan.people.length) return { error: t("Nothing is left to hand out: every remaining subtask is running or waits on earlier work.") };
+    const keep = (subtask: DispatchSubtask) => this.mayPlan(run, subtask);
+    const plan = planSquad(run, count, { now, maxConcurrent: this.host.settings().maxConcurrent, roleKey: roleCore, keep }, typicalDuration(run));
+    if (!plan.people.length) {
+      const leadsWork = run.subtasks.some((subtask) => subtask.status === "pending" && keep(subtask));
+      return {
+        error: leadsWork
+          ? t("What is left is departments' own work, which their leads staff: ask a lead to add people to its team.")
+          : t("Nothing is left to hand out: every remaining subtask is running or waits on earlier work."),
+      };
+    }
 
     // the new people, made like the dispatcher's own specialists
     const chief = this.host.bot(run.chiefBotId);

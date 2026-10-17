@@ -1132,6 +1132,35 @@ describe("Dispatcher", () => {
       expect("error" in own).toBe(false);
     });
 
+    it("never hands a department's subtask to people added to the chief's run, past the department's lead", async () => {
+      writeOrg({ chiefBotId: "boss" });
+      const top = orgPlan([
+        { id: "page", title: "落地页", brief: "做发布会落地页", role: "前端工程师" },
+        { id: "qa", title: "上线检查", brief: "检查落地页", assignee: "技术部" },
+        { id: "en", title: "英文版", brief: "翻译新闻稿", role: "翻译" },
+        { id: "jp", title: "日文版", brief: "翻译新闻稿", role: "翻译" },
+      ]);
+      if ("error" in top) throw new Error(top.error);
+      await flush();
+      const sub = (id: string) => dispatcher.get(top.run.id)!.subtasks.find((entry) => entry.id === id)!;
+      // the lead plans the page; its second subtask waits for it, the translator does one at a time
+      expect([sub("page").status, sub("qa").status, sub("en").status, sub("jp").status]).toEqual(["running", "pending", "running", "pending"]);
+      const result = dispatcher.amend(top.run.id, 2, { by: "owner" });
+      if ("error" in result) throw new Error(result.error);
+      // the translation the chief gave a plain worker may move; 技术部's subtask stays with its lead
+      expect(result.moved).toEqual(["jp"]);
+      expect(sub("qa").assigneeBotId).toBe("tech");
+      expect(host.created.every((bot) => !bot.section)).toBe(true);
+      // what is left now is 技术部's own: its lead staffs it, so the check says so
+      const diagnosis = dispatcher.diagnose(top.run.id);
+      if ("error" in diagnosis) throw new Error(diagnosis.error);
+      expect(diagnosis).toMatchObject({ verdict: "add-wont-help", reason: expect.stringContaining("leads staff") });
+      expect(diagnosis.remaining.find((entry) => entry.subtaskId === "qa")?.moved).toBe(false);
+      expect(dispatcher.amend(top.run.id, 1, { by: "owner" })).toMatchObject({ error: expect.stringContaining("leads staff") });
+      expect(dispatcher.amend(top.run.id, 1, { by: "chief", botId: "boss" })).toMatchObject({ error: expect.stringContaining("would not help") });
+      expect(sub("qa").assigneeBotId).toBe("tech");
+    });
+
     it("keeps a lead's subtask waiting on its team across a restart", async () => {
       writeOrg({ chiefBotId: "boss" });
       const top = orgPlan([{ id: "page", title: "落地页", brief: "做落地页", role: "前端工程师" }]);

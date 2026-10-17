@@ -665,6 +665,25 @@ describe("Dispatcher", () => {
     expect(dispatcher.get(result.run.id)!.subtasks[0]!.status).toBe("failed");
   });
 
+  it("never drops a run still in progress to make room for finished ones", async () => {
+    host.settingsValue = dispatchSettings({ requireApproval: true });
+    const waiting = submit([{ id: "a", title: "文案", brief: "写", role: "文案策划" }], "等你批的计划");
+    if ("error" in waiting) throw new Error(waiting.error);
+    // sixty more plans come and go while it waits for the owner
+    for (let i = 0; i < 60; i += 1) {
+      const other = submit([{ id: "a", title: "文案", brief: "写", role: "文案策划" }], `计划 ${i}`);
+      if ("error" in other) throw new Error(other.error);
+      await dispatcher.cancel(other.run.id);
+    }
+    expect(dispatcher.get(waiting.run.id)?.status).toBe("awaiting-approval");
+    const reloaded = new Dispatcher(host, dir);
+    reloaded.load();
+    expect(reloaded.get(waiting.run.id)?.status).toBe("awaiting-approval");
+    // the cap still holds: the oldest finished run made room
+    expect(reloaded.list()).toHaveLength(60);
+    expect(reloaded.approve(waiting.run.id)).toMatchObject({ status: "running" });
+  });
+
   // ── turns that never report back, and the owner's Stop ──
 
   describe("settling every turn", () => {

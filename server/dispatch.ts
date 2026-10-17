@@ -441,9 +441,12 @@ export class Dispatcher {
 
   private saveRuns(): void {
     const now = Date.now();
-    this.runs = this.runs
-      .filter((run) => !isFinished(run.status) || now - run.updatedAt < FINISHED_RUN_MAX_AGE_MS)
-      .slice(0, MAX_RUNS);
+    // the cap trims finished runs only, oldest first: a run still in progress
+    // (waiting for approval, or a company plan whose departments still work)
+    // is never forgotten
+    const kept = this.runs.filter((run) => !isFinished(run.status) || now - run.updatedAt < FINISHED_RUN_MAX_AGE_MS);
+    let room = MAX_RUNS - kept.filter((run) => !isFinished(run.status)).length;
+    this.runs = kept.filter((run) => !isFinished(run.status) || room-- > 0);
     try {
       writeFileAtomic(this.runsFile, JSON.stringify(this.runs, null, 2), { mode: 0o600 });
     } catch (error) {

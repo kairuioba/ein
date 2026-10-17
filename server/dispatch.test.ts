@@ -165,7 +165,18 @@ describe("plan validation", () => {
       {
         goal: "Launch kit",
         subtasks: [
-          { id: "research", title: "Market research", brief: "Collect competitor pricing", role: "Analyst", needs: ["reasoning", "bogus"], difficulty: 9 },
+          {
+            id: "research",
+            title: "Market research",
+            brief: "Collect competitor pricing",
+            role: "Analyst",
+            needs: ["reasoning", "bogus"],
+            difficulty: 9,
+            acceptance: "5 competitors with a price",
+            boundaries: "public pages only",
+            deliverable: "a table in the reply",
+            reviewer: "总控",
+          },
           { id: "copy", title: "Write copy", brief: "Write the landing page copy", depends_on: ["research"] },
         ],
       },
@@ -173,7 +184,17 @@ describe("plan validation", () => {
     );
     expect("error" in plan).toBe(false);
     if ("error" in plan) return;
-    expect(plan.subtasks[0]).toMatchObject({ id: "research", role: "Analyst", needs: ["reasoning"], difficulty: 5, dependsOn: [] });
+    expect(plan.subtasks[0]).toMatchObject({
+      id: "research",
+      role: "Analyst",
+      needs: ["reasoning"],
+      difficulty: 5,
+      dependsOn: [],
+      acceptance: "5 competitors with a price",
+      boundaries: "public pages only",
+      deliverable: "a table in the reply",
+      reviewer: "总控",
+    });
     expect(plan.subtasks[1]).toMatchObject({ id: "copy", role: "Write copy", dependsOn: ["research"] });
   });
 
@@ -291,6 +312,38 @@ describe("Dispatcher", () => {
     // the new specialist is wired to its Chief
     expect(dispatcher.routes()).toContainEqual(expect.objectContaining({ fromBotId: "chief", toBotId: host.created[0]!.id, enabled: true }));
     expect(host.chips[0]?.label).toContain("2");
+  });
+
+  it("keeps the plan's boundaries, deliverable, acceptance and reviewer; reviewer defaults to the chief", async () => {
+    const result = submit([
+      {
+        id: "copy",
+        title: "发布会文案",
+        brief: "写发布会主持稿",
+        role: "文案策划",
+        acceptance: "三分钟内能念完，含开场、产品、结尾",
+        boundaries: "不改产品名，不承诺价格",
+        deliverable: "Markdown，三段",
+        reviewer: "Ops",
+      },
+      { id: "data", title: "价格表", brief: "整理价格", role: "数据分析师" },
+    ]);
+    expect("error" in result).toBe(false);
+    if ("error" in result) return;
+    expect(result.run.subtasks[0]).toMatchObject({
+      acceptance: "三分钟内能念完，含开场、产品、结尾",
+      boundaries: "不改产品名，不承诺价格",
+      deliverable: "Markdown，三段",
+      reviewer: "Ops",
+    });
+    // no reviewer sent: the plan's chief verifies it
+    expect(result.run.subtasks[1]!.reviewer).toBe("总控");
+    await flush();
+    const prompt = host.turns.find((turn) => turn.text.includes("Deliverable:"))?.text ?? "";
+    expect(prompt).toContain("Deliverable: Markdown，三段");
+    expect(prompt).toContain("Out of scope / do not touch: 不改产品名，不承诺价格");
+    expect(prompt).toContain("Acceptance criteria (checked by Ops)");
+    expect(prompt).toContain("Reviewer: Ops");
   });
 
   it("falls back to the Chief's model when nothing can be recommended", () => {

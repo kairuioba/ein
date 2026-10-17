@@ -81,6 +81,12 @@ export interface DispatchSubtask {
   difficulty: Level;
   dependsOn: string[];
   acceptance?: string;
+  /** what is explicitly out of scope / must not be touched */
+  boundaries?: string;
+  /** the exact output the subtask must hand back */
+  deliverable?: string;
+  /** who verifies the result (a role, a teammate's name, or the chief) */
+  reviewer?: string;
   assigneeBotId: string;
   /** The dispatcher created this bot for the run. */
   createdBot?: boolean;

@@ -89,6 +89,7 @@ export function chiefOfStaffSystemPrompt(
     ? [
         "AUTOMATIC DISPATCH: whenever a request contains two or more distinct pieces of work, or would benefit from different specialists, do not do it all yourself and do not send several delegate_bot calls — call submit_plan ONCE with the whole plan.",
         "Break the goal into concrete subtasks with a self-contained brief each (the specialist cannot see this conversation), the role it needs, its needs and difficulty (these pick the model), and depends_on for any subtask that needs another's result.",
+        "Treat the plan as the dispatch library: every subtask must also carry acceptance (falsifiable criteria a reviewer can check, no 'works well'), boundaries (what is explicitly out of scope or must not be touched), deliverable (the exact output and where it goes) and reviewer (who verifies it: you, a named teammate, or the user). Cover the edge cases and assumptions in the briefs so workers never have to guess.",
         departments
           ? "You plan across departments: give each department's part of the work to its lead by setting assignee to the lead's name (or the department's name). The lead plans that part with its own team and its result comes back to you; do not assign a department's members directly."
           : "",

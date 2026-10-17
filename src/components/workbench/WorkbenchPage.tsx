@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Clock, Crown, LayoutGrid, Maximize2, MessageSquare, Network, Plus, RotateCw, Sparkles, Unplug, Users, X, Zap } from "lucide-react";
 
-import { Button, Empty } from "@/components/ui";
+import { Button, Dialog, Empty } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { formatDateTime, t } from "@/lib/i18n";
 import { EditHistory, buildWires, clip, clock, type Wire } from "@/lib/workbench";
@@ -39,6 +39,7 @@ export function WorkbenchPage({ onEditSectionContext }: { onEditSectionContext?:
   const [selection, setSelection] = useState<TreeSelection>(null);
   const [drawerDismissed, setDrawerDismissed] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
+  const [looseOpen, setLooseOpen] = useState(false);
   const [menu, setMenu] = useState<{ x: number; y: number; items: MacMenuItem[] } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [resetToken, setResetToken] = useState(0);
@@ -257,6 +258,16 @@ export function WorkbenchPage({ onEditSectionContext }: { onEditSectionContext?:
           </Button>
         </div>
       )}
+      {model.looseBots.length > 0 && (
+        <div className="flex shrink-0 items-center gap-2.5 border-b border-hairline bg-raised/60 px-4 py-1.5 text-[12.5px] text-ink-secondary">
+          <Users size={13} className="shrink-0" />
+          <span className="min-w-0 truncate">{t("{count} bots are not in any department", { count: model.looseBots.length })}</span>
+          <span className="flex-1" />
+          <Button size="sm" variant="soft" onClick={() => setLooseOpen(true)}>
+            {t("Organize")}
+          </Button>
+        </div>
+      )}
       <div className="flex min-h-0 flex-1">
         {view === "people" ? (
           <PeopleView model={model} marks={marks} onOpenChat={openChat} onOpenGroup={openGroup} onOpenLibrary={() => openPage("library")} />
@@ -329,6 +340,16 @@ export function WorkbenchPage({ onEditSectionContext }: { onEditSectionContext?:
         onOpenChief={() => {
           setAddOpen(false);
           if (model.chief) openChat(model.chief.id);
+        }}
+      />
+      <LooseBotsDialog
+        open={looseOpen}
+        bots={model.looseBots}
+        departments={model.org.departments.map((department) => department.section)}
+        onClose={() => setLooseOpen(false)}
+        onOpenChat={(botId) => {
+          setLooseOpen(false);
+          openChat(botId);
         }}
       />
       {menu && <MacMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}
@@ -530,5 +551,91 @@ function SinceBanner({ model, onPeople, onDismiss }: { model: WorkbenchModel; on
         <X size={12} />
       </button>
     </div>
+  );
+}
+
+/** Bots that belong to no department used to be drawn as a room on the
+ * workbench, mixed in with real departments. They are listed here instead:
+ * move one into a department, or open its chat. */
+function LooseBotsDialog({
+  open,
+  bots,
+  departments,
+  onClose,
+  onOpenChat,
+}: {
+  open: boolean;
+  bots: Bot[];
+  departments: string[];
+  onClose: () => void;
+  onOpenChat: (botId: string) => void;
+}) {
+  const [picking, setPicking] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const assign = async (botId: string, section: string) => {
+    setBusy(botId);
+    setError(null);
+    try {
+      await api(`/api/bots/${botId}`, { method: "PATCH", body: JSON.stringify({ section }) });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <Dialog open={open} onClose={onClose} label={t("Bots not in a department")} width={560}>
+      <header className="flex h-[56px] shrink-0 items-center gap-2.5 pr-3.5 pl-[22px]">
+        <Users size={18} className="text-ink-secondary" />
+        <b className="truncate text-[15.5px] text-ink">{t("Bots not in a department")}</b>
+        <span className="flex-1" />
+        <button type="button" onClick={onClose} aria-label={t("Close")} className="rounded-full p-1.5 text-ink-secondary hover:bg-raised-hover">
+          <X size={14} />
+        </button>
+      </header>
+      <p className="px-5 pb-2 text-[12.5px] leading-relaxed text-ink-secondary">
+        {t("Give each one a department, or leave it here — it just won't sit on the workbench floor.")}
+      </p>
+      {error && <div className="mx-5 mb-2 rounded-lg bg-danger/[0.08] px-3 py-2 text-[12] text-danger">{error}</div>}
+      <div className="max-h-[46vh] overflow-y-auto px-3 pb-2">
+        {bots.length === 0 ? (
+          <p className="px-2 py-6 text-center text-[12.5px] text-ink-secondary">{t("Everyone has a department now.")}</p>
+        ) : (
+          bots.map((bot) => {
+            const chosen = picking[bot.id] ?? "";
+            return (
+              <div key={bot.id} className="flex items-center gap-2 rounded-xl px-2 py-2 hover:bg-raised-hover/60">
+                <div className="min-w-0 flex-1">
+                  <b className="block truncate text-[13.5px] text-ink">{bot.name}</b>
+                  {bot.title && <span className="block truncate text-[11.5px] text-ink-secondary">{bot.title}</span>}
+                </div>
+                <select
+                  aria-label={t("Assign to department")}
+                  value={chosen}
+                  onChange={(event) => setPicking((current) => ({ ...current, [bot.id]: event.target.value }))}
+                  className="h-8 max-w-[150px] rounded-lg bg-raised px-2 text-[12px] text-ink shadow-[inset_0_0_0_1px_var(--color-hairline)]"
+                >
+                  <option value="">{t("Assign to department")}</option>
+                  {departments.map((section) => (
+                    <option key={section} value={section}>
+                      {section}
+                    </option>
+                  ))}
+                </select>
+                <Button size="sm" variant="soft" disabled={!chosen || busy === bot.id} onClick={() => void assign(bot.id, chosen)}>
+                  {busy === bot.id ? t("Moving…") : t("Move")}
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => onOpenChat(bot.id)}>
+                  {t("Open")}
+                </Button>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </Dialog>
   );
 }

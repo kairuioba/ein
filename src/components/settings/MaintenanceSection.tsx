@@ -31,6 +31,16 @@ interface ReleaseRun {
   url: string;
 }
 
+interface ReleasePreflight {
+  ref: string;
+  branch: boolean;
+  workflow: boolean;
+  version?: string;
+  nextDevVersion?: string;
+  latestStable?: string;
+  stableAlreadyReleased?: boolean;
+}
+
 export interface MaintenanceState {
   developer: { available: boolean; account?: string; reason?: "no-gh" | "signed-out" | "no-access" };
   repoPath?: string;
@@ -67,6 +77,10 @@ export function MaintenanceSection() {
   const [repoPath, setRepoPath] = useState("");
   const [choiceKey, setChoiceKey] = useState("");
   const [branch, setBranch] = useState("");
+  const [preflight, setPreflight] = useState<ReleasePreflight | null>(null);
+  const [preflightBusy, setPreflightBusy] = useState(false);
+  const [mainPreflight, setMainPreflight] = useState<ReleasePreflight | null>(null);
+  const [runUrl, setRunUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
   const [confirming, setConfirming] = useState<Channel | null>(null);
@@ -76,6 +90,38 @@ export function MaintenanceSection() {
     setRepoPath((current) => current || state.repoPath || "");
     setBranch((current) => current || state.repo?.branch || "main");
   }, [state]);
+
+  // Preflight before a build: is the branch on GitHub, does it carry the
+  // workflow, which version would it produce, and is main's version already
+  // released. Refreshes as the branch input settles.
+  useEffect(() => {
+    if (!state?.developer.available) return;
+    const ref = branch.trim() || "main";
+    let alive = true;
+    const timer = setTimeout(() => {
+      setPreflightBusy(true);
+      const check = (target: string) =>
+        api("/api/maintenance/preflight", { method: "POST", body: JSON.stringify({ ref: target }) }) as Promise<ReleasePreflight>;
+      Promise.all([check(ref), check("main")])
+        .then(([current, main]) => {
+          if (!alive) return;
+          setPreflight(current);
+          setMainPreflight(main);
+        })
+        .catch(() => {
+          if (!alive) return;
+          setPreflight(null);
+          setMainPreflight(null);
+        })
+        .finally(() => {
+          if (alive) setPreflightBusy(false);
+        });
+    }, 400);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [branch, state?.developer.available]);
 
   const ready = store.instances.filter(
     (instance) => instance.snapshot?.state === "available" && instance.snapshot.authenticated !== false && instance.capabilities?.agentsMcp,
@@ -251,7 +297,10 @@ export function MaintenanceSection() {
           />
         </Card>
 
-        <Card title={t("Build and publish")} subtitle={t("Every build is tagged backup/v<version> in the source repository, and every dev build stays downloadable, so any version can be restored.")}>
+        <Card
+          title={t("Build and publish")}
+          subtitle={t("Every build runs the verify gate first (typecheck, i18n, lint, tests, UI build) — a failing gate never publishes. Each build is tagged backup/v<version> in the source repository, and every dev build stays downloadable.")}
+        >
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <input
               value={branch}
@@ -261,10 +310,20 @@ export function MaintenanceSection() {
             />
             {confirming === "dev" ? (
               <>
-                <Button size="sm" disabled={busy !== null} onClick={() => void run("dev", async () => {
-                  await api("/api/maintenance/release", { method: "POST", body: JSON.stringify({ channel: "dev", ref: branch.trim() || "main" }) });
-                  return t("Dev build started. Dev-channel installs get it in about 30 minutes.");
-                })}>
+                <Button
+                  size="sm"
+                  disabled={busy !== null || preflight?.branch === false}
+                  onClick={() =>
+                    void run("dev", async () => {
+                      const started = (await api("/api/maintenance/release", {
+                        method: "POST",
+                        body: JSON.stringify({ channel: "dev", ref: branch.trim() || "main" }),
+                      })) as { run?: { url?: string } | null };
+                      setRunUrl(started?.run?.url ?? null);
+                      return t("Dev build started. Dev-channel installs get it in about 30 minutes once the verify gate passes.");
+                    })
+                  }
+                >
                   {t("Yes, build {branch}", { branch: branch.trim() || "main" })}
                 </Button>
                 <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>{t("Cancel")}</Button>
@@ -276,10 +335,21 @@ export function MaintenanceSection() {
             )}
             {confirming === "stable" ? (
               <>
-                <Button size="sm" variant="warn" disabled={busy !== null} onClick={() => void run("stable", async () => {
-                  await api("/api/maintenance/release", { method: "POST", body: JSON.stringify({ channel: "stable" }) });
-                  return t("Stable release started from main. Everyone gets it once it is built.");
-                })}>
+                <Button
+                  size="sm"
+                  variant="warn"
+                  disabled={busy !== null}
+                  onClick={() =>
+                    void run("stable", async () => {
+                      const started = (await api("/api/maintenance/release", {
+                        method: "POST",
+                        body: JSON.stringify({ channel: "stable" }),
+                      })) as { run?: { url?: string } | null };
+                      setRunUrl(started?.run?.url ?? null);
+                      return t("Stable release started from main. Everyone gets it once it is built.");
+                    })
+                  }
+                >
                   {t("Yes, publish main to everyone")}
                 </Button>
                 <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>{t("Cancel")}</Button>
@@ -290,12 +360,54 @@ export function MaintenanceSection() {
               </Button>
             )}
           </div>
+          <div className="mt-2 flex flex-col gap-1 text-[12px] leading-relaxed">
+            {preflightBusy && <span className="text-ink-secondary">{t("Checking the branch…")}</span>}
+            {!preflightBusy && preflight && !preflight.branch && (
+              <span className="text-warning">
+                {t("This branch is not on GitHub yet. Push it first — the build checks it out from origin.")}
+              </span>
+            )}
+            {!preflightBusy && preflight?.branch && !preflight.workflow && (
+              <span className="text-warning">
+                {t("This branch does not carry the release workflow yet. Merge main into it first.")}
+              </span>
+            )}
+            {!preflightBusy && preflight?.branch && preflight.nextDevVersion && (
+              <span className="text-ink-secondary">
+                {t("A dev build from this branch would be {version}.", { version: preflight.nextDevVersion })}
+              </span>
+            )}
+            {!preflightBusy && mainPreflight?.version && (
+              <span className={mainPreflight.stableAlreadyReleased ? "text-warning" : "text-ink-secondary"}>
+                {mainPreflight.stableAlreadyReleased
+                  ? t(
+                      "main is at {version}, already the latest stable release. Merge the branch into main and raise the version before a stable build.",
+                      { version: mainPreflight.version },
+                    )
+                  : t("main is at {version}; the latest stable is {stable}. A stable build would publish v{version}.", {
+                      version: mainPreflight.version,
+                      stable: mainPreflight.latestStable ?? "—",
+                    })}
+              </span>
+            )}
+          </div>
           {confirming === "stable" && (
             <p className="mt-2 text-[12px] leading-relaxed text-warning">
               {t("Only after you checked the dev build and the fix is merged into main (with the version raised): every user updates to it.")}
             </p>
           )}
           {message && <p className={message.tone === "error" ? "mt-2 text-[12px] text-danger" : "mt-2 text-[12px] text-success"}>{message.text}</p>}
+          {runUrl && (
+            <a
+              href={runUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-2 inline-flex items-center gap-1 text-[12px] text-accent-text hover:underline"
+            >
+              {t("Open the build run")}
+              <ExternalLink size={12} aria-hidden />
+            </a>
+          )}
           <div className="mt-2 border-t border-hairline/30">
             {(state.releases ?? []).length === 0 && <p className="py-2 text-[12px] text-ink-secondary">{t("No builds yet.")}</p>}
             {(state.releases ?? []).map((release) => (

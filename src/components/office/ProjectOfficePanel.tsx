@@ -12,7 +12,7 @@ import type { TaskFolderView } from "../../../shared/task-folders";
 
 const PRESENCE: Record<OfficeMember["presence"], { label: string; color: string }> = {
   working: { label: t("Working"), color: "bg-select" },
-  waiting: { label: t("Waiting"), color: "bg-warning" },
+  waiting: { label: t("Waiting on someone"), color: "bg-warning" },
   reviewing: { label: t("Reviewing"), color: "bg-accent-text" },
   blocked: { label: t("Blocked"), color: "bg-danger" },
   idle: { label: t("Idle"), color: "bg-hairline" },
@@ -47,19 +47,28 @@ export function ProjectOfficePanel({
       setBusy(null);
     }
   };
-  const progress = office?.project.progress;
   const waiting = office?.now.waiting ?? [];
   const decisions = office?.decisions ?? [];
   const anomalies = office?.anomalies ?? [];
   const departments = office?.departments ?? [];
+  // one-line conclusion: how much attention does this project need right now
+  const oldest = waiting.reduce((max, entry) => Math.max(max, entry.minutes), 0);
+  const conclusion =
+    decisions.length > 0
+      ? { tone: "danger", text: t("{count} decision(s) waiting for you", { count: decisions.length }) }
+      : anomalies.length > 0
+        ? { tone: "warning", text: t("{count} thing(s) need a look", { count: anomalies.length }) }
+        : oldest >= 15
+          ? { tone: "warning", text: t("Someone has been blocked for {minutes} minutes", { minutes: oldest }) }
+          : { tone: "ok", text: t("Everything is under control right now") };
   return (
-    <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/30 p-0 sm:items-center sm:p-4">
-      <div className="flex max-h-[92vh] w-full max-w-[560px] flex-col overflow-hidden rounded-t-2xl bg-card shadow-2xl sm:rounded-2xl">
+    <div className="fixed inset-0 z-[70] flex items-stretch justify-center bg-black/30 sm:items-center sm:p-4">
+      <div className="flex h-full max-h-none w-full max-w-none flex-col overflow-hidden bg-card shadow-2xl sm:h-auto sm:max-h-[92vh] sm:max-w-[560px] sm:rounded-2xl">
         <header className="flex shrink-0 items-start gap-2 border-b border-hairline/30 px-4 py-3">
           <div className="min-w-0 flex-1">
             <h2 className="truncate text-[15px] font-semibold text-ink">{task.title}</h2>
             <p className="mt-0.5 text-[11.5px] text-ink-secondary">
-              {t("Project office")} · {progress ? t("{done}/{total} done", { done: progress.done, total: progress.total }) : t("No run yet")}
+              {t("Project office")}
             </p>
           </div>
           {task.conversationId && task.conversationBotId && (
@@ -71,7 +80,19 @@ export function ProjectOfficePanel({
             <X size={15} />
           </button>
         </header>
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-5 pt-3">
+        <div className="shrink-0 px-4 pt-2">
+          <div
+            className={cn(
+              "rounded-lg px-3 py-1.5 text-[12.5px] font-semibold",
+              conclusion.tone === "danger" && "bg-danger/[0.09] text-danger",
+              conclusion.tone === "warning" && "bg-warning/[0.12] text-warning",
+              conclusion.tone === "ok" && "bg-select/[0.08] text-accent-text",
+            )}
+          >
+            {conclusion.text}
+          </div>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[max(20px,env(safe-area-inset-bottom))] pt-3">
           {error && <div className="mb-2 rounded-lg bg-danger/[0.08] px-3 py-2 text-[12px] text-danger">{error}</div>}
           {!office && <p className="py-8 text-center text-[12.5px] text-ink-secondary">{t("Loading the project office…")}</p>}
           {office && (
@@ -88,14 +109,14 @@ export function ProjectOfficePanel({
                       <div className="mt-1.5 flex flex-col gap-1.5">
                         <textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder={t("What is wrong? One sentence is enough.")} className="min-h-[56px] w-full rounded-lg bg-card px-2.5 py-1.5 text-[12px] text-ink shadow-[inset_0_0_0_1px_var(--color-hairline)] outline-none" />
                         <div className="flex gap-1.5">
-                          <Button size="sm" disabled={!note.trim() || busy === decision.id} onClick={() => void act(decision.id, "reject")}>{t("Send back and redo")}</Button>
+                          <Button size="sm" disabled={!note.trim() || busy !== null} onClick={() => void act(decision.id, "reject")}>{t("Not good — fix it")}</Button>
                           <Button size="sm" variant="soft" onClick={() => { setRejecting(null); setNote(""); }}>{t("Cancel")}</Button>
                         </div>
                       </div>
                     ) : (
                       <div className="mt-1.5 flex gap-1.5">
-                        <Button size="sm" disabled={busy === decision.id} onClick={() => void act(decision.id, "approve")} className="gap-1"><CheckCircle2 size={12} /> {t("Approve and continue")}</Button>
-                        <Button size="sm" variant="soft" onClick={() => { setRejecting(decision.id); setNote(""); }}>{t("Send back and redo")}</Button>
+                        <Button size="sm" disabled={busy !== null} onClick={() => void act(decision.id, "approve")} className="gap-1"><CheckCircle2 size={12} /> {t("Approve, go on")}</Button>
+                        <Button size="sm" variant="soft" disabled={busy !== null} onClick={() => { setRejecting(decision.id); setNote(""); }}>{t("Not good — fix it")}</Button>
                       </div>
                     )}
                   </div>
@@ -104,14 +125,14 @@ export function ProjectOfficePanel({
 
               <section className="mb-3">
                 <div className="mb-1.5 flex items-center gap-1.5 text-[12px] font-semibold text-ink">
-                  <ArrowLeftRight size={13} className="text-ink-secondary" /> {t("Who is waiting on whom right now")}
+                  <ArrowLeftRight size={13} className="text-ink-secondary" /> {t("Who is blocked by whom right now")}
                 </div>
-                {waiting.length === 0 ? <p className="text-[11.5px] text-ink-secondary">{t("No waiting chain — work is flowing.")}</p> : (
+                {waiting.length === 0 ? <p className="text-[11.5px] text-ink-secondary">{t("Nobody is waiting on anybody.")}</p> : (
                   <ul className="space-y-1">
                     {waiting.slice(0, 5).map((entry, index) => (
                       <li key={`${entry.from.name}-${index}`} className="flex items-center gap-1.5 rounded-lg bg-raised px-2.5 py-1.5 text-[11.5px] text-ink-secondary">
                         <Clock3 size={11} className={cn(entry.minutes >= 15 ? "text-danger" : "text-ink-secondary/70")} />
-                        <span className="min-w-0 flex-1 truncate">{entry.from.name} → {entry.to.name} · {entry.item}</span>
+                        <span className="min-w-0 flex-1 truncate">{entry.item} 等 {entry.to.name}</span>
                         <span className={cn("shrink-0", entry.minutes >= 15 && "text-danger")}>{minutesLabel(entry.minutes)}</span>
                       </li>
                     ))}
@@ -128,7 +149,7 @@ export function ProjectOfficePanel({
                     <div className="mb-0.5 text-[11px] font-semibold text-ink-secondary/80">{department.name}</div>
                     <div className="flex flex-wrap gap-1">
                       {department.members.map((member) => (
-                        <span key={member.botId} className="inline-flex items-center gap-1 rounded-full bg-raised px-2 py-0.5 text-[11px] text-ink" title={member.current ?? member.waitingOn ?? ""}>
+                        <span key={member.botId} className="inline-flex items-center gap-1 rounded-full bg-raised px-2 py-0.5 text-[11px] text-ink">
                           <span className={cn("size-1.5 rounded-full", PRESENCE[member.presence].color)} />
                           {member.name}
                           <span className="text-ink-secondary/70">{PRESENCE[member.presence].label}</span>
@@ -154,16 +175,9 @@ export function ProjectOfficePanel({
                 </section>
               )}
               {office.activity.length > 0 && (
-                <section className="mt-3">
-                  <div className="mb-1.5 flex items-center gap-1.5 text-[12px] font-semibold text-ink-secondary">
-                    <ArrowLeftRight size={12} /> {t("Recent activity")}
-                  </div>
-                  <ul className="space-y-0.5 text-[11.5px] text-ink-secondary/85">
-                    {office.activity.slice(0, 5).map((entry, index) => (
-                      <li key={`${entry.at}-${index}`} className="truncate">{entry.actor} · {entry.summary}</li>
-                    ))}
-                  </ul>
-                </section>
+                <p className="mt-3 truncate text-[11px] text-ink-secondary/70">
+                  {t("Latest: {summary}", { summary: `${office.activity[0]!.actor} · ${office.activity[0]!.summary}` })}
+                </p>
               )}
             </>
           )}

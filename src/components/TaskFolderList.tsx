@@ -77,42 +77,44 @@ export function TaskFolderList({
     const badge = needsYouByTask[task.id] ?? 0;
     return (
       <div key={task.id} className="group/task flex flex-col">
-        <button
-          type="button"
-          onClick={() => open(task)}
-          className="flex min-w-0 items-center gap-2 rounded-lg px-2 py-[7px] text-left hover:bg-raised-hover/70"
-          title={`${task.title} · ${statusLabel(task)}`}
-        >
-          <span className="size-2 shrink-0 rounded-full" style={{ background: task.color }} />
-          <span className="min-w-0 flex-1 truncate text-[13px] text-ink">{task.title}</span>
-          {badge > 0 && (
-            <span className="inline-flex h-[18px] min-w-[18px] shrink-0 items-center justify-center rounded-full bg-warning px-1 text-[10px] font-bold text-white">
-              {badge}
-            </span>
-          )}
-          <span className="shrink-0 text-[10.5px] text-ink-secondary/70 group-hover/task:hidden">{task.leadName ?? statusLabel(task)}</span>
-        </button>
-        <div className="ml-6 mb-1 hidden items-center gap-2 group-hover/task:flex">
+        <div className="flex min-w-0 items-center gap-0.5">
+          <button
+            type="button"
+            onClick={() => open(task)}
+            className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-[7px] text-left hover:bg-raised-hover/70"
+            title={`${task.title} · ${statusLabel(task)}`}
+          >
+            <span className="size-2 shrink-0 rounded-full" style={{ background: task.color }} />
+            <span className="min-w-0 flex-1 truncate text-[13px] text-ink">{task.title}</span>
+            {badge > 0 && (
+              <span className="inline-flex h-[18px] min-w-[18px] shrink-0 items-center justify-center rounded-full bg-warning px-1 text-[10px] font-bold text-white" title={t("{count} waiting for you", { count: badge })}>
+                {badge}
+              </span>
+            )}
+            <span className="shrink-0 text-[10.5px] text-ink-secondary/70 group-hover/task:hidden">{task.leadName ?? statusLabel(task)}</span>
+          </button>
           {onOpenOffice && (
             <button
               type="button"
+              aria-label={t("Project office")}
+              title={t("Project office")}
               onClick={() => onOpenOffice(task)}
-              className="flex w-max items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-ink-secondary hover:bg-raised hover:text-ink"
+              className="grid size-6 shrink-0 place-items-center rounded-md text-ink-secondary/70 hover:bg-raised hover:text-ink"
             >
-              <Users size={11} /> {t("Project office")}
-            </button>
-          )}
-          {DONE.has(task.status) && (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void fork(task)}
-              className="flex w-max items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-accent-text hover:bg-raised"
-            >
-              <CheckCircle2 size={11} /> {t("Based on this, start a new task")}
+              <Users size={13} />
             </button>
           )}
         </div>
+        {DONE.has(task.status) && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void fork(task)}
+            className="ml-6 mb-1 hidden w-max items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-accent-text hover:bg-raised group-hover/task:flex"
+          >
+            <CheckCircle2 size={11} /> {t("Based on this, start a new task")}
+          </button>
+        )}
       </div>
     );
   };

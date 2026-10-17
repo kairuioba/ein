@@ -123,7 +123,9 @@ import {
 import { phoneSettingsAction, SidebarPhoneButton } from "./SidebarPhoneButton";
 import { SidebarSectionHeader } from "./SidebarSectionHeader";
 import { InboxPanel } from "./InboxPanel";
+import { ProjectOfficePanel } from "./office/ProjectOfficePanel";
 import { TaskFolderList } from "./TaskFolderList";
+import type { TaskFolderView } from "../../shared/task-folders";
 import { useInbox } from "@/lib/inbox";
 import { BOT_DRAG_TYPE } from "@/components/routines/calendar-model";
 
@@ -1485,6 +1487,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const inbox = brief.needsYou;
   const approvalInbox = useInbox();
   const [inboxOpen, setInboxOpen] = useState(false);
+  const [officeTask, setOfficeTask] = useState<TaskFolderView | null>(null);
   const inboxForBot = useMemo(() => inboxByBot(inbox), [inbox]);
   const meetingRoomIds = useMemo(
     () => new Set((calendarCalls.calls ?? []).map((call) => call.roomId).filter((id): id is string => Boolean(id))),
@@ -2135,6 +2138,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                 dispatch({ type: "select", id: botId });
                 dispatch({ type: "switchTask", botId, threadId });
               }}
+              onOpenOffice={(task) => setOfficeTask(task)}
             />
           )}
           {sectionIds.map((id, index) => {
@@ -2302,6 +2306,16 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                     text: tn(result.members, "{name} loaded · {count} bot", "{name} loaded · {count} bots", { name: result.name }),
                   },
             );
+          }}
+        />
+      )}
+      {officeTask && (
+        <ProjectOfficePanel
+          task={officeTask}
+          onClose={() => setOfficeTask(null)}
+          onOpenConversation={(botId, threadId) => {
+            dispatch({ type: "select", id: botId });
+            dispatch({ type: "switchTask", botId, threadId });
           }}
         />
       )}

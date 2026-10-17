@@ -1,6 +1,6 @@
 // 侧栏的任务文件夹：进行中在上、已完成折叠、点一下打开任务窗口。
 import { useMemo, useState } from "react";
-import { CheckCircle2, ChevronDown, Plus } from "lucide-react";
+import { CheckCircle2, ChevronDown, Plus, Users } from "lucide-react";
 
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
@@ -27,9 +27,11 @@ const statusLabel = (task: TaskFolderView): string => {
 export function TaskFolderList({
   needsYouByTask,
   onOpenTask,
+  onOpenOffice,
 }: {
   needsYouByTask: Record<string, number>;
   onOpenTask: (botId: string, threadId: string) => void;
+  onOpenOffice?: (task: TaskFolderView) => void;
 }) {
   const { tasks, refresh } = useTaskFolders();
   const [showDone, setShowDone] = useState(false);
@@ -90,16 +92,27 @@ export function TaskFolderList({
           )}
           <span className="shrink-0 text-[10.5px] text-ink-secondary/70 group-hover/task:hidden">{task.leadName ?? statusLabel(task)}</span>
         </button>
-        {DONE.has(task.status) && (
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => void fork(task)}
-            className="ml-6 mb-1 hidden w-max items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-accent-text hover:bg-raised group-hover/task:flex"
-          >
-            <CheckCircle2 size={11} /> {t("Based on this, start a new task")}
-          </button>
-        )}
+        <div className="ml-6 mb-1 hidden items-center gap-2 group-hover/task:flex">
+          {onOpenOffice && (
+            <button
+              type="button"
+              onClick={() => onOpenOffice(task)}
+              className="flex w-max items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-ink-secondary hover:bg-raised hover:text-ink"
+            >
+              <Users size={11} /> {t("Project office")}
+            </button>
+          )}
+          {DONE.has(task.status) && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void fork(task)}
+              className="flex w-max items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-accent-text hover:bg-raised"
+            >
+              <CheckCircle2 size={11} /> {t("Based on this, start a new task")}
+            </button>
+          )}
+        </div>
       </div>
     );
   };

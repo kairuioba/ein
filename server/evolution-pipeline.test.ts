@@ -58,7 +58,11 @@ describe("evolution pipeline", () => {
     r = ok(r, { type: "review_pass" });
     const moved = ok(r, { type: "implement", headSha: "h2" });
     expect(moved.guardOkAtHead).toBeUndefined();
-    const approve = transition(moved, { type: "approve_merge", headSha: "h2", by: "owner" });
+    let m2 = ok(moved, { type: "guard_pass" });
+    m2 = ok(m2, { type: "test_pass" });
+    m2 = ok(m2, { type: "review_pass" });
+    // approving the old head sha must fail and send it back to guarding
+    const approve = transition(m2, { type: "approve_merge", headSha: "h1", by: "owner" });
     expect(approve.ok).toBe(false);
     expect(approve.run.state).toBe("guarding");
     expect(pipelineHeadline(approve.run)).toContain("检查改动范围");

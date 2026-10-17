@@ -11,6 +11,8 @@ import { BarChart3, Check, ChevronDown, Clock, Eye, FileText, Grid2x2, Hand, His
 import { Button, Segmented } from "@/components/ui";
 import { EvolutionCard } from "@/components/EvolutionCard";
 import { OwnerTimeCard } from "@/components/OwnerTimeCard";
+import { BriefCadence } from "@/components/BriefCadence";
+import { EvolutionRunList } from "@/components/EvolutionRunList";
 import { BotTile } from "@/components/mascot/Mascot";
 import { cn } from "@/lib/cn";
 import { mascotForBot } from "@/lib/engine-mascots";
@@ -114,7 +116,9 @@ export function BriefPage() {
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto px-7 pb-6">
         <OwnerTimeCard />
+        <BriefCadence />
         <EvolutionCard feed={evolution} />
+        <EvolutionRunList feed={evolution} />
         <div className={cn("grid items-start gap-x-10 gap-y-6", twoColumns ? "grid-cols-[minmax(0,1fr)_minmax(380px,470px)]" : "grid-cols-1")}>
           <section aria-label={t("The chief's brief")} className="flex min-w-0 flex-col gap-3 pt-1.5">
             {connected ? (

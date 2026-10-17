@@ -10,10 +10,12 @@
 // engine reported instead of the shipped fallback.
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { DATA_DIR } from "../config.ts";
 import type { ModelCatalog } from "../contracts.ts";
+import { killCliTree, spawnCli } from "../procs.ts";
 
 export type CatalogOption = ModelCatalog["options"][number];
 
@@ -226,4 +228,81 @@ export function pickDefault(options: readonly CatalogOption[], ...preferred: Arr
     if (id && options.some((option) => option.id === id)) return id;
   }
   return options[0]?.id ?? "";
+}
+
+export interface JsonLinesProbe<T> {
+  cli: string;
+  args: string[];
+  env: Record<string, string | undefined>;
+  cwd?: string;
+  timeoutMs: number;
+  /** Write the opening request(s). */
+  start(send: (message: unknown) => void): void;
+  /** Called for every JSON line on stdout. Return a value (null included) to
+   * finish with it, or undefined to keep reading. */
+  onMessage(message: any, send: (message: unknown) => void): T | null | undefined;
+}
+
+/** Spawn a CLI that speaks newline-delimited JSON on stdio, hold a short
+ * exchange, and stop it (its whole process tree) as soon as there is an
+ * answer. A missing CLI, an early exit, an unparsable reply or the timeout
+ * all resolve null; this never throws. */
+export function probeJsonLines<T>(probe: JsonLinesProbe<T>): Promise<T | null> {
+  return new Promise((resolve) => {
+    let settled = false;
+    let buffer = "";
+    let child: ReturnType<typeof spawnCli>;
+    try {
+      child = spawnCli(probe.cli, probe.args, {
+        cwd: probe.cwd ?? (probe.env.HOME || probe.env.USERPROFILE || homedir()),
+        env: probe.env as NodeJS.ProcessEnv,
+        stdio: ["pipe", "pipe", "ignore"],
+      });
+    } catch {
+      resolve(null);
+      return;
+    }
+    const finish = (value: T | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      killCliTree(child);
+      resolve(value);
+    };
+    const timer = setTimeout(() => finish(null), probe.timeoutMs);
+    timer.unref?.();
+    const send = (message: unknown) => {
+      try {
+        child.stdin.write(`${JSON.stringify(message)}\n`);
+      } catch {
+        finish(null);
+      }
+    };
+    child.on("error", () => finish(null));
+    child.on("close", () => finish(null));
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      buffer += chunk;
+      let newline: number;
+      while (!settled && (newline = buffer.indexOf("\n")) !== -1) {
+        const line = buffer.slice(0, newline).trim();
+        buffer = buffer.slice(newline + 1);
+        if (!line) continue;
+        let message: unknown;
+        try {
+          message = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        let answer: T | null | undefined;
+        try {
+          answer = probe.onMessage(message, send);
+        } catch {
+          answer = null;
+        }
+        if (answer !== undefined) finish(answer);
+      }
+    });
+    probe.start(send);
+  });
 }

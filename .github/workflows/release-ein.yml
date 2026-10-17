@@ -14,6 +14,14 @@
 # read and write on kairuioba/ein-releases. It only uploads; installed apps
 # never see it.
 #
+# Channels (the developer edition, server/maintenance.ts): `channel: stable`
+# (the default, and every tag push) publishes v<version> as the Latest
+# release everyone updates to. `channel: dev` builds <next patch>-dev.<run>
+# from any branch, publishes it as a prerelease, and refreshes the rolling
+# `dev` prerelease that only installs switched to the dev channel read.
+# Every published build is also tagged backup/v<version> in this repository,
+# so the exact source of any version can be found again.
+#
 # Mac: ad-hoc signed unless the Developer ID secrets of package-mac-zh.yml
 # are present. An ad-hoc build updates itself by swapping its own bundle
 # (electron/bundle-updater.mjs), so latest-mac.yml and the ZIPs must be in
@@ -35,6 +43,12 @@ on:
         required: false
         type: boolean
         default: true
+      channel:
+        description: "stable: the release everyone gets. dev: a prerelease only dev-channel installs get"
+        required: false
+        type: choice
+        options: [stable, dev]
+        default: stable
 
 permissions:
   contents: read
@@ -65,6 +79,18 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Dev build version (dev channel only)
+        if: inputs.channel == 'dev'
+        shell: bash
+        run: |
+          node -e '
+            const fs = require("fs");
+            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            const [major, minor, patch] = pkg.version.split("-")[0].split(".").map(Number);
+            pkg.version = `${major}.${minor}.${patch + 1}-dev.${process.env.GITHUB_RUN_NUMBER}`;
+            fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n");
+            console.log("dev build", pkg.version);
+          '
 
       - name: Version (a tag must match package.json)
         id: version
@@ -113,13 +139,13 @@ jobs:
 
       - name: Package both architectures (Developer ID)
         if: steps.signing.outputs.mode == 'developer-id'
-        run: pnpm package:mac
+        run: pnpm package:mac ${{ inputs.channel == 'dev' && '-c.detectUpdateChannel=false' || '' }}
 
       - name: Package both architectures (ad-hoc signature)
         if: steps.signing.outputs.mode == 'adhoc'
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
-        run: pnpm package:mac -c.mac.identity=- -c.dmg.sign=false
+        run: pnpm package:mac -c.mac.identity=- -c.dmg.sign=false ${{ inputs.channel == 'dev' && '-c.detectUpdateChannel=false' || '' }}
 
       - name: "Gate: signatures verify, both packaged servers start, the feed is ours"
         run: |
@@ -186,10 +212,22 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Dev build version (dev channel only)
+        if: inputs.channel == 'dev'
+        shell: bash
+        run: |
+          node -e '
+            const fs = require("fs");
+            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            const [major, minor, patch] = pkg.version.split("-")[0].split(".").map(Number);
+            pkg.version = `${major}.${minor}.${patch + 1}-dev.${process.env.GITHUB_RUN_NUMBER}`;
+            fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n");
+            console.log("dev build", pkg.version);
+          '
       - name: clean build outputs
         shell: bash
         run: rm -rf dist dist-server release
-      - run: pnpm package:win
+      - run: pnpm package:win ${{ inputs.channel == 'dev' && '-c.detectUpdateChannel=false' || '' }}
       - name: "Gate: the installer and its update feed"
         shell: bash
         run: |
@@ -229,7 +267,28 @@ jobs:
             body=$(printf '# 一念 Ein\n\n「一念起，万 Bot 动」\n\n这里只放安装包和更新文件，软件会从这里检查更新。\n' | base64 | tr -d '\n')
             gh api -X PUT "repos/$RELEASES_REPO/contents/README.md" -f message="一念 Ein releases" -f content="$body"
           fi
+      - name: Publish a dev build (dev channel only)
+        if: inputs.channel == 'dev'
+        env:
+          VERSION: ${{ needs.mac.outputs.version }}
+          SOURCE_REF: ${{ inputs.ref || github.ref_name }}
+        run: |
+          tag="v$VERSION"
+          notes="开发版，只给切到「开发版」渠道的客户端。源码：${SOURCE_REF}（备份标签 backup/v$VERSION）。"
+          ls -lh out
+          gh release view "$tag" --repo "$RELEASES_REPO" >/dev/null 2>&1 \
+            || gh release create "$tag" --repo "$RELEASES_REPO" --title "一念 Ein $VERSION（开发版）" --notes "$notes" --prerelease --latest=false
+          gh release upload "$tag" out/* --repo "$RELEASES_REPO" --clobber
+          # the rolling feed dev-channel installs read: only the newest build in it
+          gh release view dev --repo "$RELEASES_REPO" >/dev/null 2>&1 \
+            || gh release create dev --repo "$RELEASES_REPO" --title "一念 Ein 开发版（最新）" --notes "开发渠道的更新源，每次开发版构建都会覆盖。" --prerelease --latest=false
+          for name in $(gh release view dev --repo "$RELEASES_REPO" --json assets --jq '.assets[].name'); do
+            gh release delete-asset dev "$name" --repo "$RELEASES_REPO" -y
+          done
+          gh release upload dev out/* --repo "$RELEASES_REPO" --clobber
+
       - name: Publish the release
+        if: inputs.channel != 'dev'
         env:
           VERSION: ${{ needs.mac.outputs.version }}
           SIGNING: ${{ needs.mac.outputs.signing }}
@@ -243,3 +302,28 @@ jobs:
           gh release view "$tag" --repo "$RELEASES_REPO" >/dev/null 2>&1 \
             || gh release create "$tag" --repo "$RELEASES_REPO" --title "一念 Ein $VERSION" --notes "$notes" --latest
           gh release upload "$tag" out/* --repo "$RELEASES_REPO" --clobber
+
+  backup-tag:
+    name: tag the source of this build (backup)
+    needs: [mac, publish]
+    if: always() && needs.publish.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - name: backup/v<version> marks the exact source of this build
+        env:
+          VERSION: ${{ needs.mac.outputs.version }}
+        run: |
+          tag="backup/v$VERSION"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+            echo "$tag already exists"
+            exit 0
+          fi
+          git tag "$tag"
+          git push origin "refs/tags/$tag"
+          echo "::notice::source of $VERSION is tagged $tag"

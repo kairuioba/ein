@@ -3760,6 +3760,21 @@ describe("harness HTTP API", () => {
     await api("PATCH", "/api/config", { localVm: { mode: "shared", maxInstances: 2 } });
   });
 
+  it("keeps the maintenance desk closed where the GitHub CLI cannot push to the source", async () => {
+    // the test server's HOME has no gh login, so this is a user's machine
+    const status = await api("GET", "/api/maintenance");
+    expect(status.status).toBe(200);
+    expect(status.body.developer.available).toBe(false);
+    expect(status.body.repoPath).toBeUndefined();
+    // git and gh never run from a simple cross-origin form post
+    const form = await fetch(`${BASE}/api/maintenance/release`, { method: "POST", body: "channel=stable" });
+    expect(form.status).toBe(415);
+    const release = await api("POST", "/api/maintenance/release", { channel: "stable" });
+    expect(release.status).toBe(403);
+    const channel = await api("PUT", "/api/maintenance/channel", { channel: "dev" });
+    expect(channel.status).toBe(403);
+  });
+
   it("keeps an active turn alive when only the room timeout changes", async () => {
     const created = await api("POST", "/api/bots", {});
     const botId = created.body.bot.id;

@@ -34,6 +34,16 @@ import * as checkpoints from "./checkpoints.ts";
 import { appendDecision as writeDecisionRow, readDecisions, type DecisionRow } from "./decision-log.ts";
 import { validateBotCwd } from "./bot-cwd.ts";
 import {
+  developerStatus,
+  dispatchRelease,
+  MAINTENANCE_BOT_NAME,
+  MAINTENANCE_SECTION,
+  maintenanceHandbook,
+  recentReleases,
+  repoState,
+  runTool,
+} from "./maintenance.ts";
+import {
   attachmentExists,
   extensionForMime,
   FILE_MAX_BYTES,
@@ -7853,6 +7863,104 @@ const server = createServer(async (req, res) => {
       }
     }
 
+    // ── developer edition: the owner's maintenance desk (server/maintenance.ts) ──
+    // Only on a machine whose GitHub CLI may push to the source repository;
+    // everywhere else these answer "not available" and change nothing.
+    if (path === "/api/maintenance" && method === "GET") {
+      const developer = await developerStatus();
+      if (!developer.available) return json(res, 200, { developer });
+      const desk = cfg.maintenance ?? {};
+      const bot = desk.botId ? store.bot(desk.botId) : null;
+      return json(res, 200, {
+        developer,
+        repoPath: desk.repoPath ?? "",
+        channel: desk.channel ?? "stable",
+        repo: await repoState(desk.repoPath),
+        bot: bot ? { id: bot.id, name: bot.name } : null,
+        releases: url.searchParams.get("releases") === "1" ? await recentReleases() : undefined,
+      });
+    }
+    if (path.startsWith("/api/maintenance/") || (path === "/api/maintenance" && method !== "GET")) {
+      // these run git and gh: never from a simple cross-origin form post
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      const fresh = path === "/api/maintenance/refresh";
+      const developer = await developerStatus(runTool, fresh);
+      if (fresh) return json(res, 200, { developer });
+      if (!developer.available) return json(res, 403, { error: t("Developer mode is not available on this machine"), developer });
+      const body = await readBody(req);
+      const desk = cfg.maintenance ?? {};
+      if (path === "/api/maintenance" && method === "PUT") {
+        const repoPath = typeof body?.repoPath === "string" ? body.repoPath.trim() : "";
+        const repo = await repoState(repoPath);
+        if (!repo.ok) {
+          const why = {
+            missing: t("That folder does not exist"),
+            "not-git": t("That folder is not a git checkout"),
+            "other-repo": t("That checkout is not the Ein source repository (kairuioba/ein)"),
+          }[repo.reason ?? "missing"];
+          return json(res, 400, { error: why, repo });
+        }
+        const cwd = validateBotCwd(repoPath);
+        if (!cwd.ok) return json(res, 400, { error: cwd.error });
+        const workdir = cwd.cwd ?? undefined;
+        let selection: ModelSelection | undefined;
+        if (body?.modelSelection !== undefined) {
+          const checked = checkedModelSelection(body.modelSelection, undefined, false);
+          if (!checked.ok) return json(res, checked.status, { error: checked.error });
+          selection = checked.selection;
+        }
+        const profile = parseBotProfilePatch(
+          { name: MAINTENANCE_BOT_NAME, title: t("Ein maintenance"), description: maintenanceHandbook(repoPath) },
+          true,
+        );
+        if (!profile.ok) return json(res, 400, { error: profile.error });
+        let bot = desk.botId ? store.bot(desk.botId) : null;
+        if (bot) {
+          if (bot.busy && (workdir !== bot.cwd || (selection && selection.model !== bot.modelSelection.model))) {
+            return json(res, 409, { error: t("the bot is working — stop it before changing models") });
+          }
+          bot = store.patchBot(bot.id, {
+            title: profile.patch.title,
+            description: profile.patch.description,
+            section: MAINTENANCE_SECTION,
+            cwd: workdir,
+            ...(selection ? { modelSelection: selection } : {}),
+          });
+        } else {
+          if (store.bots.length >= MAX_WORKSPACE_BOTS) {
+            return json(res, 409, { error: t("this workspace is limited to {count} bots", { count: MAX_WORKSPACE_BOTS }) });
+          }
+          const created = store.createBot({ ...profile.patch, section: MAINTENANCE_SECTION, modelSelection: selection ?? (await defaultSelection()) });
+          bot = store.patchBot(created.id, { cwd: workdir });
+        }
+        if (!bot) return json(res, 500, { error: t("no such bot") });
+        saveConfig({ maintenance: { ...desk, repoPath, botId: bot.id } });
+        Object.assign(cfg, loadConfig());
+        broadcast({ kind: "bot", bot: wireBot(bot) });
+        return json(res, 200, { repoPath, repo, bot: { id: bot.id, name: bot.name }, channel: cfg.maintenance?.channel ?? "stable" });
+      }
+      if (path === "/api/maintenance/channel" && method === "PUT") {
+        const channel = body?.channel === "dev" ? "dev" : body?.channel === "stable" ? "stable" : null;
+        if (!channel) return json(res, 400, { error: "channel must be stable or dev" });
+        saveConfig({ maintenance: { ...desk, channel } });
+        Object.assign(cfg, loadConfig());
+        // the updater reads the channel at launch
+        return json(res, 200, { channel, restartNeeded: true });
+      }
+      if (path === "/api/maintenance/release" && method === "POST") {
+        const channel = body?.channel === "stable" ? "stable" : body?.channel === "dev" ? "dev" : null;
+        if (!channel) return json(res, 400, { error: "channel must be stable or dev" });
+        // the stable release is always main; a dev build may be any branch
+        const ref = channel === "stable" ? "main" : typeof body?.ref === "string" && body.ref.trim() ? body.ref.trim() : "main";
+        const started = await dispatchRelease(channel, ref);
+        if (!started.ok) return json(res, 502, { error: started.out || t("Could not start the build") });
+        return json(res, 202, { ok: true, channel, ref });
+      }
+      return json(res, 404, { error: "not found" });
+    }
+
     // ── app config (API keys — never echoed back, booleans only) ──
     if (method === "GET" && path === "/api/config") {
       return json(res, 200, configStatus());
@@ -8061,7 +8169,8 @@ const server = createServer(async (req, res) => {
           key !== "rooms" &&
           key !== "localVm" &&
           key !== "features" &&
-          key !== "browserProfiles",
+          key !== "browserProfiles" &&
+          key !== "maintenance",
       );
       // The cleanup marker becomes committed only after both pieces of durable
       // application state agree. Commit/ACK failures are deferred until every

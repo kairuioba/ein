@@ -281,6 +281,12 @@ const appConfigSchema = z.object({
     .optional(),
   /** Spend display (server/org/usage.ts): the USD → CNY rate; absent = 7.2. */
   usage: z.object({ usdToCny: z.number().positive().max(1_000).optional() }).optional(),
+  /** Developer edition (server/maintenance.ts): the owner's source clone, the
+   * maintenance bot, and the update channel this install follows (the
+   * Electron updater reads it at launch). */
+  maintenance: z
+    .object({ repoPath: optionalText, botId: optionalText, channel: z.enum(["stable", "dev"]).optional() })
+    .optional(),
   instances: instanceConfigMapSchema.optional(),
 });
 const storedAppConfigSchema = appConfigSchema.extend({
@@ -313,6 +319,8 @@ export interface AppConfig {
   workbuddy?: { apiKey?: string; environment?: "international" | "internal" | "ioa" };
   /** Spend display: the USD → CNY rate costs are shown at (default 7.2). */
   usage?: { usdToCny?: number };
+  /** Developer edition: source clone, maintenance bot, update channel. */
+  maintenance?: { repoPath?: string; botId?: string; channel?: "stable" | "dev" };
   instances?: InstanceConfigMap;
 }
 export type BrowserProfile = z.output<typeof browserProfileSchema> & {

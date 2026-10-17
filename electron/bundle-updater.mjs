@@ -36,7 +36,23 @@ export function compareVersions(a, b) {
   if (left.pre === right.pre) return 0;
   if (!left.pre) return 1;
   if (!right.pre) return -1;
-  return left.pre > right.pre ? 1 : -1;
+  // semver precedence: dot-separated parts, numbers compared as numbers
+  // ("dev.10" is newer than "dev.9"), a number below a word
+  const leftParts = left.pre.split(".");
+  const rightParts = right.pre.split(".");
+  for (let i = 0; i < Math.max(leftParts.length, rightParts.length); i += 1) {
+    const l = leftParts[i];
+    const r = rightParts[i];
+    if (l === undefined) return -1;
+    if (r === undefined) return 1;
+    if (l === r) continue;
+    const numL = /^\d+$/.test(l);
+    const numR = /^\d+$/.test(r);
+    if (numL && numR) return Number(l) > Number(r) ? 1 : -1;
+    if (numL !== numR) return numL ? -1 : 1;
+    return l > r ? 1 : -1;
+  }
+  return 0;
 }
 
 /** The fields of electron-builder's latest-mac.yml this updater reads. */
@@ -113,6 +129,8 @@ exit 0
  * @param {object} options
  * @param {string} options.feedUrl  where latest-mac.yml and the ZIPs live
  *   (https://github.com/<owner>/<repo>/releases/latest/download)
+ * @param {boolean} [options.allowDowngrade]  also offer an OLDER version (a dev
+ *   build going back to stable; see update-channel.mjs)
  * @param {string} options.currentVersion
  * @param {string|null} options.appPath  the running .app bundle
  * @param {string} options.arch  process.arch
@@ -145,7 +163,9 @@ export function createBundleUpdater(options) {
     const latest = parseLatestYml(await response.text());
     const file = pickZip(latest.files, options.arch);
     if (!latest.version || !file) throw fail(t("The update feed has no build for this Mac"));
-    if (compareVersions(latest.version, options.currentVersion) <= 0) {
+    // a newer version, or — for a dev build going back to stable — any other one
+    const order = compareVersions(latest.version, options.currentVersion);
+    if (order === 0 || (order < 0 && !options.allowDowngrade)) {
       available = null;
       updater.emit("update-not-available", { version: latest.version });
       return { updateInfo: latest, isUpdateAvailable: false };

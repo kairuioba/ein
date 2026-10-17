@@ -13,6 +13,7 @@ import { createRequire } from "node:module";
 import { join } from "node:path";
 import { bundleOf, createBundleUpdater } from "./bundle-updater.mjs";
 import { createUpdaterCoordinator } from "./updater-coordinator.mjs";
+import { allowsDowngrade, channelFeedUrl, readUpdateChannel } from "./update-channel.mjs";
 import { t } from "./i18n.cjs";
 
 const require = createRequire(import.meta.url);
@@ -80,10 +81,11 @@ async function hasDeveloperId(appPath) {
   }
 }
 
-function bundleUpdater(feedUrl, logger) {
+function bundleUpdater(feedUrl, logger, allowDowngrade = false) {
   const appPath = bundleOf(app.getPath("exe"));
   const updater = createBundleUpdater({
     feedUrl,
+    allowDowngrade,
     currentVersion: app.getVersion(),
     appPath,
     arch: process.arch,
@@ -130,24 +132,29 @@ export function startUpdater(mainWindow) {
   // goes on to restart into it, one found in the background waits for you
   // (or for the app to quit)
   const automatic = { autoDownload: true, installAfterManualCheck: true };
+  // the developer edition's channel (read once: switching asks for a restart)
+  const channel = readUpdateChannel(process.env.OMB_DATA_DIR || join(app.getPath("home"), ".ein"));
+  const stableFeed = feedFromAppUpdateYml(readFileSync(join(process.resourcesPath, "app-update.yml"), "utf8"));
+  setState({ channel });
+  logger.info(`update channel: ${channel}`);
   if (process.platform === "darwin") {
-    const feedUrl = feedFromAppUpdateYml(readFileSync(join(process.resourcesPath, "app-update.yml"), "utf8"));
     const appPath = bundleOf(app.getPath("exe"));
     void hasDeveloperId(appPath ?? "").then((signed) => {
-      if (signed) return startElectronUpdater(logger, automatic);
-      if (!feedUrl) {
+      if (signed) return startElectronUpdater(logger, automatic, channel, stableFeed);
+      if (!stableFeed) {
         setState({ status: "idle", unavailable: true });
         return;
       }
-      updaterCoordinator = createUpdaterCoordinator(bundleUpdater(feedUrl, logger), setState, automatic);
+      const updater = bundleUpdater(channelFeedUrl(stableFeed, channel), logger, allowsDowngrade(channel, app.getVersion()));
+      updaterCoordinator = createUpdaterCoordinator(updater, setState, automatic);
       scheduleChecks();
     });
     return;
   }
-  startElectronUpdater(logger, automatic);
+  startElectronUpdater(logger, automatic, channel, stableFeed);
 }
 
-function startElectronUpdater(logger, automatic) {
+function startElectronUpdater(logger, automatic, channel = "stable", stableFeed = null) {
   try {
     ({ autoUpdater } = require("./vendor/electron-updater.cjs"));
   } catch {
@@ -162,6 +169,14 @@ function startElectronUpdater(logger, automatic) {
   // downloaded in the background goes in when the app closes.
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.logger = logger;
+  // dev channel: the rolling `dev` prerelease, read as a plain feed so a
+  // stable install never sees it; back on stable, a dev build may go down to
+  // the latest stable release
+  if (channel === "dev" && stableFeed) {
+    autoUpdater.allowPrerelease = true;
+    autoUpdater.setFeedURL({ provider: "generic", url: channelFeedUrl(stableFeed, "dev") });
+  }
+  if (allowsDowngrade(channel, app.getVersion())) autoUpdater.allowDowngrade = true;
 
   updaterCoordinator = createUpdaterCoordinator(autoUpdater, setState, automatic);
   scheduleChecks();

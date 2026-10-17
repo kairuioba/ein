@@ -422,6 +422,7 @@ export type AppSettingsSection =
   | "companion"
   | "usage"
   | "experimental"
+  | "maintenance"
   | "updates"
   | "about";
 

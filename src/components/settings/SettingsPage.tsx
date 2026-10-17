@@ -18,8 +18,7 @@ import {
   SlidersHorizontal,
   Smartphone,
   Users,
-  type LucideIcon,
-} from "lucide-react";
+  type LucideIcon, Wrench } from "lucide-react";
 import { useStore, type AppSettingsSection } from "@/state/store";
 import { useOrg, useUsageSummary } from "@/state/org-api";
 import { buildDepartments } from "@/lib/org";
@@ -39,6 +38,7 @@ import {
   useUpdateWaiting,
 } from "./BasicSections";
 import { AboutSection, APP_VERSION } from "./AboutSection";
+import { MaintenanceSection, useMaintenance } from "./MaintenanceSection";
 import { OrgSection } from "./OrgSection";
 import { EnginesSection } from "./EnginesSection";
 import { CadenceSection, ReviewSection, UsageBillingSection } from "./PolicySections";
@@ -58,6 +58,7 @@ const ICONS: Record<AppSettingsSection, LucideIcon> = {
   companion: Smartphone,
   usage: ChartColumn,
   experimental: FlaskConical,
+  maintenance: Wrench,
   updates: Download,
   about: Info,
 };
@@ -94,7 +95,9 @@ function useNavMeta(): Partial<Record<AppSettingsSection, ReactNode>> {
 function SettingsNav({ section, query, onQuery }: { section: AppSettingsSection; query: string; onQuery: (value: string) => void }) {
   const { dispatch } = useStore();
   const meta = useNavMeta();
-  const shown = visibleSections(query);
+  // the maintenance desk exists only on the developer's own machines
+  const { state: maintenance } = useMaintenance();
+  const shown = visibleSections(query).filter((entry) => entry.id !== "maintenance" || maintenance?.developer.available === true);
   return (
     <nav aria-label={t("Settings sections")} className="flex w-[196px] shrink-0 flex-col border-r border-hairline/40 bg-inset px-2.5 pt-5">
       <div className="flex h-[30px] items-center px-2 text-[16px] font-bold text-ink">{t("Settings")}</div>
@@ -173,6 +176,8 @@ function SectionBody({ section }: { section: AppSettingsSection }) {
       return <UsageBillingSection />;
     case "experimental":
       return <ExperimentalSection />;
+    case "maintenance":
+      return <MaintenanceSection />;
     case "updates":
       return <UpdatesSection />;
     case "about":

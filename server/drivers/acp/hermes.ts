@@ -4,13 +4,13 @@
 // without an OpenRouter key — that is the "HTTP 401: Missing Authentication
 // header" failure. Inject writes providers.<host> and session/set_model
 // `custom:<host>:<model>` instead.
-import { spawn } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 
 import type { ModelCatalog } from "../../contracts.ts";
+import { createLiveCatalog, probeJsonLines, reviveCatalog } from "../live-catalog.ts";
 import { decodeInjectId, hostApiKey, INJECT_SEP, localHost, mergeLocalInject } from "../local-inject.ts";
 import { t } from "../../../shared/i18n.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
@@ -250,115 +250,96 @@ export function hermesConfiguredModel(
   };
 }
 
+/** Hermes' `session/new` answer → picker rows. Every row is Custom: Hermes
+ * is a BYOK harness and the picker shows a custom-only engine only those. */
+export function parseHermesSessionModels(sessionResult: unknown): { id: string; label: string; custom: true }[] {
+  const list = (sessionResult as { models?: { availableModels?: unknown } } | null)?.models?.availableModels;
+  if (!Array.isArray(list)) return [];
+  const seen = new Set<string>();
+  return list.flatMap((m: any) => {
+    if (typeof m?.modelId !== "string" || !m.modelId || seen.has(m.modelId)) return [];
+    seen.add(m.modelId);
+    // Hermes labels these "OpenRouter · <model>"; keep its wording.
+    const label = (typeof m.name === "string" && m.name.trim()) || (m.modelId as string);
+    return [{ id: m.modelId as string, label, custom: true as const }];
+  });
+}
+
 /** Ask a short-lived `hermes acp` session what models it can actually run.
  *
  * Hermes advertises its full catalog on `session/new` — every model its
  * configured providers expose, ids shaped `openrouter:qwen/qwen3.8-max`. There
- * is no `hermes models` subcommand, so a throwaway session is the only way to
- * read it, and it is worth the spawn: without it the picker can only offer
- * locally injected hosts, which is a fraction of what the user is paying for.
+ * is no listing subcommand (`hermes model` is interactive), so a throwaway
+ * session is the only way to read it. No prompt is sent, so it costs nothing,
+ * and Hermes leaves sessions without messages out of its session lists.
+ * Building the agent behind a session is slow, so this runs in the
+ * background with a generous timeout and its answer is cached.
  *
  * Failure is non-fatal and returns [] — a catalog probe must never be the
  * reason an agent becomes unselectable.
  */
-async function fetchHermesAcpModels(
+export async function fetchHermesAcpModels(
   cli: string,
   env: Record<string, string | undefined>,
+  timeoutMs = HERMES_PROBE_TIMEOUT_MS,
 ): Promise<{ id: string; label: string; custom: true }[]> {
-  return await new Promise((resolve) => {
-    let child: ReturnType<typeof spawn>;
-    try {
-      child = spawn(cli, ["acp"], { stdio: ["pipe", "pipe", "ignore"], env: env as NodeJS.ProcessEnv });
-    } catch {
-      return resolve([]);
-    }
-    let settled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let hardKillTimer: ReturnType<typeof setTimeout> | undefined;
-    const done = (out: { id: string; label: string; custom: true }[]) => {
-      if (settled) return;
-      settled = true;
-      if (timer) clearTimeout(timer);
-      try {
-        if (child.kill()) {
-          hardKillTimer = setTimeout(() => {
-            try {
-              child.kill("SIGKILL");
-            } catch {
-              /* already gone */
-            }
-          }, 1_000);
-          hardKillTimer.unref?.();
-        }
-      } catch {
-        /* already gone */
-      }
-      resolve(out);
-    };
-    timer = setTimeout(() => done([]), 5_000);
-    child.once("error", () => done([]));
-    child.once("close", () => {
-      if (hardKillTimer) clearTimeout(hardKillTimer);
-      done([]);
-    });
-
-    let buf = "";
-    let id = 0;
-    const send = (method: string, params: unknown) => {
-      id += 1;
-      try {
-        if (!child.stdin?.writable) {
-          done([]);
-          return 0;
-        }
-        child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`, (error) => {
-          if (error) done([]);
+  let step: "initialize" | "session" = "initialize";
+  const rows = await probeJsonLines<{ id: string; label: string; custom: true }[]>({
+    cli,
+    args: ["acp"],
+    env,
+    timeoutMs,
+    start: (send) =>
+      send({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } } },
+      }),
+    onMessage: (message, send) => {
+      if (step === "initialize" && message?.id === 1) {
+        if (!message.result) return null;
+        step = "session";
+        send({
+          jsonrpc: "2.0",
+          id: 2,
+          method: "session/new",
+          params: { cwd: env.HOME || env.USERPROFILE || homedir(), mcpServers: [] },
         });
-      } catch {
-        done([]);
-        return 0;
+        return undefined;
       }
-      return id;
-    };
-    let initId = 0;
-    let sessionId = 0;
-    child.stdout?.on("data", (chunk) => {
-      buf += String(chunk);
-      let nl: number;
-      while ((nl = buf.indexOf("\n")) >= 0) {
-        const line = buf.slice(0, nl);
-        buf = buf.slice(nl + 1);
-        let msg: any;
-        try {
-          msg = JSON.parse(line);
-        } catch {
-          continue;
-        }
-        if (msg?.id === initId) {
-          if (!msg.result) return done([]);
-          sessionId = send("session/new", { cwd: env.HOME || env.USERPROFILE || homedir(), mcpServers: [] });
-        } else if (sessionId && msg?.id === sessionId) {
-          const list = Array.isArray(msg.result?.models?.availableModels)
-            ? msg.result.models.availableModels
-            : [];
-          done(
-            list
-              .filter((m: any) => typeof m?.modelId === "string" && m.modelId)
-              .map((m: any) => ({
-                id: m.modelId as string,
-                // Hermes labels these "OpenRouter · <model>"; keep its wording.
-                label: (typeof m.name === "string" && m.name.trim()) || (m.modelId as string),
-                custom: true as const,
-              })),
-          );
-        }
-      }
-    });
-    initId = send("initialize", {
-      protocolVersion: 1,
-      clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } },
-    });
+      if (step === "session" && message?.id === 2) return message.result ? parseHermesSessionModels(message.result) : null;
+      return undefined;
+    },
   });
+  return rows ?? [];
+}
+
+const HERMES_PROBE_TIMEOUT_MS = 30_000;
+const hermesCatalogs = createLiveCatalog<ModelCatalog>({
+  file: "hermes.json",
+  revive: reviveCatalog,
+  timeoutMs: HERMES_PROBE_TIMEOUT_MS + 5_000,
+});
+
+function mtime(path: string): number {
+  try {
+    return Math.floor(statSync(path).mtimeMs);
+  } catch {
+    return 0;
+  }
+}
+
+/** The list belongs to this CLI and this Hermes setup: editing config.yaml or
+ * .env (`hermes model`, `hermes setup`) starts a fresh probe at once. */
+function hermesFingerprint(cli: string, env: Record<string, string | undefined>): string {
+  const dir = hermesHome(env);
+  return [cli, dir, mtime(join(dir, "config.yaml")), mtime(join(dir, ".env"))].join("|");
+}
+
+/** Tests: wait for the background probe for this CLI/setup to finish. */
+export function settleHermesModels(cli: string, env: Record<string, string | undefined>): Promise<void> {
+  return hermesCatalogs.settle(hermesFingerprint(cli, env));
 }
 
 async function resolveModels(
@@ -368,8 +349,19 @@ async function resolveModels(
   const catalog = await mergeLocalInject(EMPTY, env);
   const configured = hermesConfiguredModel(env);
   // Only probe when a hosted provider is configured; a local-only install has
-  // nothing to gain from the spawn.
-  const remote = configured ? await fetchHermesAcpModels(config?.cli || "hermes", env) : [];
+  // nothing to gain from the spawn. Never waits: the last answer for this
+  // setup, refreshed in the background.
+  const cli = config?.cli || "hermes";
+  const remote = configured
+    ? (hermesCatalogs.read(
+        hermesFingerprint(cli, env),
+        async () => {
+          const rows = await fetchHermesAcpModels(cli, env);
+          return rows.length ? { default: rows[0]!.id, options: rows } : null;
+        },
+        env,
+      )?.options ?? [])
+    : [];
   const seen = new Set<string>();
   const options = [...(configured ? [configured] : []), ...remote, ...catalog.options].filter((o) => {
     if (seen.has(o.id)) return false;

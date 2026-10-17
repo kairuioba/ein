@@ -509,7 +509,8 @@ function parseKimiConfig(text: string): { defaultModel: string; models: KimiMode
   let multiline: '"""' | "'''" | null = null;
   for (const line of text.split(/\r?\n/)) {
     const stripped = line.trim();
-    const delimiter = multiline ?? (stripped.includes('"""') ? '"""' : stripped.includes("'''") ? "'''" : null);
+    const delimiter: '"""' | "'''" | null =
+      multiline ?? (stripped.includes('"""') ? '"""' : stripped.includes("'''") ? "'''" : null);
     const opensOrCloses = delimiter ? stripped.split(delimiter).length - 1 : 0;
     if (multiline) {
       if (opensOrCloses % 2 === 1) multiline = null;

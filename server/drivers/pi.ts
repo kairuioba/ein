@@ -42,6 +42,7 @@ import type {
   SendTurnInput,
 } from "../contracts.ts";
 import { EFFORT_LEVELS, newEventId, newId } from "../contracts.ts";
+import { createLiveCatalog, pickDefault, reviveCatalog } from "./live-catalog.ts";
 import {
   decodeInjectId,
   encodeInjectId,
@@ -103,6 +104,7 @@ interface PiModelEntry {
   provider: string;
   id: string;
   name?: string;
+  contextWindow?: number;
 }
 interface PiModelsResponse {
   type: "response";
@@ -115,7 +117,7 @@ interface PiModelsResponse {
  *  Every option is `custom` (pi is BYOK) and id is the `provider/modelId`
  *  composite the picker and `set_model` both use. Exported for the test. */
 export function parsePiCatalog(stdout: string, fallbackDefault = ""): ModelCatalog {
-  const options: Array<{ id: string; label: string; custom: true }> = [];
+  const options: Array<{ id: string; label: string; custom: true; contextWindow?: number }> = [];
   let def = fallbackDefault;
   for (const line of stdout.split("\n")) {
     if (!line.trim()) continue;
@@ -130,7 +132,11 @@ export function parsePiCatalog(stdout: string, fallbackDefault = ""): ModelCatal
     for (const m of res.data?.models ?? []) {
       if (!m?.provider || !m?.id) continue;
       const id = `${m.provider}/${m.id}`;
-      options.push({ id, label: m.name ?? m.id, custom: true });
+      const contextWindow =
+        typeof m.contextWindow === "number" && Number.isFinite(m.contextWindow) && m.contextWindow > 0
+          ? Math.floor(m.contextWindow)
+          : 0;
+      options.push({ id, label: m.name ?? m.id, custom: true, ...(contextWindow ? { contextWindow } : {}) });
     }
     break;
   }
@@ -333,6 +339,22 @@ export async function fetchPiModels(
   });
 }
 
+// pi's model registry ships inside the CLI and its ~/.pi/agent/models.json,
+// so a newer pi lists newer models by itself. Asking it means spawning
+// `pi --mode rpc --no-session` (no session, no tokens), which takes a moment:
+// the answer is cached on disk and refreshed in the background so the picker
+// never waits on it.
+const piCatalogs = createLiveCatalog<ModelCatalog>({ file: "pi.json", revive: reviveCatalog });
+
+function piFingerprint(cli: string, env: Record<string, string | undefined>): string {
+  return [cli, piAgentDir(env)].join("|");
+}
+
+/** Tests: wait for the background catalog refresh for this CLI/home. */
+export function settlePiModels(cli: string, env: Record<string, string | undefined>): Promise<void> {
+  return piCatalogs.settle(piFingerprint(cli, env));
+}
+
 export interface PiConfig {
   cli: string;
   /** Full-auto: never ask before an action. Host control is unavailable in
@@ -411,13 +433,19 @@ export const PiDriver: ProviderDriver<PiConfig> = {
     const catalogEnv = piEnvironment({ ...process.env, ...input.environment });
     let models = EMPTY;
     const refreshModels = async () => {
-      let base = models;
-      try {
-        const resolved = await fetchPiModels(config.cli, catalogEnv);
-        if (resolved.options.length) base = resolved;
-      } catch {
-        // Keep the last usable catalog when the probe fails.
-      }
+      // Never waits on pi: the last list it reported (refreshed in the
+      // background), with today's settings.json default applied.
+      const live = piCatalogs.read(
+        piFingerprint(config.cli, catalogEnv),
+        async () => {
+          const resolved = await fetchPiModels(config.cli, catalogEnv);
+          return resolved.options.length ? resolved : null;
+        },
+        catalogEnv,
+      );
+      const base: ModelCatalog = live
+        ? { default: pickDefault(live.options, readPiDefaultModel(catalogEnv), live.default), options: live.options }
+        : EMPTY;
       try {
         const next = await applyPiLocalCatalog(base, catalogEnv);
         if (next.options.length) models = next;

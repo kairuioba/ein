@@ -105,6 +105,10 @@ export type RuntimeEvent = RuntimeEventBase &
          * is a live indicator whose meaning differs per driver (a per-call
          * delta, a thread total, a per-step figure) and must never be summed. */
         usage?: { input: number; output: number; cachedInput?: number };
+        /** steerIds (as passed to steer()) of messages this turn accepted but
+         * never put in front of the model — a Stop, a failure or a crash got
+         * there first. The harness runs them next, like queued sends. */
+        undeliveredSteers?: string[];
       }
     | { type: "item.started"; itemType: "tool" | "reasoning"; title?: string }
     | { type: "item.updated"; itemType: "tool" | "reasoning"; tokens?: number | null }
@@ -237,11 +241,13 @@ export interface ProviderAdapter {
      * the driver cannot set effort, so the app never offers the control —
      * same rule as computerMcp: never show a knob the driver cannot turn. */
     effortLevels?: readonly EffortLevel[];
-    /** True when the driver keeps a live session across turns and can take
-     * a user message MID-TURN (delivered before the model's next call —
-     * "steer"). The composer stays open during a turn on such an engine;
-     * others keep the queue-one-and-wait behaviour. Same rule as the other
-     * flags: never show a control the driver cannot honour. */
+    /** True when the driver can take a user message MID-TURN ("steer"):
+     * accepted at once and put in front of the model as early as the engine
+     * allows — natively (Claude, Codex turn/steer, pi, ACP _session/steering)
+     * or at the next safe boundary inside the same turn. The composer sends
+     * into the running turn on such an engine; others keep the
+     * queue-one-and-wait behaviour. Same rule as the other flags: never show
+     * a control the driver cannot honour. */
     queueing?: boolean;
     /** True only when local MCP calls can reach the human approval channel.
      * Full-auto/bypass provider instances must leave this false. */
@@ -260,9 +266,13 @@ export interface ProviderAdapter {
     decision: { behavior: "allow" | "deny" | "answer"; message?: string },
   ): Promise<RequestOutcome>;
   /** Deliver a user message into the RUNNING turn on this thread. Resolves
-   * false when there is no live turn to steer (the caller then sends it as
-   * a normal turn). Only drivers with `capabilities.queueing` implement it. */
-  steer?(threadId: ThreadId, text: string): Promise<boolean>;
+   * true once the turn has taken it (it reaches the model as early as the
+   * engine allows, inside this same turn), false when there is no live turn
+   * to steer or it is stopping (the caller then queues it or sends it as a
+   * normal turn). A `steerId` lets the turn hand an accepted message back in
+   * turn.completed.undeliveredSteers when it ends before delivering it. Only
+   * drivers with `capabilities.queueing` implement it. */
+  steer?(threadId: ThreadId, text: string, options?: { steerId?: string }): Promise<boolean>;
   hasSession(threadId: ThreadId): boolean;
   stopAll(): Promise<void>;
   onEvent(listener: RuntimeEventListener): () => void;

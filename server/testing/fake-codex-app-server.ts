@@ -8,12 +8,32 @@
 //                     mcp-elicitation | question | logged-in-stdout | logged-out | unauthorized
 //                     (question: asks the user to pick a price through
 //                     item/tool/requestUserInput, then finishes the turn)
+//                     | echo-gated (an app-server that names no turn, as older
+//                     ones did, so it cannot be steered: the turn stays open
+//                     until FAKE_CODEX_GATE_FILE exists, then replies
+//                     "echo: <the whole turn/start input>")
 //   FAKE_CODEX_DUMP   path to write {argv, env, calls, decision} as JSON
+//   FAKE_CODEX_STEER  opt-in mid-turn steering surface (unset = byte-identical
+//                     to before). turn/start answers {turn:{id:"turn-1"}} and
+//                     sends turn/started; the turn then stays open, and
+//                     turn/steer is checked the way the real app-server checks
+//                     it (-32600 "no active turn to steer" / "expected active
+//                     turn id …"). Values:
+//                       hold — the turn finishes right after the first steer
+//                       gate — the turn finishes once FAKE_CODEX_GATE_FILE
+//                              exists; every steer before that is folded in
+//                       ended — the codex turn ends at once but turn/completed
+//                              lags 400ms: a steer in that gap is refused
+//                              ("no active turn to steer")
+//                     Either way the final agentMessage is
+//                     "reply to: <turn input> + steered: <steer texts | joined>".
+//   FAKE_CODEX_GATE_FILE  gate mode only: the file whose existence ends the turn
 //
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
 const mode = process.env.FAKE_CODEX_MODE ?? "happy";
+const steerMode = process.env.FAKE_CODEX_STEER ?? "";
 
 if (process.argv[2] === "--version") {
   process.stdout.write("codex-cli 0.147.0\n");
@@ -64,6 +84,74 @@ const finishTurn = () => {
   notify("turn/completed", { turn: { status: "completed" } });
 };
 
+// ── FAKE_CODEX_STEER: an in-flight turn that takes turn/steer ────────────
+const STEER_TURN_ID = "turn-1";
+let steerTurnActive = false;
+let steerTurnInput = "";
+let steerTurnThread = "";
+const steerTexts: string[] = [];
+const finishSteerTurn = () => {
+  if (!steerTurnActive) return;
+  steerTurnActive = false;
+  notify("item/completed", { item: { id: "i1", type: "commandExecution", status: "completed" } });
+  notify("item/completed", {
+    item: { id: "m1", type: "agentMessage", text: `reply to: ${steerTurnInput} + steered: ${steerTexts.join(" | ")}` },
+  });
+  dump();
+  notify("turn/completed", { turn: { id: STEER_TURN_ID, status: "completed" } });
+};
+const startSteerTurn = (msg: any) => {
+  steerTurnActive = true;
+  steerTurnInput = String(msg.params?.input?.[0]?.text ?? "");
+  steerTurnThread = String(msg.params?.threadId ?? "");
+  out({ jsonrpc: "2.0", id: msg.id, result: { turn: { id: STEER_TURN_ID, status: "inProgress", items: [], error: null } } });
+  notify("turn/started", { turn: { id: STEER_TURN_ID, status: "inProgress", items: [], error: null } });
+  notify("item/started", { item: { id: "i1", type: "commandExecution", command: "make build" } });
+  if (steerMode === "ended") {
+    steerTurnActive = false;
+    setTimeout(() => {
+      steerTurnActive = true;
+      finishSteerTurn();
+    }, 400);
+    return;
+  }
+  if (steerMode === "gate") {
+    const gate = process.env.FAKE_CODEX_GATE_FILE ?? "";
+    const poll = setInterval(() => {
+      if (!gate || !existsSync(gate)) return;
+      clearInterval(poll);
+      finishSteerTurn();
+    }, 50);
+  }
+};
+const answerSteer = (msg: any) => {
+  const params = msg.params ?? {};
+  if (!steerTurnActive) {
+    out({ jsonrpc: "2.0", id: msg.id, error: { code: -32600, message: "no active turn to steer" } });
+    return;
+  }
+  if (params.expectedTurnId !== STEER_TURN_ID) {
+    out({
+      jsonrpc: "2.0",
+      id: msg.id,
+      error: { code: -32600, message: `expected active turn id \`${params.expectedTurnId}\` but found \`${STEER_TURN_ID}\`` },
+    });
+    return;
+  }
+  const text = Array.isArray(params.input) ? params.input.map((item: any) => item?.text ?? "").join("") : "";
+  if (params.threadId !== steerTurnThread) {
+    out({ jsonrpc: "2.0", id: msg.id, error: { code: -32600, message: `thread not found: ${params.threadId}` } });
+    return;
+  }
+  if (!text) {
+    out({ jsonrpc: "2.0", id: msg.id, error: { code: -32600, message: "input must not be empty" } });
+    return;
+  }
+  steerTexts.push(text);
+  out({ jsonrpc: "2.0", id: msg.id, result: { turnId: STEER_TURN_ID } });
+  if (steerMode === "hold") setTimeout(finishSteerTurn, 20);
+};
+
 let buf = "";
 process.stdin.on("data", (chunk) => {
   buf += chunk;
@@ -87,6 +175,15 @@ process.stdin.on("data", (chunk) => {
     }
 
     if (msg.method) calls.push({ method: msg.method, params: msg.params ?? null });
+
+    if (steerMode && msg.method === "turn/steer") {
+      answerSteer(msg);
+      continue;
+    }
+    if (steerMode && msg.method === "turn/start" && mode !== "unauthorized" && !process.env.FAKE_CODEX_TRANSIENTS) {
+      startSteerTurn(msg);
+      continue;
+    }
 
     switch (msg.method) {
       case "initialize":
@@ -168,6 +265,20 @@ process.stdin.on("data", (chunk) => {
           }
         }
         out({ jsonrpc: "2.0", id: msg.id, result: { ok: true } });
+        if (mode === "echo-gated") {
+          const input = String(msg.params?.input?.[0]?.text ?? "");
+          notify("item/started", { item: { id: "i1", type: "commandExecution", command: "think" } });
+          const poll = setInterval(() => {
+            const gate = process.env.FAKE_CODEX_GATE_FILE;
+            if (!gate || !existsSync(gate)) return;
+            clearInterval(poll);
+            notify("item/completed", { item: { id: "i1", type: "commandExecution", status: "completed" } });
+            notify("item/completed", { item: { id: "m1", type: "agentMessage", text: `echo: ${input}` } });
+            dump();
+            notify("turn/completed", { turn: { status: "completed" } });
+          }, 50);
+          break;
+        }
         const command = mode === "windows-command"
           ? [
               "\"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\"",

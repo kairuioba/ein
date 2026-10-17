@@ -16,6 +16,13 @@
 // Stop is a safety property), but these are the user's own words —
 // stop-then-steer (queue a correction, hit Stop, the correction runs) is
 // the feature.
+//
+// Most engines now take a busy send INTO the running turn instead ("steer",
+// adapter.steer). Such a message is in the transcript at once (marked
+// steered) and is remembered here until its turn settles: when the turn
+// ends before the model ever saw it (a Stop, a failure, a crash — the
+// driver names it in turn.completed.undeliveredSteers), it joins this queue
+// as an already-recorded line and runs next, exactly like a queued send.
 
 import { newId } from "./contracts.ts";
 import type { BotRecord, Message } from "./store.ts";
@@ -32,7 +39,16 @@ interface QueueEntry {
    * happen on a DIFFERENT thread (a room turn) — drain matches on "this
    * queue's bot is idle now", which needs the bot, not the settling thread. */
   botId: string;
-  items: Array<{ messageId: string; text: string; prompt: string; replyToId?: string; sendId?: string }>;
+  items: Array<{
+    messageId: string;
+    text: string;
+    prompt: string;
+    replyToId?: string;
+    sendId?: string;
+    /** already in the transcript (a steered line handed back undelivered):
+     * drain runs it without appending it a second time */
+    message?: Message;
+  }>;
 }
 
 const queues = new Map<string, QueueEntry>(); // threadId → waiting sends
@@ -95,6 +111,10 @@ export function drainSteeredMessages(
     queues.delete(threadId);
     const appended: Message[] = [];
     for (const item of entry.items) {
+      if (item.message) {
+        appended.push(item.message);
+        continue;
+      }
       // queueId is the pending-chip identity from the 202; append still
       // assigns a fresh transcript id so replay/exclude keep using message.id.
       appended.push(
@@ -152,4 +172,65 @@ export function cancelSteeredMessage(botId: string, messageId: string): boolean 
 /** Test helper: how many messages remain queued for a thread. */
 export function _queuedCount(threadId: string): number {
   return queues.get(threadId)?.items.length ?? 0;
+}
+
+// ── steered messages, remembered until their turn settles ─────────────────
+
+/** A message a running turn accepted through adapter.steer(). */
+export interface LiveSteer {
+  /** the id handed to steer(); turn.completed.undeliveredSteers echoes it */
+  steerId: string;
+  /** the bot whose turn took it */
+  botId: string;
+  /** set when the turn was a room member's turn on the room's thread */
+  groupId?: string;
+  /** what the model was to be sent (reply quoting included) */
+  prompt: string;
+  /** the transcript line, appended (marked steered) when it was accepted */
+  message: Message;
+}
+
+const liveSteers = new Map<string, LiveSteer[]>(); // threadId → in send order
+
+/** Remember an accepted steer until its turn settles. */
+export function recordLiveSteer(threadId: string, steer: LiveSteer): void {
+  const list = liveSteers.get(threadId) ?? [];
+  list.push(steer);
+  liveSteers.set(threadId, list);
+}
+
+/** The turn on this thread settled: forget its steers, and return — in send
+ * order — the ones it handed back without delivering. An id the harness
+ * never recorded (its send was refused after the driver took it) is
+ * ignored: that sender still holds the text. */
+export function settleLiveSteers(threadId: string, undelivered: readonly string[] | undefined): LiveSteer[] {
+  const list = liveSteers.get(threadId) ?? [];
+  liveSteers.delete(threadId);
+  if (!undelivered?.length) return [];
+  const wanted = new Set(undelivered);
+  return list.filter((steer) => wanted.has(steer.steerId));
+}
+
+/** Queue steered lines that never reached the model to run next. They were
+ * sent before anything still waiting here, so they go first. */
+export function requeueSteeredMessages(botId: string, threadId: string, steers: readonly LiveSteer[]): void {
+  if (!steers.length) return;
+  const entry = queues.get(threadId) ?? { botId, items: [] };
+  if (entry.botId !== botId) throw new Error("queued task belongs to another bot");
+  entry.items.unshift(
+    ...steers.map((steer) => ({
+      messageId: newId(),
+      text: steer.message.text ?? "",
+      prompt: steer.prompt,
+      replyToId: steer.message.replyToId,
+      sendId: steer.message.sendId,
+      message: steer.message,
+    })),
+  );
+  queues.set(threadId, entry);
+}
+
+/** Test helper: how many steers a thread's running turn holds. */
+export function _liveSteerCount(threadId: string): number {
+  return liveSteers.get(threadId)?.length ?? 0;
 }

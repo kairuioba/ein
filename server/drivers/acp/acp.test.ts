@@ -22,6 +22,7 @@ import { KimiAgentDriver } from "./kimi.ts";
 import { DroidAgentDriver } from "./droid.ts";
 import { CursorAgentDriver } from "./cursor.ts";
 import { removeTempDir } from "../../testing/cleanup.ts";
+import { steerContinuationPrompt } from "../steer.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "testing", "fake-acp-cli.ts");
 
@@ -928,5 +929,279 @@ describe("ACP snapshot", () => {
     } finally {
       await instance.dispose();
     }
+  });
+});
+
+// ── steer: messages into a running ACP turn ──────────────────────────────
+// The fake's FAKE_ACP_STEER scenarios script the agent side: a first prompt
+// that runs a tool and then keeps thinking, follow-up prompts that echo, and
+// the cancel/steering behaviours of real agents (honour, ignore, error,
+// native injection, "no running turn").
+describe("ACP steering (fake CLI)", () => {
+  let instance: ProviderInstance;
+  let recorder: EventRecorder;
+  let scratch: string;
+  let rpcDump: string;
+  let promptsDump: string;
+
+  const KNOBS = [
+    "FAKE_ACP_STEER",
+    "FAKE_ACP_TOOL_MS",
+    "FAKE_ACP_FINISH_MS",
+    "FAKE_ACP_GATE_FILE",
+    "FAKE_ACP_STEER_PERMISSION",
+    "FAKE_ACP_LOAD_MS",
+    "FAKE_ACP_RPC_DUMP",
+    "FAKE_ACP_PROMPTS_DUMP",
+  ];
+
+  const start = async (scenario: string, env: Record<string, string> = {}, fullAuto = true) => {
+    process.env.FAKE_ACP_STEER = scenario;
+    process.env.FAKE_ACP_RPC_DUMP = rpcDump;
+    process.env.FAKE_ACP_PROMPTS_DUMP = promptsDump;
+    Object.assign(process.env, env);
+    instance = await GrokAgentDriver.create({
+      instanceId: "acp-steer",
+      displayName: "ACP Steer",
+      environment: {},
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto },
+    });
+    recorder = recordEvents(instance.adapter);
+  };
+  const rpc = (): string[] => {
+    try {
+      return JSON.parse(readFileSync(rpcDump, "utf8"));
+    } catch {
+      return [];
+    }
+  };
+  const prompts = (): { prompts: string[]; steers: any[] } => {
+    try {
+      return JSON.parse(readFileSync(promptsDump, "utf8"));
+    } catch {
+      return { prompts: [], steers: [] };
+    }
+  };
+  const waitFor = async (probe: () => boolean, what: string, ms = 10_000) => {
+    const deadline = Date.now() + ms;
+    while (!probe()) {
+      if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}; rpc: ${rpc().join(", ")}`);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  };
+  const texts = () =>
+    recorder.events
+      .filter((e) => e.type === "item.completed" && (e as { itemType?: string }).itemType === "assistant_text")
+      .map((e) => (e as { text: string }).text);
+  const oneTurn = () => {
+    expect(recorder.events.filter((e) => e.type === "turn.started")).toHaveLength(1);
+    expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+  };
+
+  beforeEach(() => {
+    ensureDirs();
+    chmodSync(FAKE_CLI, 0o755);
+    scratch = mkdtempSync(join(tmpdir(), "omb-acp-steer-"));
+    rpcDump = join(scratch, "rpc.json");
+    promptsDump = join(scratch, "prompts.json");
+  });
+
+  afterEach(async () => {
+    for (const key of KNOBS) delete process.env[key];
+    recorder?.stop();
+    await instance?.dispose();
+    await removeTempDir(scratch);
+  });
+
+  it("every ACP engine advertises steering", async () => {
+    await start("boundary");
+    expect(instance.adapter.capabilities.queueing).toBe(true);
+    expect(typeof instance.adapter.steer).toBe("function");
+  });
+
+  it("waits for a running tool, then cancels at the boundary and continues in the SAME turn", async () => {
+    await start("boundary", { FAKE_ACP_TOOL_MS: "400" });
+    await instance.adapter.sendTurn({ threadId: "t-steer-tool", text: "build it" });
+    await recorder.until((e) => e.type === "item.started");
+    // the tool is executing: the message is taken, nothing is cancelled yet
+    expect(await instance.adapter.steer!("t-steer-tool", "use the release profile", { steerId: "s1" })).toBe(true);
+    expect(rpc()).not.toContain("session/cancel");
+    const done = await recorder.until((e) => e.type === "turn.completed");
+
+    expect(done).toMatchObject({ ok: true, stopReason: null });
+    expect((done as { undeliveredSteers?: string[] }).undeliveredSteers).toBeUndefined();
+    oneTurn();
+    // the cancel came after the tool finished — never during it
+    expect(rpc()).toContain("session/cancel");
+    expect(rpc()).not.toContain("session/cancel:during-tool");
+    const follow = steerContinuationPrompt([{ text: "use the release profile" }]);
+    expect(prompts().prompts).toEqual(["build it", follow]);
+    expect(texts()).toEqual(["working", `echo: ${follow}`]);
+    // the steer-induced cancel is neither an error nor an interruption
+    expect(recorder.events.some((e) => e.type === "runtime.error")).toBe(false);
+    const tool = recorder.events.find((e) => e.type === "item.completed" && (e as { itemType?: string }).itemType === "tool");
+    expect(tool).toMatchObject({ ok: true });
+  });
+
+  it("cancels at once when the agent is only thinking", async () => {
+    await start("boundary", { FAKE_ACP_TOOL_MS: "50" });
+    await instance.adapter.sendTurn({ threadId: "t-steer-think", text: "build it" });
+    await recorder.until((e) => e.type === "item.completed" && (e as { itemType?: string }).itemType === "tool");
+    expect(await instance.adapter.steer!("t-steer-think", "also lint")).toBe(true);
+    await recorder.until((e) => e.type === "turn.completed");
+    oneTurn();
+    expect(prompts().prompts[1]).toBe(steerContinuationPrompt([{ text: "also lint" }]));
+  });
+
+  it("delivers several messages sent close together in ONE follow-up, in order", async () => {
+    await start("boundary", { FAKE_ACP_TOOL_MS: "300" });
+    await instance.adapter.sendTurn({ threadId: "t-steer-burst", text: "build it" });
+    await recorder.until((e) => e.type === "item.started");
+    expect(await instance.adapter.steer!("t-steer-burst", "first")).toBe(true);
+    expect(await instance.adapter.steer!("t-steer-burst", "second")).toBe(true);
+    expect(await instance.adapter.steer!("t-steer-burst", "third")).toBe(true);
+    await recorder.until((e) => e.type === "turn.completed");
+    oneTurn();
+    expect(prompts().prompts).toEqual([
+      "build it",
+      steerContinuationPrompt([{ text: "first" }, { text: "second" }, { text: "third" }]),
+    ]);
+    expect(rpc().filter((m) => m.startsWith("session/cancel"))).toHaveLength(1);
+  });
+
+  it("an agent that ignores cancel finishes on its own, then gets the message in the same turn", async () => {
+    await start("ignore-cancel", { FAKE_ACP_TOOL_MS: "50", FAKE_ACP_FINISH_MS: "300" });
+    await instance.adapter.sendTurn({ threadId: "t-steer-ignore", text: "build it" });
+    await recorder.until((e) => e.type === "item.completed" && (e as { itemType?: string }).itemType === "tool");
+    expect(await instance.adapter.steer!("t-steer-ignore", "and this")).toBe(true);
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true, stopReason: null });
+    oneTurn();
+    expect(texts()).toEqual(["working", "finished on my own", `echo: ${steerContinuationPrompt([{ text: "and this" }])}`]);
+    // one cancel only: an agent that ignores it is never asked twice
+    expect(rpc().filter((m) => m.startsWith("session/cancel"))).toHaveLength(1);
+  });
+
+  it("an agent that answers the boundary cancel with an error still continues", async () => {
+    await start("error-on-cancel", { FAKE_ACP_TOOL_MS: "50" });
+    await instance.adapter.sendTurn({ threadId: "t-steer-error", text: "build it" });
+    await recorder.until((e) => e.type === "item.completed" && (e as { itemType?: string }).itemType === "tool");
+    expect(await instance.adapter.steer!("t-steer-error", "keep going")).toBe(true);
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true });
+    oneTurn();
+    expect(recorder.events.some((e) => e.type === "runtime.error")).toBe(false);
+    expect(prompts().prompts).toHaveLength(2);
+  });
+
+  it("never cancels while a permission card is open", async () => {
+    await start("boundary", { FAKE_ACP_STEER_PERMISSION: "1", FAKE_ACP_TOOL_MS: "200" }, false);
+    await instance.adapter.sendTurn({ threadId: "t-steer-perm", text: "build it" });
+    const opened = await recorder.until((e) => e.type === "request.opened");
+    expect(await instance.adapter.steer!("t-steer-perm", "and then deploy")).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(rpc().some((m) => m.startsWith("session/cancel"))).toBe(false);
+
+    await instance.adapter.respondToRequest("t-steer-perm", opened.requestId!, { behavior: "allow" });
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true });
+    oneTurn();
+    // the approved tool ran to completion before the boundary cancel
+    expect(rpc()).toContain("session/cancel");
+    expect(rpc()).not.toContain("session/cancel:during-tool");
+    expect(prompts().prompts[1]).toBe(steerContinuationPrompt([{ text: "and then deploy" }]));
+  });
+
+  it("a message sent during session/load joins the first prompt", async () => {
+    await start("boundary", { FAKE_ACP_LOAD_MS: "400", FAKE_ACP_GATE_FILE: join(scratch, "load.gate"), FAKE_ACP_TOOL_MS: "20" });
+    await instance.adapter.sendTurn({ threadId: "t-steer-load", text: "build it", resumeCursor: "fake-acp-session" });
+    await waitFor(() => rpc().includes("session/load"), "session/load");
+    expect(await instance.adapter.steer!("t-steer-load", "with the new flags")).toBe(true);
+    await recorder.until((e) => e.type === "item.completed" && (e as { itemType?: string }).itemType === "tool");
+    writeFileSync(join(scratch, "load.gate"), "open");
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true });
+    oneTurn();
+    expect(prompts().prompts).toEqual(["build it\n\nwith the new flags"]);
+    expect(rpc().some((m) => m.startsWith("session/cancel"))).toBe(false);
+  });
+
+  it("uses the agent's own _session/steering when initialize advertises it", async () => {
+    await start("native", { FAKE_ACP_TOOL_MS: "300" });
+    await instance.adapter.sendTurn({ threadId: "t-steer-native", text: "build it" });
+    await recorder.until((e) => e.type === "item.started");
+    // mid-tool is fine for native steering: the agent decides when it lands
+    expect(await instance.adapter.steer!("t-steer-native", "skip the docs")).toBe(true);
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true });
+    oneTurn();
+    expect(prompts().steers).toEqual([
+      {
+        sessionId: "fake-acp-session",
+        prompt: [{ type: "text", text: "skip the docs" }],
+        _meta: { steering: { idleBehavior: "promptRequired" } },
+      },
+    ]);
+    expect(prompts().prompts).toEqual(["build it"]);
+    expect(rpc().some((m) => m.startsWith("session/cancel"))).toBe(false);
+    expect(texts()).toContain("reply to: build it + steered: skip the docs");
+  });
+
+  it("native promptRequired holds the message for a follow-up prompt in the same turn", async () => {
+    await start("native-idle", { FAKE_ACP_TOOL_MS: "20", FAKE_ACP_GATE_FILE: join(scratch, "idle.gate") });
+    await instance.adapter.sendTurn({ threadId: "t-steer-idle", text: "build it" });
+    await recorder.until((e) => e.type === "item.completed" && (e as { itemType?: string }).itemType === "tool");
+    expect(await instance.adapter.steer!("t-steer-idle", "one more thing")).toBe(true);
+    await waitFor(() => prompts().steers.length === 1, "the native steer");
+    writeFileSync(join(scratch, "idle.gate"), "open");
+    await recorder.until((e) => e.type === "turn.completed");
+    oneTurn();
+    // asked once, never re-injected in a loop, and delivered by the follow-up
+    expect(prompts().steers).toHaveLength(1);
+    expect(prompts().prompts).toEqual(["build it", steerContinuationPrompt([{ text: "one more thing" }])]);
+  });
+
+  it("a Stop outranks a waiting steer: no follow-up, and the message is handed back", async () => {
+    await start("boundary", { FAKE_ACP_TOOL_MS: "5000" });
+    await instance.adapter.sendTurn({ threadId: "t-steer-stop", text: "build it" });
+    await recorder.until((e) => e.type === "item.started");
+    expect(await instance.adapter.steer!("t-steer-stop", "after the build", { steerId: "keep-1" })).toBe(true);
+    await instance.adapter.interruptTurn("t-steer-stop");
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true, stopReason: "cancelled", undeliveredSteers: ["keep-1"] });
+    oneTurn();
+    expect(prompts().prompts).toEqual(["build it"]);
+    await expect(instance.adapter.steer!("t-steer-stop", "too late")).resolves.toBe(false);
+  });
+
+  it("a Stop against an agent that ignores cancel still ends the turn and hands the message back", async () => {
+    await start("ignore-cancel", { FAKE_ACP_TOOL_MS: "50", FAKE_ACP_FINISH_MS: "20000" });
+    await instance.adapter.sendTurn({ threadId: "t-steer-stop-ignore", text: "build it" });
+    await recorder.until((e) => e.type === "item.completed" && (e as { itemType?: string }).itemType === "tool");
+    expect(await instance.adapter.steer!("t-steer-stop-ignore", "queued words", { steerId: "keep-2" })).toBe(true);
+    await waitFor(() => rpc().includes("session/cancel"), "the boundary cancel");
+    // refused while stopping: the harness queues it instead
+    await instance.adapter.interruptTurn("t-steer-stop-ignore");
+    await expect(instance.adapter.steer!("t-steer-stop-ignore", "while stopping")).resolves.toBe(false);
+    const done = await recorder.until((e) => e.type === "turn.completed", 10_000);
+    expect(done).toMatchObject({ stopReason: "cancelled", undeliveredSteers: ["keep-2"] });
+    oneTurn();
+    expect(prompts().prompts).toEqual(["build it"]);
+  }, 15_000);
+
+  it("steering a thread with no running turn answers false", async () => {
+    await start("boundary");
+    await expect(instance.adapter.steer!("t-nothing", "hello")).resolves.toBe(false);
+  });
+
+  it("a steered turn reports the usage of all its prompts", async () => {
+    await start("boundary", { FAKE_ACP_TOOL_MS: "20" });
+    await instance.adapter.sendTurn({ threadId: "t-steer-usage", text: "build it" });
+    await recorder.until((e) => e.type === "item.completed" && (e as { itemType?: string }).itemType === "tool");
+    await instance.adapter.steer!("t-steer-usage", "more");
+    await recorder.until((e) => e.type === "turn.completed");
+    const usage = recorder.events.filter((e) => e.type === "thread.token-usage.updated");
+    expect(usage.at(-1)).toMatchObject({ input: 20, output: 10 });
   });
 });

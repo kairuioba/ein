@@ -19,6 +19,10 @@
 # release everyone updates to. `channel: dev` builds <next patch>-dev.<run>
 # from any branch, publishes it as a prerelease, and refreshes the rolling
 # `dev` prerelease that only installs switched to the dev channel read.
+# The channel is decided only by which release the artifacts are uploaded to
+# below: package:mac/package:win pass --publish never, so no electron-builder
+# channel flag is passed on the command line (there is no such config key, and
+# Windows would parse `-c.foo=false` as a config file path and fail).
 # Every published build is also tagged backup/v<version> in this repository,
 # so the exact source of any version can be found again.
 #
@@ -139,13 +143,13 @@ jobs:
 
       - name: Package both architectures (Developer ID)
         if: steps.signing.outputs.mode == 'developer-id'
-        run: pnpm package:mac ${{ inputs.channel == 'dev' && '-c.detectUpdateChannel=false' || '' }}
+        run: pnpm package:mac
 
       - name: Package both architectures (ad-hoc signature)
         if: steps.signing.outputs.mode == 'adhoc'
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
-        run: pnpm package:mac -c.mac.identity=- -c.dmg.sign=false ${{ inputs.channel == 'dev' && '-c.detectUpdateChannel=false' || '' }}
+        run: pnpm package:mac -c.mac.identity=- -c.dmg.sign=false
 
       - name: "Gate: signatures verify, both packaged servers start, the feed is ours"
         run: |
@@ -227,7 +231,7 @@ jobs:
       - name: clean build outputs
         shell: bash
         run: rm -rf dist dist-server release
-      - run: pnpm package:win ${{ inputs.channel == 'dev' && '-c.detectUpdateChannel=false' || '' }}
+      - run: pnpm package:win
       - name: "Gate: the installer and its update feed"
         shell: bash
         run: |
@@ -246,10 +250,41 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # The tests are the hard gate of a release (docs/dev-edition-plan.md, section
+  # 6): a commit that does not typecheck, pass the i18n check, lint, run the
+  # test suite and build the production UI never reaches the releases
+  # repository. It runs on the same ref the installers are built from.
+  verify:
+    name: verify (typecheck + i18n + lint + tests + UI build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Prepare Electron test runtime
+        # Electron lazily downloads its runtime on first import. Resolve it
+        # before the checks so a cold download cannot look like a test failure.
+        run: node --input-type=commonjs -e "require('electron')"
+      - run: pnpm typecheck
+      - run: pnpm i18n:check
+      - run: pnpm lint
+      - name: Run tests
+        run: pnpm exec vitest run
+      - name: production UI build
+        run: pnpm exec vite build
+
   publish:
     name: publish to kairuioba/ein-releases
-    needs: [mac, windows]
-    if: always() && needs.mac.result == 'success' && needs.windows.result != 'failure' && needs.windows.result != 'cancelled'
+    needs: [verify, mac, windows]
+    if: always() && needs.verify.result == 'success' && needs.mac.result == 'success' && needs.windows.result != 'failure' && needs.windows.result != 'cancelled'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:

@@ -5,7 +5,7 @@
 import type { DispatchRun, DispatchSubtask } from "../../shared/dispatch-types.ts";
 import { msg, t } from "../../shared/i18n.ts";
 import type { Brief, BriefDepartment, Health, InboxItem, OrgConfig, OrgEvent, UsageSummary } from "../../shared/org-types.ts";
-import { botThreads, clockTime, firstLine, sectionOf, startOfDay, type OrgBot, type OrgGroup } from "./util.ts";
+import { botThreads, clockTime, firstLine, sectionOf, startOfDay, workThreads, type OrgBot, type OrgGroup } from "./util.ts";
 
 export interface AutoApprovedRow {
   id: string;
@@ -117,8 +117,7 @@ export function buildBrief(input: BriefInput): Brief {
   for (const bot of visible) {
     const working = bot.activity === "working" || (bot.busy === true && bot.activity === undefined);
     if (!working) continue;
-    const threads = [...botThreads(bot), ...input.groups.filter((group) => group.busyBotId === bot.id).map((group) => group.threadId)];
-    const lastAt = Math.max(0, ...threads.map((threadId) => input.conversation(threadId).lastAt ?? 0));
+    const lastAt = Math.max(0, ...workThreads(bot, input.groups).map((threadId) => input.conversation(threadId).lastAt ?? 0));
     if (lastAt && now - lastAt > escalateMs) {
       stuck.add(bot.id);
       risks.push({

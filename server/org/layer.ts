@@ -19,7 +19,7 @@ import { collectInbox, escalationLadder, isDecisionCard, questionOf } from "./in
 import { LibraryError, LibraryStore } from "./library.ts";
 import { RunWatcher, type OrgEventInput } from "./run-events.ts";
 import { DEFAULT_USD_TO_CNY, summarizeUsage, UsageLedger } from "./usage.ts";
-import { botThreads, firstLine, groupThreads, sectionOf, startOfDay, startOfWeek, type OrgBot, type OrgCard, type OrgGroup, type OrgMessage } from "./util.ts";
+import { botThreads, firstLine, groupThreads, sectionOf, startOfDay, startOfWeek, workThreads, type OrgBot, type OrgCard, type OrgGroup, type OrgMessage } from "./util.ts";
 
 /** What the org layer needs from the harness (wired in server/index.ts). */
 export interface OrgHost {
@@ -497,13 +497,15 @@ export class OrgLayer {
       const minutes = this.config.rules().escalateAfterMin;
       if (!(minutes > 0)) return steps;
       const bots = this.host.bots();
+      const groups = this.host.groups();
       const chiefId = this.chief()?.id;
       const stuckNow = new Set<string>();
       for (const bot of bots) {
         if (bot.hidden) continue;
         const working = bot.activity === "working" || (bot.busy === true && bot.activity === undefined);
         if (!working) continue;
-        const lastAt = Math.max(0, ...botThreads(bot).map((threadId) => this.host.messages(threadId).at(-1)?.at ?? 0));
+        // a bot speaking in a meeting room makes its progress there
+        const lastAt = Math.max(0, ...workThreads(bot, groups).map((threadId) => this.host.messages(threadId).at(-1)?.at ?? 0));
         if (!lastAt) continue;
         const level = Math.floor((now - lastAt) / (minutes * 60_000));
         if (level < 1) continue;

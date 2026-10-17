@@ -1,13 +1,13 @@
 name: CI
 
 # 一念 Ein runs this in a PRIVATE repository, where macOS minutes count ten
-# times and Windows twice against the free allowance: a push to main runs the
-# Linux type check and tests only. Run it by hand (Actions → CI → Run
-# workflow) or open a pull request for every platform, the Linux package
-# and the iOS build.
+# times and Windows twice against the free allowance: a push to main or to a
+# fix/** branch runs the Linux type check, i18n check, lint and tests only.
+# Run it by hand (Actions → CI → Run workflow) or open a pull request for every
+# platform, the Linux package and the iOS build.
 on:
   push:
-    branches: [main]
+    branches: [main, "fix/**"]
   pull_request:
   workflow_dispatch:
 
@@ -44,6 +44,8 @@ jobs:
         # timeout.
         run: node --input-type=commonjs -e "require('electron')"
       - run: pnpm typecheck
+      - run: pnpm i18n:check
+      - run: pnpm lint
       - name: Run tests
         shell: bash
         run: pnpm test 2>&1 | tee "$RUNNER_TEMP/test-output.log"

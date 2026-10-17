@@ -89,6 +89,7 @@ import { EvolutionRunStore } from "./evolution-runs.ts";
 import { pipelineHeadline } from "./evolution-pipeline.ts";
 import { ApprovalAuditStore, inboxDecisionAudit } from "./approval-audit.ts";
 import { attentionCounts, classifyInboxQueue } from "./attention-inbox.ts";
+import { buildNeedsOwner } from "./needs-owner.ts";
 import type { DispatchRun } from "../shared/dispatch-types.ts";
 import { DEPARTMENT_COLORS } from "../shared/org-types.ts";
 import { UnattendedBots } from "./unattended-state.ts";
@@ -5895,7 +5896,41 @@ const server = createServer(async (req, res) => {
     // ── 注意力闸门：收件箱先分流（push 才打扰老板）──────────────────
     if (path === "/api/attention/queue" && method === "GET") {
       const queue = classifyInboxQueue(inbox.list("open"), approvalAudit);
-      return json(res, 200, { queue, counts: attentionCounts(queue) });
+      // rules may auto-handle the safe classes (only non-work items; never a
+      // signoff/gate decision). Autos are audited with mode=auto so they never
+      // grant themselves trust.
+      let autoHandled = 0;
+      for (const entry of queue) {
+        if (entry.kind !== "auto") continue;
+        if (entry.item.kind !== "question" && entry.item.kind !== "failed_exhausted") continue;
+        const resolved = inbox.resolve(entry.item.id, "approve", t("Handled by an automatic rule"));
+        if ("error" in resolved) continue;
+        autoHandled += 1;
+        approvalAudit.append({
+          idempotencyKey: `inbox:auto:${entry.item.id}`,
+          event: "approved",
+          actionType: entry.card.actionType ?? `inbox.approve:${entry.item.kind}`,
+          project: entry.item.taskId ?? "ein",
+          target: entry.item.id,
+          actor: "rule",
+          mode: "auto",
+          ruleVersion: 1,
+        });
+      }
+      if (autoHandled) broadcast({ kind: "inbox", items: inbox.list(), counts: inbox.counts() });
+      return json(res, 200, { queue: classifyInboxQueue(inbox.list("open"), approvalAudit), counts: attentionCounts(classifyInboxQueue(inbox.list("open"), approvalAudit)), autoHandled });
+    }
+
+    // ── 统一「需要你」口径（收件箱 + 公司层 brief 合并）────────────────
+    if (path === "/api/needs-owner" && method === "GET") {
+      const brief = orgLayer.brief(0);
+      const summary = buildNeedsOwner({
+        inboxItems: inbox.list("open") as never,
+        orgNeedsYou: brief.needsYou as never,
+        dispatchRuns: dispatcher.list(),
+        folders: taskFolders?.list() ?? [],
+      });
+      return json(res, 200, { needsOwner: summary });
     }
 
     // ── 晨报：三个数字，不调用模型 ────────────────────────────────────

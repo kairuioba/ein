@@ -400,6 +400,16 @@ describe("OrgLayer", () => {
       expect(usage.budgetPerDay).toBe(60);
     });
 
+    it("says what the company and each department spent today, for the budget line", () => {
+      layer.recordTurnUsage("writer", { input: 1_000, output: 200 }, 1);
+      layer.recordTurnUsage("designer", { input: 10, output: 5 }, 0.5);
+      layer.recordTurnUsage("chief", { input: 10, output: 5 }, 0.1);
+      expect(layer.spentToday()).toBe(11.2);
+      expect(layer.spentToday("内容部")).toBe(7);
+      expect(layer.spentToday(" 设计部 ")).toBe(3.5);
+      expect(layer.spentToday("财务法务")).toBe(0);
+    });
+
     it("brings the inbox, departments and spend together", () => {
       host.threads.set("t-designer", [question("pick", Date.now() - 60_000)]);
       host.live.add("t-designer:req-pick");

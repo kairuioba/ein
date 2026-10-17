@@ -19,7 +19,7 @@ import { collectInbox, escalationLadder, isDecisionCard, questionOf } from "./in
 import { LibraryError, LibraryStore } from "./library.ts";
 import { RunWatcher, type OrgEventInput } from "./run-events.ts";
 import { DEFAULT_USD_TO_CNY, summarizeUsage, UsageLedger } from "./usage.ts";
-import { botThreads, firstLine, groupThreads, sectionOf, startOfDay, startOfWeek, workThreads, type OrgBot, type OrgCard, type OrgGroup, type OrgMessage } from "./util.ts";
+import { botThreads, firstLine, groupThreads, round2, sectionOf, startOfDay, startOfWeek, workThreads, type OrgBot, type OrgCard, type OrgGroup, type OrgMessage } from "./util.ts";
 
 /** What the org layer needs from the harness (wired in server/index.ts). */
 export interface OrgHost {
@@ -148,6 +148,15 @@ export class OrgLayer {
       usdToCny: this.host.usdToCny() ?? DEFAULT_USD_TO_CNY,
       budgetPerDay: this.config.rules().budgetPerDay,
     });
+  }
+
+  /** What the company, or one department (by section), has spent today, CNY:
+   * what a daily budget line has already paid for (dispatch's add-people check). */
+  spentToday(section?: string, now = Date.now()): number {
+    const summary = this.usage(now);
+    if (section === undefined) return summary.todayCost;
+    const wanted = sectionOf(section);
+    return round2(summary.byBot.filter((entry) => sectionOf(this.bot(entry.botId)?.section) === wanted).reduce((sum, entry) => sum + entry.cost, 0));
   }
 
   private autoApprovedRows(now: number): AutoApprovedRow[] {

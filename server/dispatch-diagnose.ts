@@ -64,6 +64,9 @@ export interface DiagnoseContext {
   rules: OrgRules;
   /** the daily budget line for this run (its department's, else the company's), CNY */
   budgetCny: number;
+  /** what that line has already paid for today, this run's work and all
+   * other work, CNY; absent when unknown (then this run's spend counts) */
+  spentTodayCny?: number;
   /** how many more bots the workspace can hold */
   room: number;
   /** what groups subtasks into one kind of work ("前端工程师" and "前端" alike) */
@@ -590,8 +593,11 @@ export function diagnoseRun(run: DispatchRun, ctx: DiagnoseContext): DispatchDia
     });
     return Math.max(0, round1(extra));
   };
-  // the budget line left once the work already planned is paid for (unknown prices → unlimited)
-  const budgetLeft = money.average === null ? Infinity : ctx.budgetCny - (money.total + money.average * (running.length + pending.length));
+  // the budget line left once the work already planned is paid for (unknown
+  // prices → unlimited). The line is a day's: what it already paid for today
+  // counts, other work included, not only this run's finished subtasks.
+  const spent = Math.max(money.total, ctx.spentTodayCny ?? 0);
+  const budgetLeft = money.average === null ? Infinity : ctx.budgetCny - (spent + money.average * (running.length + pending.length));
   let plan = planFor(count);
   // over the budget line: try a smaller squad before suggesting this one
   while (count > 1 && costFor(plan) > budgetLeft) {

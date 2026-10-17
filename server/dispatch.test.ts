@@ -58,6 +58,8 @@ class FakeHost implements DispatchHost {
   setupFailures = new Map<string, string[]>();
   /** threadId → what that task conversation has spent, USD */
   costs = new Map<string, number>();
+  /** what the company (or a department) has spent today, CNY */
+  spentToday?: (section?: string) => number;
   dispatcher?: Dispatcher;
   maxBots = 100;
   settingsValue: DispatchSettings = dispatchSettings({});
@@ -1310,6 +1312,26 @@ describe("Dispatcher", () => {
       const ok = dispatcher.amend(run.id, 2, { by: "chief", botId: "chief" });
       if ("error" in ok) throw new Error(ok.error);
       expect(run.squads![0]!.by).toBe("chief");
+    });
+
+    it("keeps the chief inside today's budget line, counting what everyone else spent today", async () => {
+      const run = await busyRun();
+      // $0.50 a page so far = ¥3.6; this job alone fits the ¥60 line with room to spare
+      for (const subtask of run.subtasks.filter((entry) => entry.status === "done")) host.costs.set(subtask.threadId!, 0.5);
+      writeFileSync(join(dir, "org.json"), JSON.stringify({ chiefBotId: null, rules: { budgetPerDay: 60, chiefMay: { addPeople: true } } }));
+      host.spentToday = () => 10;
+      const roomy = dispatcher.diagnose(run.id, { add: 2 });
+      if ("error" in roomy) throw new Error(roomy.error);
+      expect(roomy.suggestion!.withinBudget).toBe(true);
+      // but the rest of the company has already spent ¥50 of today's line
+      host.spentToday = () => 50;
+      const tight = dispatcher.diagnose(run.id, { add: 2 });
+      if ("error" in tight) throw new Error(tight.error);
+      expect(tight.suggestion!.withinBudget).toBe(false);
+      expect(dispatcher.amend(run.id, 2, { by: "chief", botId: "chief" })).toMatchObject({ error: expect.stringContaining("budget line") });
+      expect(run.squads).toBeUndefined();
+      // the owner's own call still goes through
+      expect("error" in dispatcher.amend(run.id, 2, { by: "owner" })).toBe(false);
     });
 
     it("refuses the chief when more people would not help, but not the owner", async () => {

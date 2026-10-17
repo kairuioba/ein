@@ -343,6 +343,11 @@ describe("diagnoseRun", () => {
     expect(tight.suggestion!.add).toBeLessThan(4);
     const over = diagnoseRun(story, { ...priced, budgetCny: 40 });
     expect(over.suggestion!.withinBudget).toBe(false);
+    // the line is a day's: ¥480 of a ¥500 line already went on other work today
+    const spentElsewhere = diagnoseRun(story, { ...priced, budgetCny: 500, spentTodayCny: 480 });
+    expect(spentElsewhere.suggestion!.withinBudget).toBe(false);
+    // this run's own spend still counts when today's is smaller (it started yesterday)
+    expect(diagnoseRun(story, { ...priced, budgetCny: 500, spentTodayCny: 5 }).suggestion!.withinBudget).toBe(true);
   });
 });
 

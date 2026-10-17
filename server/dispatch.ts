@@ -166,6 +166,8 @@ export interface DispatchHost {
   modelLabel?(selection: ModelSelection): string;
   /** Record a company event (people added, squad reviews). */
   event?(event: DispatchOrgEvent): void;
+  /** What the company, or one department (by section), has spent today, CNY. */
+  spentToday?(section?: string): number;
 }
 
 // ── plan validation ────────────────────────────────────────────────────
@@ -1317,12 +1319,17 @@ export class Dispatcher {
       : ask.total !== undefined && Number.isFinite(ask.total) && ask.total - people > 0
         ? Math.trunc(ask.total - people)
         : undefined;
+    // the department's own line when it has one, else the company's — and
+    // what that line has already paid for today
+    const ownLine = department?.budgetPerDay !== undefined;
+    const spentToday = this.host.spentToday?.(ownLine ? section : undefined);
     return {
       now: Date.now(),
       bot: (id) => this.host.bot(id),
       maxConcurrent: this.host.settings().maxConcurrent,
       rules: org.rules,
       budgetCny: department?.budgetPerDay ?? org.rules.budgetPerDay,
+      ...(typeof spentToday === "number" && Number.isFinite(spentToday) ? { spentTodayCny: spentToday } : {}),
       room: this.host.maxBots - this.host.bots().length,
       roleKey: roleCore,
       modelFor: (subtask) => this.newcomerModel(run, subtask),

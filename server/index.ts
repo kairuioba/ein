@@ -2175,6 +2175,8 @@ const dispatcher = new Dispatcher({
     return `${instance?.displayName ?? selection.instanceId} · ${label}`;
   },
   event: (event) => orgEvents.append(event),
+  // today's spend against the daily budget line, for the chief's add_people
+  spentToday: (section): number => orgLayer.spentToday(section),
   activity: (threadId, label, ok) => {
     // dispatch progress is news about the work: a system line in the chat
     store.appendMessage(threadId, { role: "bot", kind: "activity", tool: { name: label, ...(ok === false ? { ok: false } : { system: true }) } });

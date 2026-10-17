@@ -10,7 +10,7 @@ import { Clock, Crown, LayoutGrid, Maximize2, MessageSquare, Network, Plus, Rota
 import { Button, Dialog, Empty } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { formatDateTime, t } from "@/lib/i18n";
-import { EditHistory, buildWires, clip, clock, type Wire } from "@/lib/workbench";
+import { EditHistory, buildWires, clip, clock, isActiveRun, runDeadline, runMemberIds, type Wire } from "@/lib/workbench";
 import { markSeen } from "@/state/org-api";
 import { api, useStore, type Bot } from "@/state/store";
 import { recommendForText, type Recommendation } from "../../../shared/model-recommender";
@@ -18,7 +18,9 @@ import { recommendForText, type Recommendation } from "../../../shared/model-rec
 import { AddPeopleDialog } from "./AddPeopleDialog";
 import type { TimelineMark } from "./DayTimeline";
 import { MacMenu, type MacMenuItem } from "./MacMenu";
-import { useWorkbenchModel, type WorkbenchModel } from "./model";
+import { useWorkbenchModel, type BotWithMeta, type Room, type WorkbenchModel } from "./model";
+import type { DispatchRun } from "../../../shared/dispatch-types";
+import { DEPARTMENT_COLORS } from "../../../shared/org-types";
 import { DiamondMark, useElementSize, useStoredState } from "./parts";
 import { PeopleView } from "./PeopleView";
 import { TreeDrawer } from "./TreeDrawer";
@@ -35,6 +37,68 @@ export function WorkbenchPage({ onEditSectionContext }: { onEditSectionContext?:
   const { state, dispatch } = useStore();
   const model = useWorkbenchModel();
   const [view, setView] = useStoredState<View>("omb.workbench.view", "people", VIEWS);
+  // 一个任务一个工作台：顶部任务选择器决定看哪个任务，不再汇总全公司。
+  const tasks = useMemo(
+    () => model.dispatch.runs.filter((run) => !run.parentRunId).sort((a, b) => b.createdAt - a.createdAt).slice(0, 8),
+    [model.dispatch.runs],
+  );
+  const [pickedTaskId, setPickedTaskId] = useState<string>(() => {
+    try {
+      return localStorage.getItem("omb.workbench.task") ?? "";
+    } catch {
+      return "";
+    }
+  });
+  const pickTask = useCallback((runId: string) => {
+    setPickedTaskId(runId);
+    try {
+      localStorage.setItem("omb.workbench.task", runId);
+    } catch {
+      // the choice still holds for this visit
+    }
+    setSelection(null);
+  }, []);
+  const selectedRun = tasks.find((run) => run.id === pickedTaskId) ?? model.activeRun ?? tasks[0];
+  const scoped = useMemo(() => {
+    if (!selectedRun || tasks.length <= 1) return model;
+    const ids = runMemberIds(model.dispatch.runs, selectedRun.id);
+    if (!ids.size) return model;
+    const rooms: Room[] = model.rooms.flatMap((room) => {
+      const everyone = room.everyone.filter((bot) => ids.has(bot.id));
+      if (!everyone.length) return [];
+      const squads = room.squads.map((squad) => squad.filter((bot) => ids.has(bot.id)));
+      return [
+        {
+          ...room,
+          lead: room.lead && ids.has(room.lead.id) ? room.lead : undefined,
+          everyone,
+          main: room.main.filter((bot) => ids.has(bot.id)),
+          squads,
+          squadInfo: room.squadInfo.slice(0, squads.length),
+        },
+      ];
+    });
+    // task members outside any department: one room inside this task only
+    const inRooms = new Set(rooms.flatMap((room) => room.everyone.map((bot) => bot.id)));
+    const outside = [...ids].map((id) => model.botById.get(id)).filter((bot): bot is BotWithMeta => Boolean(bot && !inRooms.has(bot.id)));
+    if (outside.length) {
+      rooms.push({ key: "task-members", section: "", label: t("Task members"), color: "#9AA0AC", isolated: false, lead: undefined, main: outside, squads: [], squadInfo: [], everyone: outside });
+    }
+    const roomOf = new Map<string, Room>();
+    for (const room of rooms) for (const bot of room.everyone) roomOf.set(bot.id, room);
+    return {
+      ...model,
+      rooms,
+      roomOf,
+      botById: new Map([...ids].flatMap((id) => { const bot = model.botById.get(id); return bot ? [[id, bot] as const] : []; })),
+      bots: [...ids].flatMap((id) => { const bot = model.botById.get(id); return bot ? [bot] : []; }),
+      looseBots: [],
+      states: model.states,
+      activeRun: selectedRun,
+      title: selectedRun.goal,
+      deadline: runDeadline(selectedRun, model.now),
+    } satisfies WorkbenchModel;
+  }, [model, selectedRun, tasks.length]);
   const [lens, setLens] = useStoredState<Lens>("omb.workbench.lens", "tree", LENS_IDS);
   const [selection, setSelection] = useState<TreeSelection>(null);
   const [drawerDismissed, setDrawerDismissed] = useState(false);
@@ -207,9 +271,9 @@ export function WorkbenchPage({ onEditSectionContext }: { onEditSectionContext?:
     return () => window.removeEventListener("keydown", onKey);
   }, [menu, addOpen, say]);
 
-  const marks = useMemo(() => timelineMarks(model), [model]);
-  const orders = useMemo(() => workOrders(model), [model]);
-  const drawerSelection = selection ?? (drawerDismissed ? null : defaultSelection(model, lens, orders));
+  const marks = useMemo(() => timelineMarks(scoped), [scoped]);
+  const orders = useMemo(() => workOrders(scoped), [scoped]);
+  const drawerSelection = selection ?? (drawerDismissed ? null : defaultSelection(scoped, lens, orders));
   const drawerWidth = pageSize.width >= 1240 ? 430 : 380;
   const pending = model.dispatch.runs.filter((run) => run.status === "awaiting-approval");
   const needs = model.needsYou.length;
@@ -226,7 +290,10 @@ export function WorkbenchPage({ onEditSectionContext }: { onEditSectionContext?:
   return (
     <main ref={pageRef} className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-stage text-ink">
       <Header
-        model={model}
+        model={scoped}
+        tasks={tasks}
+        selectedRun={selectedRun}
+        onSelectTask={pickTask}
         view={view}
         onView={(next) => {
           setView(next);
@@ -270,7 +337,7 @@ export function WorkbenchPage({ onEditSectionContext }: { onEditSectionContext?:
       )}
       <div className="flex min-h-0 flex-1">
         {view === "people" ? (
-          <PeopleView model={model} marks={marks} onOpenChat={openChat} onOpenGroup={openGroup} onOpenLibrary={() => openPage("library")} />
+          <PeopleView model={scoped} marks={marks} onOpenChat={openChat} onOpenGroup={openGroup} onOpenLibrary={() => openPage("library")} />
         ) : (
           <>
             <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
@@ -285,7 +352,7 @@ export function WorkbenchPage({ onEditSectionContext }: { onEditSectionContext?:
                 />
               )}
               <WorkbenchCanvas
-                model={model}
+                model={scoped}
                 lens={lens}
                 marks={marks}
                 selection={drawerSelection}
@@ -302,7 +369,7 @@ export function WorkbenchPage({ onEditSectionContext }: { onEditSectionContext?:
             </div>
             {drawerSelection && (
               <TreeDrawer
-                model={model}
+                model={scoped}
                 selection={drawerSelection}
                 orders={orders}
                 width={drawerWidth}
@@ -330,7 +397,7 @@ export function WorkbenchPage({ onEditSectionContext }: { onEditSectionContext?:
       )}
       <AddPeopleDialog
         open={addOpen}
-        run={model.activeRun}
+        run={scoped.activeRun && isActiveRun(scoped.activeRun) ? scoped.activeRun : undefined}
         model={model}
         onClose={() => setAddOpen(false)}
         onDone={(message) => {
@@ -408,8 +475,30 @@ export function timelineMarks(model: WorkbenchModel): TimelineMark[] {
 }
 
 // ── header ───────────────────────────────────────────────────────────────────
+function runStatusLabel(status: DispatchRun["status"]): string {
+  switch (status) {
+    case "running":
+      return t("In progress");
+    case "awaiting-approval":
+      return t("Waiting to start");
+    case "synthesizing":
+      return t("Writing report");
+    case "done":
+      return t("Done");
+    case "failed":
+      return t("Failed");
+    case "canceled":
+      return t("Canceled");
+    default:
+      return String(status);
+  }
+}
+
 function Header({
   model,
+  tasks,
+  selectedRun,
+  onSelectTask,
   view,
   onView,
   lens,
@@ -420,6 +509,9 @@ function Header({
   onAdd,
 }: {
   model: WorkbenchModel;
+  tasks: DispatchRun[];
+  selectedRun?: DispatchRun;
+  onSelectTask: (runId: string) => void;
   view: View;
   onView: (view: View) => void;
   lens: Lens;
@@ -438,9 +530,32 @@ function Header({
   return (
     <header className="flex h-14 shrink-0 items-center gap-2.5 border-b border-hairline/30 px-5 max-md:pl-12">
       <Network size={18} className="shrink-0 text-select" aria-hidden />
-      <h1 className="min-w-0 truncate text-[15.5px] font-bold" title={model.activeRun?.goal}>
-        {title}
-      </h1>
+      {tasks.length > 0 ? (
+        <div className="flex min-w-0 items-center gap-1.5" title={selectedRun?.goal ?? title}>
+          <span
+            className="size-2.5 shrink-0 rounded-full"
+            style={{ background: DEPARTMENT_COLORS[(selectedRun ? tasks.indexOf(selectedRun) : 0) % DEPARTMENT_COLORS.length] }}
+          />
+          <span className="shrink-0 text-[11px] font-bold text-ink-secondary">{selectedRun ? tasks.indexOf(selectedRun) + 1 : "–"}</span>
+          <select
+            aria-label={t("Task")}
+            value={selectedRun?.id ?? ""}
+            onChange={(event) => onSelectTask(event.target.value)}
+            className="h-8 min-w-0 max-w-[340px] truncate rounded-[9px] bg-raised px-2 text-[13.5px] font-semibold text-ink shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_80%,transparent)]"
+          >
+            {tasks.map((run, index) => (
+              <option key={run.id} value={run.id}>{`${index + 1}. ${clip(run.goal, 34)} · ${runStatusLabel(run.status)}`}</option>
+            ))}
+          </select>
+          {selectedRun && !tight && (
+            <span className="inline-flex h-6 shrink-0 items-center rounded-full bg-control px-2 text-[11px] font-semibold whitespace-nowrap text-ink-secondary">
+              {runStatusLabel(selectedRun.status)}
+            </span>
+          )}
+        </div>
+      ) : (
+        <h1 className="min-w-0 truncate text-[15.5px] font-bold">{title}</h1>
+      )}
       {deadlineDay && hoursLeft !== null && !tight && (
         <span className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-[12.5px] whitespace-nowrap text-ink shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-hairline)_70%,transparent)]">
           <Clock size={12} className="text-ink-secondary" />

@@ -25,6 +25,7 @@ import {
   peopleStates,
   placeLabels,
   projectTitle,
+  runMemberIds,
   splitRemaining,
   zoomAround,
   type TreeInput,
@@ -71,6 +72,19 @@ const run = (subtasks: DispatchSubtask[], extra: Partial<DispatchRun> = {}): Dis
 });
 
 const inbox = (item: Partial<InboxItem> & Pick<InboxItem, "kind" | "botId">): InboxItem => ({ id: item.botId + item.kind, title: "主视觉 4 选 1", since: NOW - 5 * MIN, ...item });
+
+describe("task scoping", () => {
+  it("collects every bot in a task, including its department child runs and squads", () => {
+    const parent = run([subtask("a", "lead", "running", { childRunId: "child" })], {
+      id: "parent",
+      squads: [{ name: "组 B", leadBotId: "b", botIds: ["b"], subtaskIds: [], addedAt: 1, by: "owner", reviewAt: 2 }],
+    });
+    const child = run([subtask("c", "a", "pending")], { id: "child", parentRunId: "parent" });
+    const other = run([subtask("d", "c", "done")], { id: "other" });
+    expect([...runMemberIds([parent, child, other], "parent")].sort()).toEqual(["a", "b", "lead"]);
+    expect([...runMemberIds([parent, child, other], "missing")]).toEqual([]);
+  });
+});
 
 describe("people states", () => {
   const states = (runs: DispatchRun[], items: InboxItem[] = [], lastSeen = 0) =>

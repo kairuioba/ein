@@ -74,6 +74,26 @@ export function activeRun(runs: readonly DispatchRun[]): DispatchRun | undefined
   return newestFirst(runs).find((run) => isActiveRun(run) && !run.parentRunId);
 }
 
+/** Every bot involved in one task: the assignees of the run and of its
+ * department child runs, plus squads added mid-run. The workbench uses it to
+ * scope itself to a single task. */
+export function runMemberIds(runs: readonly DispatchRun[], runId: string): Set<string> {
+  const byId = new Map(runs.map((run) => [run.id, run]));
+  const ids = new Set<string>();
+  const seen = new Set<string>();
+  const visit = (id: string) => {
+    if (seen.has(id)) return;
+    seen.add(id);
+    const run = byId.get(id);
+    if (!run) return;
+    for (const subtask of run.subtasks) if (subtask.assigneeBotId) ids.add(subtask.assigneeBotId);
+    for (const squad of run.squads ?? []) for (const botId of squad.botIds) ids.add(botId);
+    for (const child of runs) if (child.parentRunId === id) visit(child.id);
+  };
+  visit(runId);
+  return ids;
+}
+
 /** A subtask a lead handed to its own team is a container: the child run's
  * subtasks are the real work, so counts skip it. */
 export const isLeafSubtask = (subtask: Pick<DispatchSubtask, "childRunId">) => !subtask.childRunId;

@@ -20,9 +20,14 @@ import {
   AntigravityDriver,
   antigravityAgentsMcpServer,
   antigravityComputerMcpServer,
+  antigravityHelperModel,
   antigravityMcpServers,
   ensureAntigravityMcpServers,
+  parseAgyModelsJson,
+  parseAgyModelsText,
+  probeAntigravityModels,
   readAntigravityModelCatalog,
+  settleAntigravityModels,
   STATIC_ANTIGRAVITY_MODELS,
 } from "./antigravity.ts";
 
@@ -49,6 +54,115 @@ describe("readAntigravityModelCatalog", () => {
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
+  });
+});
+
+describe("Antigravity live catalog", () => {
+  // `agy models` as Antigravity's docs print it (antigravity.google/docs/cli/headless)
+  const DOCS_SAMPLE = [
+    "gemini-4-argon-high       Gemini 4 Argon (High)",
+    "gemini-4-argon-medium     Gemini 4 Argon (Medium)",
+    "gemini-3.8-flash-high     Gemini 3.8 Flash (High)",
+    "gemini-3.1-pro-high       Gemini 3.1 Pro (High)",
+  ].join("\n");
+
+  it("reads the slug and display-name columns of `agy models`", () => {
+    expect(parseAgyModelsText(`${DOCS_SAMPLE}\n\n`)).toEqual([
+      { id: "gemini-4-argon-high", label: "Gemini 4 Argon (High)" },
+      { id: "gemini-4-argon-medium", label: "Gemini 4 Argon (Medium)" },
+      { id: "gemini-3.8-flash-high", label: "Gemini 3.8 Flash (High)" },
+      { id: "gemini-3.1-pro-high", label: "Gemini 3.1 Pro (High)" },
+    ]);
+    expect(parseAgyModelsText("MODEL   NAME\nAvailable:\nbare-slug")).toEqual([{ id: "bare-slug", label: "bare-slug" }]);
+  });
+
+  it("reads the likely JSON shapes of `agy models --output-format json`", () => {
+    expect(parseAgyModelsJson({ models: [{ slug: "gemini-4-argon-high", displayName: "Gemini 4 Argon (High)" }] })).toEqual([
+      { id: "gemini-4-argon-high", label: "Gemini 4 Argon (High)" },
+    ]);
+    expect(parseAgyModelsJson([{ id: "a-1", name: "A One" }, "b-2", { name: "c-3" }, { label: "no id" }])).toEqual([
+      { id: "a-1", label: "A One" },
+      { id: "b-2", label: "b-2" },
+      { id: "c-3", label: "c-3" },
+    ]);
+    expect(parseAgyModelsJson({ ok: true })).toEqual([]);
+  });
+
+  it("asks the installed agy, falling back to text when the JSON flag is unknown", async () => {
+    chmodSync(FAKE_CLI, 0o755);
+    const fromJson = await probeAntigravityModels(FAKE_CLI, process.env);
+    expect(fromJson?.map((row) => row.id)).toEqual([
+      "gemini-4-argon-high",
+      "gemini-4-argon-medium",
+      "gemini-3.8-flash-high",
+      "gemini-3.1-pro-high",
+    ]);
+    const fromText = await probeAntigravityModels(FAKE_CLI, { ...process.env, FAKE_AGY_MODELS: "text" });
+    expect(fromText).toEqual(fromJson);
+    await expect(probeAntigravityModels(FAKE_CLI, { ...process.env, FAKE_AGY_MODELS: "none" })).resolves.toBeNull();
+  });
+
+  it("shows agy's own list once the background probe lands", async () => {
+    chmodSync(FAKE_CLI, 0o755);
+    const home = mkdtempSync(join(tmpdir(), "omb-agy-live-"));
+    const environment = { HOME: home, EIN_PROBE_LIVE_MODELS: "1" };
+    const instance = await AntigravityDriver.create({
+      instanceId: "agy-live",
+      displayName: "Antigravity",
+      environment,
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: true },
+    });
+    try {
+      expect(instance.models).toEqual(STATIC_ANTIGRAVITY_MODELS);
+      await settleAntigravityModels(FAKE_CLI, { ...process.env, ...environment });
+      await instance.refreshModels?.();
+      expect(instance.models.options.map((option) => option.id)).toEqual([
+        "gemini-4-argon-high",
+        "gemini-4-argon-medium",
+        "gemini-3.8-flash-high",
+        "gemini-3.1-pro-high",
+      ]);
+      expect(instance.models.default).toBe("gemini-3.1-pro-high");
+    } finally {
+      await instance.dispose();
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("ships the current slugs and keeps every slug agy 1.1.12 listed", () => {
+    const ids = STATIC_ANTIGRAVITY_MODELS.options.map((option) => option.id);
+    expect(ids.slice(0, 2)).toEqual(["gemini-4-argon-high", "gemini-4-argon-medium"]);
+    for (const id of [
+      "gemini-3.1-pro-high",
+      "gemini-3.1-pro-low",
+      "gemini-3.7-flash-high",
+      "gemini-3.7-flash-medium",
+      "gemini-3.7-flash-low",
+      "gemini-3.6-flash-high",
+      "gemini-3.6-flash-medium",
+      "gemini-3.6-flash-low",
+      "claude-sonnet-4-6",
+      "claude-opus-4-6-thinking",
+      "gpt-oss-120b-medium",
+    ]) {
+      expect(ids).toContain(id);
+    }
+  });
+
+  it("titles and summaries use the cheapest Flash the catalog still has", () => {
+    expect(antigravityHelperModel(STATIC_ANTIGRAVITY_MODELS)).toBe("gemini-3.6-flash-low");
+    expect(
+      antigravityHelperModel({
+        default: "gemini-4-argon-high",
+        options: [
+          { id: "gemini-4-argon-high", label: "Argon" },
+          { id: "gemini-3.8-flash-high", label: "3.8 High" },
+          { id: "gemini-3.8-flash-medium", label: "3.8 Medium" },
+        ],
+      }),
+    ).toBe("gemini-3.8-flash-medium");
+    expect(antigravityHelperModel({ default: "only-pro", options: [{ id: "only-pro", label: "Pro" }] })).toBe("only-pro");
   });
 });
 

@@ -12,6 +12,11 @@
 //     global MCP config, calls list_bots then ask_bot, and returns the peer's
 //     real reply. This pins the Antigravity/Gemini comms path end to end.
 //
+//   `agy models` prints the slug/name columns of the documented output
+//   (antigravity.google/docs/cli/headless); with `--output-format json` it
+//   prints a JSON list unless FAKE_AGY_MODELS=text, which plays an agy that
+//   rejects the flag. FAKE_AGY_MODELS=none prints nothing (signed out).
+//
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
 import { spawn } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -140,6 +145,26 @@ if (process.env.FAKE_AGY_DUMP) {
 }
 if (argv.includes("--version")) {
   console.log("1.1.12");
+  process.exit(0);
+}
+if (argv[0] === "models") {
+  const rows = [
+    ["gemini-4-argon-high", "Gemini 4 Argon (High)"],
+    ["gemini-4-argon-medium", "Gemini 4 Argon (Medium)"],
+    ["gemini-3.8-flash-high", "Gemini 3.8 Flash (High)"],
+    ["gemini-3.1-pro-high", "Gemini 3.1 Pro (High)"],
+  ];
+  const format = process.env.FAKE_AGY_MODELS ?? "json";
+  if (format === "none") process.exit(1);
+  if (argv.includes("--output-format")) {
+    if (format === "text") {
+      process.stderr.write("error: unknown flag: --output-format\n");
+      process.exit(2);
+    }
+    console.log(JSON.stringify({ models: rows.map(([slug, displayName]) => ({ slug, displayName })) }));
+    process.exit(0);
+  }
+  console.log(rows.map(([slug, name]) => `${slug.padEnd(26)}${name}`).join("\n"));
   process.exit(0);
 }
 

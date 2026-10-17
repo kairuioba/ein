@@ -27,6 +27,7 @@ import { DATA_DIR, stripWorkspaceCredentialEnv } from "../config.ts";
 import { computerProxyEnv } from "../container-computer.ts";
 import { augmentedPath } from "../env-path.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
+import { createLiveCatalog, pickDefault, reviveCatalog, type CatalogOption } from "./live-catalog.ts";
 import { injectedApiModel, mergeLocalInject } from "./local-inject.ts";
 import { t } from "../../shared/i18n.ts";
 
@@ -51,19 +52,24 @@ export interface AntigravityConfig {
   fullAuto: boolean;
 }
 
-// model catalog from `agy models` (agy 1.1.12)
+// The fallback before `agy models` answers: the slugs Antigravity's own docs
+// print for `agy models` as of agy 1.4 (antigravity.google/docs/cli/headless),
+// newest first, then every slug agy 1.1.12 listed so saved bots still match.
 export const STATIC_ANTIGRAVITY_MODELS: ModelCatalog = {
   default: "gemini-3.1-pro-high",
   options: [
-    { id: "gemini-3.1-pro-high", label: "Gemini 3.1 Pro (High)" },
-    { id: "gemini-3.1-pro-low", label: "Gemini 3.1 Pro (Low)" },
-    // 3.7 ids confirmed against the agy 1.1.12 binary's own model table
+    { id: "gemini-4-argon-high", label: "Gemini 4 Argon (High)" },
+    { id: "gemini-4-argon-medium", label: "Gemini 4 Argon (Medium)" },
+    { id: "gemini-3.8-flash-high", label: "Gemini 3.8 Flash (High)" },
+    { id: "gemini-3.8-flash-medium", label: "Gemini 3.8 Flash (Medium)" },
     { id: "gemini-3.7-flash-high", label: "Gemini 3.7 Flash (High)" },
     { id: "gemini-3.7-flash-medium", label: "Gemini 3.7 Flash (Medium)" },
     { id: "gemini-3.7-flash-low", label: "Gemini 3.7 Flash (Low)" },
     { id: "gemini-3.6-flash-high", label: "Gemini 3.6 Flash (High)" },
     { id: "gemini-3.6-flash-medium", label: "Gemini 3.6 Flash (Medium)" },
     { id: "gemini-3.6-flash-low", label: "Gemini 3.6 Flash (Low)" },
+    { id: "gemini-3.1-pro-high", label: "Gemini 3.1 Pro (High)" },
+    { id: "gemini-3.1-pro-low", label: "Gemini 3.1 Pro (Low)" },
     { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6 (Thinking)" },
     { id: "claude-opus-4-6-thinking", label: "Claude Opus 4.6 (Thinking)" },
     { id: "gpt-oss-120b-medium", label: "GPT-OSS 120B (Medium)" },
@@ -94,8 +100,117 @@ function extrasFromUnknown(value: unknown): Array<{ id: string; label: string }>
   });
 }
 
-/** Extra ids from ~/.gemini/antigravity-cli/settings.json, if the user added any. */
-export function readAntigravityModelCatalog(env: Record<string, string | undefined> = process.env) {
+/** `agy models` text: one model per line, the slug then its display name in
+ * aligned columns (`gemini-4-argon-high       Gemini 4 Argon (High)`). */
+export function parseAgyModelsText(stdout: string): CatalogOption[] {
+  const options: CatalogOption[] = [];
+  for (const raw of stdout.split(/\r?\n/)) {
+    const line = raw.trim();
+    const match = /^(\S+)(?:\s+(.+))?$/.exec(line);
+    if (!match) continue;
+    const id = match[1]!;
+    // a column header or a notice, not a slug
+    if (!AGY_MODEL_ID.test(id) || /^[A-Z][A-Z_ ]*$/.test(id) || id.endsWith(":")) continue;
+    if (options.some((option) => option.id === id)) continue;
+    const label = (match[2] ?? "").replace(/\s*\((?:default|current)\)\s*$/i, "").trim();
+    options.push({ id, label: label || id });
+  }
+  return options;
+}
+
+/** `agy models --output-format json` (agy 1.1.12+). The shape is not
+ * documented, so read the likely ones: a list, or one under models/data,
+ * of slugs or of objects naming a slug/id and a display name. */
+export function parseAgyModelsJson(payload: unknown): CatalogOption[] {
+  const list = Array.isArray(payload)
+    ? payload
+    : payload && typeof payload === "object"
+      ? ((payload as { models?: unknown; data?: unknown }).models ?? (payload as { data?: unknown }).data)
+      : null;
+  if (!Array.isArray(list)) return [];
+  const options: CatalogOption[] = [];
+  for (const item of list) {
+    let id = "";
+    let label = "";
+    if (typeof item === "string") id = item;
+    else if (item && typeof item === "object") {
+      const row = item as Record<string, unknown>;
+      const text = (key: string) => (typeof row[key] === "string" ? (row[key] as string).trim() : "");
+      id = text("slug") || text("id") || text("model") || (AGY_MODEL_ID.test(text("name")) ? text("name") : "");
+      label = text("displayName") || text("display_name") || text("label") || text("title") || (text("name") !== id ? text("name") : "");
+    }
+    if (!AGY_MODEL_ID.test(id) || options.some((option) => option.id === id)) continue;
+    options.push({ id, label: label || id });
+  }
+  return options;
+}
+
+function agyModelsOutput(cli: string, args: string[], env: Record<string, string | undefined>): Promise<string | null> {
+  return new Promise((resolve) => {
+    execCli(cli, args, { timeout: 20_000, maxBuffer: 4 * 1024 * 1024, env: env as NodeJS.ProcessEnv }, (err, stdout) =>
+      resolve(err ? null : String(stdout ?? "")),
+    );
+  });
+}
+
+/** Ask the installed agy which models this sign-in can use (`agy models`
+ * "needs a signed-in session"; it starts no conversation and spends no
+ * quota). JSON first, the documented text columns for an older agy. */
+export async function probeAntigravityModels(
+  cli: string,
+  env: Record<string, string | undefined>,
+): Promise<CatalogOption[] | null> {
+  const json = await agyModelsOutput(cli, ["models", "--output-format", "json"], env);
+  if (json !== null) {
+    try {
+      const rows = parseAgyModelsJson(JSON.parse(json));
+      if (rows.length) return rows;
+    } catch {
+      // not JSON after all: try the text form below
+    }
+  }
+  const text = await agyModelsOutput(cli, ["models"], env);
+  const rows = text === null ? [] : parseAgyModelsText(text);
+  return rows.length ? rows : null;
+}
+
+const agyCatalogs = createLiveCatalog<ModelCatalog>({ file: "antigravity.json", revive: reviveCatalog });
+
+function agyFingerprint(cli: string, env: Record<string, string | undefined>): string {
+  return [cli, env.HOME || env.USERPROFILE || homedir(), env.GEMINI_API_KEY ? "api-key" : "sign-in"].join("|");
+}
+
+/** Tests: wait for the background `agy models` refresh for this CLI/home. */
+export function settleAntigravityModels(cli: string, env: Record<string, string | undefined>): Promise<void> {
+  return agyCatalogs.settle(agyFingerprint(cli, env));
+}
+
+/** The models agy offers right now, without waiting: its last `agy models`
+ * answer (refreshed in the background), or null before the first one. */
+export function liveAntigravityModels(cli: string, env: Record<string, string | undefined>): CatalogOption[] | null {
+  return (
+    agyCatalogs.read(
+      agyFingerprint(cli, env),
+      async () => {
+        const rows = await probeAntigravityModels(cli, env);
+        return rows ? { default: rows[0]!.id, options: rows } : null;
+      },
+      env,
+    )?.options ?? null
+  );
+}
+
+/** The official rows (agy's live list, else the shipped slugs) plus extra ids
+ * from ~/.gemini/antigravity-cli/settings.json, if the user added any. */
+export function readAntigravityModelCatalog(
+  env: Record<string, string | undefined> = process.env,
+  live: CatalogOption[] | null = null,
+): ModelCatalog {
+  const official = live?.length ? live : STATIC_ANTIGRAVITY_MODELS.options;
+  const base: ModelCatalog = {
+    default: pickDefault(official, STATIC_ANTIGRAVITY_MODELS.default),
+    options: official.map((option) => ({ ...option })),
+  };
   const home = env.HOME || env.USERPROFILE || homedir();
   let settings: Record<string, unknown> = {};
   try {
@@ -103,7 +218,7 @@ export function readAntigravityModelCatalog(env: Record<string, string | undefin
       readFileSync(join(home, ".gemini", "antigravity-cli", "settings.json"), "utf8"),
     ) as Record<string, unknown>;
   } catch {
-    return STATIC_ANTIGRAVITY_MODELS;
+    return live?.length ? base : STATIC_ANTIGRAVITY_MODELS;
   }
   const extras = [
     ...extrasFromUnknown(settings.availableModels),
@@ -111,14 +226,27 @@ export function readAntigravityModelCatalog(env: Record<string, string | undefin
     ...extrasFromUnknown(settings.extraModels),
   ];
   if (typeof settings.model === "string") extras.push(...extrasFromUnknown([settings.model]));
-  const options = STATIC_ANTIGRAVITY_MODELS.options.map((option) => ({ ...option }));
+  const options = base.options;
   const seen = new Set(options.map((option) => option.id));
   for (const extra of extras) {
     if (seen.has(extra.id)) continue;
     seen.add(extra.id);
     options.push({ id: extra.id, label: extra.label, custom: true });
   }
-  return { default: STATIC_ANTIGRAVITY_MODELS.default, options };
+  return { default: base.default, options };
+}
+
+/** The model for one-shot helper text (titles, summaries): the cheapest
+ * Flash the catalog offers, so a retired slug never breaks it. */
+export function antigravityHelperModel(catalog: ModelCatalog): string {
+  const ids = catalog.options.filter((option) => !option.custom).map((option) => option.id);
+  if (ids.includes("gemini-3.6-flash-low")) return "gemini-3.6-flash-low";
+  return (
+    ids.find((id) => /flash/i.test(id) && /-low$/.test(id)) ??
+    ids.find((id) => /flash/i.test(id) && /-medium$/.test(id)) ??
+    ids.find((id) => /flash/i.test(id)) ??
+    catalog.default
+  );
 }
 
 // ── computer MCP mount ──────────────────────────────────────────────────
@@ -385,7 +513,10 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
     let models = STATIC_ANTIGRAVITY_MODELS;
     const refreshModels = async () => {
       try {
-        const resolved = await mergeLocalInject(readAntigravityModelCatalog(catalogEnv), catalogEnv);
+        // Never waits on agy: its last `agy models` answer, refreshed in the
+        // background, plus settings.json extras and live local hosts.
+        const live = liveAntigravityModels(config.cli, catalogEnv);
+        const resolved = await mergeLocalInject(readAntigravityModelCatalog(catalogEnv, live), catalogEnv);
         if (resolved.options.length) models = resolved;
       } catch {
         // Keep the last usable catalog when settings.json is unreadable.
@@ -831,7 +962,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         new Promise((resolve, reject) => {
           execCli(
             config.cli,
-            ["-p", prompt, "--output-format", "text", "--model", "gemini-3.6-flash-low"],
+            ["-p", prompt, "--output-format", "text", "--model", antigravityHelperModel(models)],
             { timeout: 60_000, env },
             (err, stdout) => (err ? reject(err) : resolve(stdout.trim())),
           );

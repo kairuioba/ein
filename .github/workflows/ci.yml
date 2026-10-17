@@ -45,13 +45,35 @@ jobs:
         run: node --input-type=commonjs -e "require('electron')"
       - run: pnpm typecheck
       - name: Run tests
-        run: pnpm test
+        shell: bash
+        run: pnpm test 2>&1 | tee "$RUNNER_TEMP/test-output.log"
         env:
           # Electron 43 currently exits with EXCEPTION_BREAKPOINT before ready
           # on GitHub's Windows runners even after Chromium's required sandbox
           # ACL is present. Production fails closed there through the tested
           # browser-platform gate; keep probing the upstream regression below.
           OMB_SKIP_REAL_ELECTRON_BROWSER_FIXTURE: ${{ matrix.os == 'windows-latest' && '1' || '0' }}
+      # Annotations stay readable through the API even where the raw log is
+      # out of reach, so a failure carries the lines that explain it.
+      - name: Surface the failing test output
+        if: failure()
+        shell: bash
+        run: |
+          set +e +o pipefail
+          log="$RUNNER_TEMP/test-output.log"
+          [ -f "$log" ] || exit 0
+          clean() { sed -e 's/\x1b\[[0-9;]*[A-Za-z]//g' -e 's/%/%25/g' -e 's/\r//g'; }
+          # at most ten error annotations per step: six matching lines, then
+          # the last 120 lines of output in three blocks
+          grep -nE "✖|✗|×|FAIL|not ok|AssertionError|ERR_|Command failed" "$log" | clean | head -n 6 | while IFS= read -r line; do
+            echo "::error title=failing line::${line:0:900}"
+          done
+          tail -n 120 "$log" | clean > "$RUNNER_TEMP/tail.txt"
+          for part in 0 1 2; do
+            body=$(sed -n "$((part * 40 + 1)),$((part * 40 + 40))p" "$RUNNER_TEMP/tail.txt" | awk '{ printf "%s%%0A", substr($0, 1, 300) }')
+            [ -n "$body" ] && echo "::error title=test output tail, block $((part + 1)) of 3::${body}"
+          done
+          exit 0
       - name: Probe upstream Electron Windows sandbox regression
         if: matrix.os == 'windows-latest'
         continue-on-error: true

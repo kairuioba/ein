@@ -18,7 +18,7 @@ import {
 } from "./PhoneSetupFlow";
 import { companionPairingMode } from "../lib/phone-setup";
 import { ConnectionDetail } from "./ConnectionDetail";
-import { Card, Switch } from "./SettingsPrimitives";
+import { Card, NotYetAvailable, Switch } from "./SettingsPrimitives";
 import { t, tn } from "@/lib/i18n";
 
 export {
@@ -214,7 +214,9 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
                 <div className="min-w-0">
                   <div className="text-[13px] text-ink">{t("Secure phone account")}</div>
                   <div className="mt-0.5 text-[11.5px] leading-relaxed text-ink-secondary">
-                    {c.account?.status === "ready"
+                    {c.account?.offered === false
+                      ? t("Online access from outside this network will open in a later update. Pairing on the same Wi-Fi works now.")
+                      : c.account?.status === "ready"
                       ? t("Signed in as {email}.", { email: c.account.email ?? t("your account") })
                       : c.account?.status === "connecting"
                         ? t("Finishing secure access…")
@@ -224,6 +226,7 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
                   </div>
                 </div>
               </div>
+              {c.account?.offered === false && <NotYetAvailable />}
               {(c.account?.status === "ready" || c.account?.status === "connecting" || c.account?.status === "error") && (
                 <button
                   disabled={c.accountBusy}

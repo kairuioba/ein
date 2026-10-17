@@ -700,14 +700,14 @@ export function PluginsPanel() {
             above already explains this launch, and "configure your own
             connection service" is advice for someone who never set one up. */}
         {!configured && !stale && (
-          <div className="mb-3 rounded-xl bg-warning/10 px-4 py-3 text-[13px] text-warning">
-            {t("Connected apps are temporarily unavailable. You can retry after restarting, or configure your own connection service.")}{" "}
+          <div className="mb-3 rounded-xl bg-inset px-4 py-3 text-[13px] text-ink-secondary">
+            {t("Hosted connected apps are not available yet. Add your own Composio key in Settings → Connections to connect apps now.")}{" "}
             <button
               type="button"
-              className="font-medium underline underline-offset-2"
+              className="font-medium text-ink underline underline-offset-2"
               onClick={() => {
                 close();
-                dispatch({ type: "toggleAppSettings", open: true });
+                dispatch({ type: "toggleAppSettings", open: true, section: "connections" });
               }}
             >
               {t("Open settings")}

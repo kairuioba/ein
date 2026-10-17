@@ -167,7 +167,7 @@ export function readCodexAppServerModelCatalog(
     });
     child.on("error", () => finish(null));
     child.on("close", () => finish(null));
-    request("initialize", { clientInfo: { name: "openmausbot", version: "1" } }, "initialize");
+    request("initialize", { clientInfo: { name: "ein", version: "1" } }, "initialize");
   });
 }
 

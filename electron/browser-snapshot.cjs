@@ -202,8 +202,9 @@ function browserNavigationAllowed(raw) {
  * Electron actually is. */
 function browserUserAgent(userAgent) {
   return String(userAgent ?? "")
-    .replace(/\s?OpenMausBot\/\S+/g, "")
-    .replace(/\s?openmausbot\/\S+/g, "")
+    // Electron adds the app's own name and version: Ein/1.1.0, or ein/… in a
+    // dev run. \b keeps a longer token that merely ends in "ein" intact.
+    .replace(/\s?\bEin\/\S+/gi, "")
     .replace(/\s?Electron\/\S+/g, "")
     .replace(/\s{2,}/g, " ")
     .trim();

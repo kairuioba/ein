@@ -88,7 +88,7 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
       const { threadId } = turn;
       const computer = turn.integrations?.computer;
       const boxId = computer && (!computer.kind || computer.kind === "box") ? computer.boxId : undefined;
-      if (!token) throw new Error(t("box not configured — add {snippet} to ~/.openmausbot/config.json", { snippet: BOX_CONFIG_SNIPPET }));
+      if (!token) throw new Error(t("box not configured — add {snippet} to ~/.ein/config.json", { snippet: BOX_CONFIG_SNIPPET }));
       if (!boxId) {
         throw new Error(t("this bot has no computer yet — open the Computer panel and provision one"));
       }
@@ -234,7 +234,7 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
 
     const snapshot = async (): Promise<ProviderSnapshot> => {
       if (!token) {
-        return { state: "unavailable", reason: t("no Box token — add {snippet} to ~/.openmausbot/config.json", { snippet: BOX_CONFIG_SNIPPET }) };
+        return { state: "unavailable", reason: t("no Box token — add {snippet} to ~/.ein/config.json", { snippet: BOX_CONFIG_SNIPPET }) };
       }
       try {
         await api("/me");

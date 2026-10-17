@@ -2,36 +2,37 @@
 
 > 一念起，万 Bot 动
 
-在聊天应用里拥有一支自己的 AI 机器人团队。一念基于开源项目 [OpenMausBot](https://github.com/CuriosityOS/OpenMausBot)（Apache-2.0）二次开发，中文界面叫“一念”，英文界面叫“Ein”。主要有四项改动：
+在聊天应用里拥有一支自己的 AI 机器人团队。中文界面叫“一念”，英文界面叫“Ein”。一念是一个独立的软件：有自己的应用身份、数据目录和发布渠道，所有大模型都用你自己的账号或密钥登录，不依赖任何第三方的中转服务器。
 
-1. **完全汉化**：界面、菜单栏、右键菜单、系统权限弹窗、服务端提示和错误、机器人的回复语言，全部默认使用简体中文，也可以在设置里切回英文。
-2. **接入腾讯 WorkBuddy**：新增“WorkBuddy”引擎（底层是 CodeBuddy Code CLI），自动读取你的账号能用的模型，支持国际版、国内版和 iOA 版。
-3. **总控自动派发和模型推荐**：总控机器人会把复杂需求拆成子任务，派给最合适的成员；团队里没有合适的人时，按任务难度推荐模型并自动新建专员。全部完成后由总控汇总。
+1. **完全中文**：界面、菜单栏、右键菜单、系统权限弹窗、服务端提示和错误、机器人的回复语言，全部默认使用简体中文，也可以在设置里切回英文。
+2. **接入腾讯 WorkBuddy**：内置“WorkBuddy”引擎（底层是 CodeBuddy Code CLI），自动读取你的账号能用的模型，支持国际版、国内版和 iOA 版。
+3. **团队协作**：总控把复杂需求拆成子任务，派给最合适的成员；每个子任务按难度推荐模型和思考强度，你也可以改成任何一个已登录的模型和任意思考强度。团队里没有合适的人时，自动新建专员。全部完成后由总控汇总。
 4. **工作台**：总控在上，员工在下，用“插头接插座”的方式连线，可以随时改接。操作方式贴近 macOS 习惯（触控板缩放和平移、⌘Z 撤销、⌫ 拔线、右键菜单、检查器面板）。
 
 ---
 
-## 下载与安装（Mac）
+## 下载与安装
 
-安装包有两个，按芯片选择：
+安装包在 [kairuioba/ein-releases](https://github.com/kairuioba/ein-releases/releases/latest)：
 
-| 你的 Mac | 安装包 |
+| 你的电脑 | 安装包 |
 |---|---|
-| Apple 芯片（M1 及以后） | `Ein-zh-<版本>-apple-silicon.dmg` |
-| Intel 芯片 | `Ein-zh-<版本>-intel.dmg` |
+| Mac，Apple 芯片（M1 及以后） | `Ein-<版本>-arm64.dmg` |
+| Mac，Intel 芯片 | `Ein-<版本>-x64.dmg` |
+| Windows（64 位） | `Ein-<版本>-setup.exe` |
 
-打开 dmg，把一念拖进“应用程序”文件夹即可。应用包的文件名仍是 `OpenMausBot.app`（数据目录和系统授权都跟着这个名字走，升级后原有设置和数据都在），访达、程序坞和菜单栏里则显示为“一念”（英文系统显示为“Ein”）。
+**Mac**：打开 dmg，把一念拖进“应用程序”文件夹再打开。应用包叫 `Ein.app`，访达、程序坞和菜单栏里显示为“一念”（英文系统显示为“Ein”）。数据保存在 `~/.ein`。
 
-**首次打开提示“无法验证开发者”怎么办？** 没有配置 Apple 开发者证书时，构建出来的应用是临时签名（ad-hoc），macOS 会拦下来。处理方法：
+**首次打开提示“无法验证开发者”怎么办？** 现在的安装包没有 Apple 开发者证书签名（临时签名），macOS 会拦一次：
 
 1. 先双击打开一次，出现提示后点“完成”。
-2. 打开“系统设置 → 隐私与安全性”，在页面下方找到一念（OpenMausBot）的提示，点“仍要打开”，然后输入密码确认。
+2. 打开“系统设置 → 隐私与安全性”，在页面下方找到一念的提示，点“仍要打开”，输入密码确认。只需要一次。
 
-熟悉终端的话，也可以执行 `xattr -dr com.apple.quarantine /Applications/OpenMausBot.app`。如果在构建时配置了 Developer ID 证书并完成公证（见下文），就不会出现这个提示。
+熟悉终端的话，也可以执行 `xattr -dr com.apple.quarantine /Applications/Ein.app`。
 
-> 临时签名的应用每次更新后签名都会变，macOS 可能会再次请求麦克风、辅助功能等权限，这是正常现象。
+**自动更新**：在 **设置 → 更新** 里点“检查更新”，有新版本会自动下载，装好后提示重启。软件也会在后台定期检查。临时签名的 Mac 版是把新的 `Ein.app` 原地换上去，所以请把它放在“应用程序”文件夹里运行；更新后 macOS 可能会重新询问麦克风、辅助功能等权限，这是正常现象。
 
-**关于自动更新**：一念默认**不会**自动更新。原因是上游的更新源发布的是英文版 OpenMausBot，如果沿用，一念会被覆盖成上游的英文版。新版本请从你们团队的发布页下载安装；如果想开启自动更新，请看文末的“团队自建更新源”。
+> 从 1.0.0 升级：1.0.0 还沿用旧的应用身份，没法自动升到 1.1.0。请先删掉“应用程序”里旧的那个，再装 1.1.0 的 `Ein.app`。从 1.1.0 起都能自动更新。
 
 ## 从源码构建 Mac 版
 
@@ -47,7 +48,9 @@ Mac 安装包只能在 macOS 上构建，因为要用到 Swift、codesign 和 hd
    - 勾选 “release” 会顺便创建一个 GitHub 预发布版本，并把 dmg 挂上去。
    - 推送 `zh-v*` 格式的标签（例如 `zh-v0.1.43`）也会自动触发构建和发布。
 
-工作流里有两个并行的任务：一个在 Linux 上跑类型检查、单元测试和汉化覆盖检查；另一个在 macOS 上分别打 Apple 芯片和 Intel 两个包，并检查签名、启动打包后的服务端、确认中文词典和应用名称（一念 / Ein）都已打进安装包。勾选 “release” 时，只有两个任务都通过才会发布。
+正式发版用另一个工作流 `.github/workflows/release-ein.yml`（Actions → Release 一念 Ein → Run workflow，或推送 `v*` 标签）：它同时打 Mac 和 Windows 安装包，并发布到 [kairuioba/ein-releases](https://github.com/kairuioba/ein-releases)，已安装的一念会从那里自动更新。步骤见 [docs/releasing-ein.md](docs/releasing-ein.md)。
+
+`package-mac-zh.yml` 里有两个并行的任务：一个在 Linux 上跑类型检查、单元测试和汉化覆盖检查；另一个在 macOS 上分别打 Apple 芯片和 Intel 两个包，并检查签名、启动打包后的服务端、确认中文词典和应用名称（一念 / Ein）都已打进安装包。勾选 “release” 时，只有两个任务都通过才会发布。
 
 **可选：正式签名与公证。** 在仓库的 Settings → Secrets 里加入以下密钥，工作流会自动改用 Developer ID 签名；再配上 App Store Connect API 密钥，就会自动公证。
 
@@ -103,7 +106,7 @@ pnpm dev:desktop   # Electron 外壳；上面两个命令要保持运行
 一念自带一个 MCP 服务，可以在 WorkBuddy / CodeBuddy 里查看机器人、派活、等结果。应用运行时执行：
 
 ```sh
-codebuddy mcp add-json --scope user openmausbot '{"type":"stdio","command":"/Applications/OpenMausBot.app/Contents/MacOS/OpenMausBot","args":["/Applications/OpenMausBot.app/Contents/Resources/server/mcp-server.js"],"env":{"ELECTRON_RUN_AS_NODE":"1"}}'
+codebuddy mcp add-json --scope user ein '{"type":"stdio","command":"/Applications/Ein.app/Contents/MacOS/Ein","args":["/Applications/Ein.app/Contents/Resources/server/mcp-server.js"],"env":{"ELECTRON_RUN_AS_NODE":"1"}}'
 ```
 
 这个 MCP 服务刻意不提供审批、删除、修改凭据等高风险操作，这些仍然只能在应用里由你完成。详见 [docs/mcp-server.md](docs/mcp-server.md)。
@@ -145,11 +148,16 @@ codebuddy mcp add-json --scope user openmausbot '{"type":"stdio","command":"/App
 
 **设置 → 通用 → 语言** 可以在“简体中文”和 “English” 之间切换。切换后会作用于界面、菜单栏，以及机器人回复你时使用的语言；代码、命令和文件名始终保持原样。
 
-## 隐私
+## 隐私与联网
 
-- 上游项目默认会把匿名使用统计发送到上游开发者设在美国的 PostHog。一念**默认关闭**，需要的话可以在 设置 → 通用 → 使用情况分析 里手动开启。
+- 一念不连接任何第三方的中转服务器。大模型都用你自己的账号或密钥登录，请求直接发给对应的服务商；检查更新只访问 [kairuioba/ein-releases](https://github.com/kairuioba/ein-releases)。
 - 首次启动时填写的名字和邮箱都是可选的，只显示在侧边栏，并且只保存在这台电脑上。
 - 安装版会把 API 密钥加密保存在本机（由系统钥匙串保护），每个密钥只交给需要它的那个引擎。
+- 以下功能需要一念自己的云端服务，目前**暂未开放**，代码和入口都保留，以后上线后直接打开：
+  - 使用情况分析（设置 → 通用）。
+  - 连接应用托管模式（设置 → 连接）。在此之前可以填写你自己的 Composio 密钥来连接应用。
+  - 团队模板库（导入团队 → 探索）。在此之前可以从文件或公开的 GitHub 链接导入团队。
+  - 手机外网访问（设置 → 手机）。同一 Wi-Fi 下的手机配对照常可用。
 
 ---
 
@@ -159,24 +167,9 @@ codebuddy mcp add-json --scope user openmausbot '{"type":"stdio","command":"/App
 - 唯一的词典是 `shared/i18n/zh-CN.json`。界面、服务端和 Electron 外壳共用这一份词典。
 - `pnpm i18n:check` 会检查每个 `t()` 源串是否都有译文、占位符是否一致。CI 会运行这个检查，`--report` 参数会额外列出可能漏包 `t()` 的界面文案。
 - 新增文案的流程：在代码里用 `t("English text")` → 把译文写进 `shared/i18n/fragments/<名字>.json` → 运行 `pnpm i18n:merge`。
-- 测试统一以英文运行（检测到 `VITEST` / `NODE_TEST_CONTEXT` 时自动切到英文，也可以用 `OMB_LOCALE=en` 强制指定），所以上游的英文断言都保持不变。
+- 测试统一以英文运行（检测到 `VITEST` / `NODE_TEST_CONTEXT` 时自动切到英文，也可以用 `OMB_LOCALE=en` 强制指定），所以测试里的英文断言都保持不变。
 - 发给模型的内容（系统提示词、工具描述、协议字符串）保持英文，界面依赖做比较的值也保持英文，翻译只在显示时进行。
-
-## 团队自建更新源（可选）
-
-如果想让团队成员的一念自动更新，需要两步：
-
-1. 在 `electron-builder.yml` 里把 `publish: null` 改成你们自己的发布仓库：
-   ```yaml
-   publish:
-     - provider: github
-       owner: <你的组织>
-       repo: <发布仓库>
-   ```
-2. 每次发版时，把 `release/` 目录里的 `latest-mac.yml`、两个 `.zip` 和两个 `.dmg` 一起上传到该仓库的 Release，并使用比当前更高的版本号。
-
-自动更新要求应用经过 Developer ID 签名，临时签名的应用无法自动更新。
 
 ## 许可
 
-本项目基于 Apache License 2.0 发布，详见 [LICENSE](LICENSE) 和 [NOTICE](NOTICE)。WorkBuddy、CodeBuddy 为腾讯公司的产品和商标；本项目与腾讯公司、上游项目均无隶属关系。
+本项目以 Apache License 2.0 发布，详见 [LICENSE](LICENSE) 和 [NOTICE](NOTICE)。一念包含开源项目 OpenMausBot（Apache-2.0）的代码，其版权声明保留在 NOTICE 中。WorkBuddy、CodeBuddy 为腾讯公司的产品和商标；本项目与腾讯公司无隶属关系。

@@ -45,7 +45,7 @@ function fakeView(partition) {
   const fieldClassificationQueues = new Map();
   const webContents = {
     session: {
-      getUserAgent: () => "Mozilla/5.0 Chrome/1 Electron/43 OpenMausBot/1",
+      getUserAgent: () => "Mozilla/5.0 Chrome/1 Electron/43 Ein/1",
       setUserAgent: (ua) => calls.push(["setUserAgent", ua]),
       setPermissionCheckHandler: () => {},
       setPermissionRequestHandler: () => {},

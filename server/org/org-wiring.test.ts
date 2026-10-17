@@ -53,8 +53,8 @@ async function boot(instances: Record<string, unknown>): Promise<Server> {
   const port = 18800 + Math.floor(Math.random() * 10_000);
   const base = `http://127.0.0.1:${port}`;
   const home = mkdtempSync(join(tmpdir(), "omb-org-e2e-"));
-  mkdirSync(join(home, ".openmausbot"), { recursive: true });
-  writeFileSync(join(home, ".openmausbot", "config.json"), JSON.stringify({ usage: { usdToCny: 7 }, instances }));
+  mkdirSync(join(home, ".ein"), { recursive: true });
+  writeFileSync(join(home, ".ein", "config.json"), JSON.stringify({ usage: { usdToCny: 7 }, instances }));
   let output = "";
   const child: ChildProcess = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
     cwd: join(SERVER_DIR, ".."),

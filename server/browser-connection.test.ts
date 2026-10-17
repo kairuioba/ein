@@ -58,7 +58,7 @@ describe("browser connection descriptor", () => {
       token: TOKEN,
     });
 
-    const support = join(home, "Library", "Application Support", "OpenMausBot");
+    const support = join(home, "Library", "Application Support", "Ein");
     const { mkdirSync } = require("node:fs");
     mkdirSync(support, { recursive: true });
     writeFileSync(join(support, "browser-connection.json"), JSON.stringify({ ...descriptor, url: "http://127.0.0.1:1" }));

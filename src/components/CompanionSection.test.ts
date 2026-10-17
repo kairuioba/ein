@@ -37,6 +37,18 @@ describe("companion account action errors", () => {
     );
     expect(companionAccountActionError(account("error", "Secure connection needs attention"), null)).toBeNull();
   });
+
+  it("reports nothing as failed when the build offers no online phone service", () => {
+    const notOffered: CompanionAccountState = {
+      available: false,
+      offered: false,
+      status: "signed-out",
+      message: "Secure access is not available right now. Local pairing still works.",
+    };
+    expect(companionAccountActionError(notOffered, null)).toBeNull();
+    // an explicit action failure still shows
+    expect(companionAccountActionError(notOffered, "Pairing could not start")).toBe("Pairing could not start");
+  });
 });
 
 describe("companion status refresh", () => {

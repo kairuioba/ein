@@ -128,7 +128,7 @@ jobs:
 
       - name: "Gate: signatures verify and both packaged servers start"
         run: |
-          for app in release/mac-arm64/OpenMausBot.app release/mac/OpenMausBot.app; do
+          for app in release/mac-arm64/Ein.app release/mac/Ein.app; do
             codesign --verify --deep --strict "$app"
             res="$app/Contents/Resources"
             OMB_SMOKE_DIST="$res/server" node scripts/smoke-packaged-server.mjs \

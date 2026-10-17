@@ -10,6 +10,7 @@ import {
 import {
   ArrowLeft,
   Check,
+  Globe,
   Loader2,
   Mail,
   QrCode,
@@ -54,6 +55,7 @@ import {
 } from "../lib/phone-setup";
 import type { CompanionAccountState } from "../types/ogb";
 import { ConnectionDetail } from "./ConnectionDetail";
+import { NotYetAvailable } from "./SettingsPrimitives";
 import { msg, t } from "@/lib/i18n";
 
 export interface PhoneDevice {
@@ -167,6 +169,8 @@ export const companionAccountActionError = (
   actionError: string | null,
 ): string | null => {
   if (actionError) return actionError;
+  // a build without an online phone service has nothing that failed to report
+  if (account?.offered === false) return null;
   return account?.status === "signed-out" ? (account.message ? t(account.message) : null) : null;
 };
 
@@ -954,6 +958,9 @@ export function PhoneSetupFlowView({
   }
 
   if (c.phase === "sign-in") {
+    // This build has no online phone service at all (Ein runs none yet):
+    // say "not available yet" and lead with Wi-Fi pairing, nothing to retry.
+    const notOffered = c.account?.offered === false;
     const unavailable = !c.account?.available;
     const failed = c.account?.status === "error" || c.setupTimedOut;
     return (
@@ -963,16 +970,23 @@ export function PhoneSetupFlowView({
           {t("Back")}
         </button>
         <div className="flex size-11 items-center justify-center rounded-xl bg-accent/12 text-accent">
-          <Mail size={20} />
+          {notOffered ? <Globe size={20} /> : <Mail size={20} />}
         </div>
         <h2 className="mt-3 text-[18px] font-semibold text-ink">
-          {unavailable || failed ? t("Secure access needs attention") : t("Sign in to pair securely")}
+          {notOffered
+            ? t("Online phone access")
+            : unavailable || failed
+              ? t("Secure access needs attention")
+              : t("Sign in to pair securely")}
         </h2>
+        {notOffered && <NotYetAvailable className="mt-2 w-fit" />}
         <p
           role={c.setupTimedOut ? "alert" : undefined}
           className="mt-1 text-[13px] leading-relaxed text-ink-secondary"
         >
-          {unavailable
+          {notOffered
+            ? t("Reaching your bots from outside this network will open in a later update. You can pair now on the same Wi-Fi.")
+            : unavailable
             ? t("Online phone access is not available right now. You can still pair directly on the same Wi-Fi.")
             : c.setupTimedOut
               ? t("Secure access is taking longer than expected. You can try again or pair directly on this Wi-Fi.")
@@ -1039,7 +1053,7 @@ export function PhoneSetupFlowView({
           </div>
         )}
 
-        {(unavailable || failed) && (
+        {(unavailable || failed) && !notOffered && (
           <button
             disabled={c.accountBusy}
             onClick={c.retryAccount}
@@ -1049,9 +1063,13 @@ export function PhoneSetupFlowView({
           </button>
         )}
         {actionError && <p role="alert" className="mt-3 text-[12.5px] text-danger">{actionError}</p>}
-        <div className="my-4 flex items-center gap-3 text-[11px] text-ink-secondary">
-          <span className="h-px flex-1 bg-hairline/40" /> {t("or")} <span className="h-px flex-1 bg-hairline/40" />
-        </div>
+        {notOffered ? (
+          <div className="mt-5" />
+        ) : (
+          <div className="my-4 flex items-center gap-3 text-[11px] text-ink-secondary">
+            <span className="h-px flex-1 bg-hairline/40" /> {t("or")} <span className="h-px flex-1 bg-hairline/40" />
+          </div>
+        )}
         {c.tailscaleAvailable && (
           <>
             <button
@@ -1070,10 +1088,14 @@ export function PhoneSetupFlowView({
         <button
           disabled={c.busy || c.accountBusy}
           onClick={c.useLocal}
-          className={`${c.tailscaleAvailable ? "mt-3" : ""} flex items-center justify-center gap-2 rounded-lg border border-hairline/50 py-2.5 text-[13px] text-ink hover:bg-control disabled:opacity-40`}
+          className={
+            notOffered
+              ? `${c.tailscaleAvailable ? "mt-3" : ""} flex items-center justify-center gap-2 rounded-lg bg-primary py-2.5 text-[14px] font-medium text-primary-ink hover:opacity-90 disabled:opacity-40`
+              : `${c.tailscaleAvailable ? "mt-3" : ""} flex items-center justify-center gap-2 rounded-lg border border-hairline/50 py-2.5 text-[13px] text-ink hover:bg-control disabled:opacity-40`
+          }
         >
           <Wifi size={15} />{" "}
-          {t("Pair on this Wi-Fi instead")}
+          {notOffered ? t("Pair on this Wi-Fi") : t("Pair on this Wi-Fi instead")}
         </button>
         <p className="mt-2 text-center text-[11px] leading-relaxed text-ink-secondary">
           {t("Both devices must be on a network that lets them see each other.")}
@@ -1144,7 +1166,7 @@ export function PhoneSetupFlowView({
       <p className="mt-1 text-[13px] text-ink-secondary">
         {c.pairingExpired
           ? t("Create a fresh code when your phone is ready.")
-          : t("Open OpenMaus on your iPhone and scan this code.")}
+          : t("Open the phone app on your iPhone and scan this code.")}
       </p>
       {!c.pairingExpired && c.pairingLink && (
         <div className="mt-4 rounded-2xl bg-white p-3.5" aria-label={t("Phone pairing QR code")}>
@@ -1153,7 +1175,7 @@ export function PhoneSetupFlowView({
       )}
       {!c.pairingExpired && manualCodeMode === "direct" && c.state?.pairing && (
         <div className="mt-4 w-full max-w-[320px] rounded-xl bg-inset px-4 py-3 text-[12.5px] text-ink-secondary">
-          <div>{t("Open OpenMausMobile and enter this manual code.")}</div>
+          <div>{t("Open the phone app and enter this manual code.")}</div>
           <div className="mt-2 font-mono text-[22px] tracking-[0.25em] text-ink">
             {c.state.pairing.code}
           </div>

@@ -5,7 +5,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { Check, CircleHelp, ExternalLink, Loader2, TriangleAlert } from "lucide-react";
 import { api, useStore, type ConfigStatus } from "@/state/store";
 import { cn } from "@/lib/cn";
-import { msg, t, tRich } from "@/lib/i18n";
+import { msg, t } from "@/lib/i18n";
 
 export type ConfigSection = "composio" | "box" | "opencodeGo";
 
@@ -256,20 +256,8 @@ export function VpsConnection() {
         {configured && <span className="text-[11px] text-success">{t("Connected")}</span>}
       </div>
       <div className="mb-1.5 text-[12px] leading-relaxed text-ink-secondary">
-        {tRich(
-          "SSH config alias for the Linux VPS. Ein uses your normal SSH config and agent; it does not store keys or passwords. See the <link>setup guide</link> for the required SSH alias shape.",
-          {
-            link: (children) => (
-              <a
-                href="https://github.com/milind-soni/OpenMausBot/blob/main/docs/byo-vps.md"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-accent hover:underline"
-              >
-                {children}
-              </a>
-            ),
-          },
+        {t(
+          "SSH config alias for the Linux VPS. Ein uses your normal SSH config and agent; it does not store keys or passwords. Add a Host entry to ~/.ssh/config (ControlMaster and keep-alive settings help), connect once by hand to accept the host key, and make sure that SSH user can run docker on the VPS.",
         )}
       </div>
       <div className="flex gap-2">

@@ -126,8 +126,12 @@ describe("browser snapshot", () => {
 
   it("presents as the Chrome it is", () => {
     expect(
-      browserUserAgent("Mozilla/5.0 (Macintosh) AppleWebKit/537.36 (KHTML, like Gecko) OpenMausBot/0.1.38 Chrome/140.0.0.0 Electron/43.4.0 Safari/537.36"),
+      browserUserAgent("Mozilla/5.0 (Macintosh) AppleWebKit/537.36 (KHTML, like Gecko) Ein/1.1.0 Chrome/140.0.0.0 Electron/43.4.0 Safari/537.36"),
     ).toBe("Mozilla/5.0 (Macintosh) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36");
+    // a dev run carries the lowercase package name; a token that only ends in "ein" stays
+    expect(browserUserAgent("Mozilla/5.0 ein/1.1.0 Chrome/140.0.0.0 Protein/2 Electron/43.4.0")).toBe(
+      "Mozilla/5.0 Chrome/140.0.0.0 Protein/2",
+    );
   });
 
   it("derives one durable partition per bot from safe characters only", () => {

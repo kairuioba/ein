@@ -130,8 +130,8 @@ export function readAntigravityModelCatalog(env: Record<string, string | undefin
 // right before each spawn: every other byte of the user's config is
 // preserved, and a malformed file starts from a fresh object instead of
 // failing the turn (the ensureOpenCodeInjectModel discipline).
-export const ANTIGRAVITY_COMPUTER_MCP_KEY = "openmausbot-computer";
-export const ANTIGRAVITY_AGENTS_MCP_KEY = "openmausbot-agents";
+export const ANTIGRAVITY_COMPUTER_MCP_KEY = "ein-computer";
+export const ANTIGRAVITY_AGENTS_MCP_KEY = "ein-agents";
 
 export interface AntigravityMcpServer {
   command: string;

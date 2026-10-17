@@ -196,7 +196,7 @@ export function readBrowserConnection({
     } else if (platform === "darwin") {
       // Dev fallback (Electron and the dev server are separate processes);
       // the packaged app passes its exact userData path.
-      for (const directory of ["OpenMausBot", "openmausbot"]) {
+      for (const directory of ["Ein", "ein"]) {
         candidates.push(join(home, "Library", "Application Support", directory, "browser-connection.json"));
       }
     }

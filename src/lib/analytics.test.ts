@@ -98,6 +98,24 @@ describe("the stored choice", () => {
   });
 });
 
+describe("a build without Ein's own analytics key", () => {
+  it("is not available, and even an opt-in never starts the client", async () => {
+    vi.resetModules();
+    store.set("omb-analytics-opt-out", "0"); // opted in, e.g. carried over from another build
+    const fresh = await import("./analytics");
+
+    expect(fresh.analyticsAvailable()).toBe(false);
+    expect(fresh.analyticsEnabled()).toBe(true);
+    fresh.initAnalytics();
+    fresh.setAnalyticsEnabled(true);
+    fresh.track("app_opened");
+    fresh.identifyEmail("someone@example.com");
+
+    // the real posthog-js was never initialised: no install marker was written
+    expect(store.get("omb-installed")).toBeUndefined();
+  });
+});
+
 describe("initAnalytics while opted out", () => {
   it("returns before touching the client or the install marker", async () => {
     // A fresh module, so the module-scoped `ready` flag starts false: with a

@@ -494,7 +494,7 @@ function handle(msg: any) {
             });
           return;
         }
-        const reply = promptText.includes("[OpenMausBot dispatch finished]")
+        const reply = promptText.includes("[Ein dispatch finished]")
           ? `SYNTHESIS: ${promptText.includes("RESULT:Competitor research") && promptText.includes("RESULT:Launch copy") ? "both results present" : "missing results"}`
           : `RESULT:${/Your subtask: (.+)/.exec(promptText)?.[1] ?? firstLine.slice(0, 60)}`;
         out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: reply } } } });

@@ -71,7 +71,7 @@ host is unknown simply fails until you have done this once.
 - **Firewall the VPS to SSH only**, ideally from your IP. Nothing OpenMausBot does needs any other inbound
   port open, so anything else open is pure attack surface.
 - **Nothing sensitive is stored.** The only thing OpenMausBot persists is the alias name itself
-  (`~/.openmausbot/config.json`); keys, passphrases, and agent state stay with SSH. The alias is also kept
+  (`~/.ein/config.json`); keys, passphrases, and agent state stay with SSH. The alias is also kept
   off paired phones — the companion reports configured-or-not, never the name.
 - The container itself runs hardened: capabilities dropped, private network/IPC/cgroup namespaces, no host
   mounts, and memory/CPU/pid limits. A container missing any of that — including one someone created under
@@ -79,7 +79,7 @@ host is unknown simply fails until you have done this once.
 
 ## Container lifecycle
 
-Each bot owns one container on the VPS, named `openmausbot-vps-<bot>-<hash>` — stable across restarts and
+Each bot owns one container on the VPS, named `ein-vps-<bot>-<hash>` — stable across restarts and
 independent of the bot's display name.
 
 - **Provision** (choosing **Cloud** for the bot, or the panel's button): builds the pinned Cua image on the

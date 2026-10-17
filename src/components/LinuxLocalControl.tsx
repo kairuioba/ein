@@ -13,8 +13,9 @@ import { cn } from "@/lib/cn";
 import { t, tRich } from "@/lib/i18n";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 
-const LINUX_GUIDE_URL =
-  "https://github.com/milind-soni/OpenMausBot/blob/main/docs/linux-desktop.md#enable-local-control";
+// Ein has no public Linux guide yet (the one this pointed at described the
+// original project's own builds); the guide button returns once it exists.
+const LINUX_GUIDE_URL: string = "";
 
 export function LinuxLocalControl() {
   const { capabilities } = useDesktopCapabilities();
@@ -163,6 +164,7 @@ export function LinuxLocalControl() {
         )}
       </div>}
 
+      {LINUX_GUIDE_URL && (
       <button
         type="button"
         onClick={() => window.open(LINUX_GUIDE_URL, "_blank", "noopener,noreferrer")}
@@ -171,6 +173,7 @@ export function LinuxLocalControl() {
         {capabilities.host.packaged ? t("Local control guide") : t("Driver setup and troubleshooting")}{" "}
         <ExternalLink size={11} />
       </button>
+      )}
     </section>
   );
 }

@@ -64,13 +64,13 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
       t("Get a free key at https://openrouter.ai/keys (or https://console.groq.com) then add it to {path} under openaiCompat.key", { path });
     return {
       docsUrl: "https://openrouter.ai/keys",
-      signInCommand: t("add {snippet} to ~/.openmausbot/config.json (or set OPENAI_COMPAT_API_KEY)", {
+      signInCommand: t("add {snippet} to ~/.ein/config.json (or set OPENAI_COMPAT_API_KEY)", {
         snippet: "{\"openaiCompat\":{\"key\":\"sk-or-v1-…\"}}",
       }),
       command: {
-        darwin: getKey("~/.openmausbot/config.json"),
-        linux: getKey("~/.openmausbot/config.json"),
-        win32: getKey("%USERPROFILE%\\.openmausbot\\config.json"),
+        darwin: getKey("~/.ein/config.json"),
+        linux: getKey("~/.ein/config.json"),
+        win32: getKey("%USERPROFILE%\\.ein\\config.json"),
       },
     };
   },

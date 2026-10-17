@@ -4,7 +4,7 @@
 import { useEffect, useState } from "react";
 import { Globe, Trash2 } from "lucide-react";
 import { api, useStore, type ConfigStatus } from "@/state/store";
-import { analyticsEnabled, setAnalyticsEnabled } from "@/lib/analytics";
+import { analyticsAvailable, analyticsEnabled, setAnalyticsEnabled } from "@/lib/analytics";
 import { builtInBrowserEnabled, showToolCallsEnabled, skillRecorderEnabled } from "@/lib/feature-flags";
 import { useUpdaterState } from "@/lib/updater";
 import { browserProfileDeletionBlockReason, browserProfilesForPatch } from "@/lib/browser-profiles";
@@ -12,7 +12,7 @@ import { t, tn } from "@/lib/i18n";
 import { ApiKeyRow, VpsConnection } from "@/components/ApiKeys";
 import { LocalComputerSection } from "@/components/LocalComputerSection";
 import { CompanionSection } from "@/components/CompanionSection";
-import { Card, Switch } from "@/components/SettingsPrimitives";
+import { Card, NotYetAvailable, Switch } from "@/components/SettingsPrimitives";
 import { UpdatesCard } from "./UpdatesCard";
 import { SkinPicker } from "@/components/SkinPicker";
 import { RoomTurnTimeoutSettings } from "@/components/RoomTurnTimeoutSettings";
@@ -61,16 +61,28 @@ function ProfileFields() {
   );
 }
 
-/** Usage analytics, off by default in this edition. Naming what is sent
- * matters more than the switch: people who cannot see the scope assume the
- * worst, and the worst — conversation text — is exactly what this never
- * sends (autocapture is off; see lib/analytics.ts). */
+/** Usage analytics. Ein has no analytics service of its own yet, so the row
+ * stays but says so, and nothing is sent (lib/analytics.ts never starts the
+ * client without a key). When a build carries one, the opt-in switch below
+ * returns: off by default, and naming what is sent matters more than the
+ * switch — people who cannot see the scope assume the worst, and the worst,
+ * conversation text, is exactly what this never sends. */
 function AnalyticsRow() {
   const [on, setOn] = useState(analyticsEnabled);
+  if (!analyticsAvailable()) {
+    return (
+      <Card
+        title={t("Usage analytics")}
+        subtitle={t("It will open in a later update. Until then nothing about how you use Ein leaves this computer.")}
+      >
+        <NotYetAvailable />
+      </Card>
+    );
+  }
   return (
     <Card
       title={t("Usage analytics")}
-      subtitle={t("Off unless you turn it on. Sends anonymous product events (app opened, which features get used) to the upstream OpenMausBot project's PostHog in the United States — never conversations, prompts, file contents, or bot output. Your email is only attached if you shared it during setup.")}
+      subtitle={t("Off unless you turn it on. Sends anonymous product events (app opened, which features get used) to Ein's analytics — never conversations, prompts, file contents, or bot output. Your email is only attached if you shared it during setup.")}
     >
       <Switch
         checked={on}
@@ -452,24 +464,41 @@ export function currentSkinName(): string {
 
 export function ConnectionsSection() {
   const { state } = useStore();
+  // Hosted connected apps run through a managed service Ein does not operate
+  // yet; until it does, apps connect with the person's own Composio key.
+  const managed = state.config?.composio.mode === "managed";
   return (
     <>
       <SectionHeader title={t("Connections")} description={t("Service keys and remote computers your bots can use. Everything stays on this computer.")} />
       <Card
         title={t("Connections")}
-        subtitle={t("Connected apps work automatically in the installed app. Other optional service keys stay on this computer.")}
+        subtitle={
+          managed
+            ? t("Connected apps work automatically in the installed app. Other optional service keys stay on this computer.")
+            : t("Connect apps with your own Composio key. Other optional service keys stay on this computer.")
+        }
       >
         <div className="flex flex-col gap-4">
-          {state.config?.composio.mode === "managed" ? (
+          {managed ? (
             <div className="rounded-lg border border-success/25 bg-success/10 px-3 py-2 text-[13px] text-success">
               {t("Connected apps service is ready")}
             </div>
-          ) : null}
+          ) : (
+            <div className="flex items-start justify-between gap-3 rounded-lg border border-hairline/40 px-3 py-2.5">
+              <div className="min-w-0">
+                <div className="text-[13px] text-ink">{t("Hosted connected apps")}</div>
+                <div className="mt-0.5 text-[11.5px] leading-relaxed text-ink-secondary">
+                  {t("Connect Gmail, Slack, GitHub and more without a key of your own. Until it opens, add your own Composio key below.")}
+                </div>
+              </div>
+              <NotYetAvailable />
+            </div>
+          )}
           <TranscriptionSettings />
           <ApiKeyRow section="box" />
           <VpsConnection />
           <ApiKeyRow section="opencodeGo" />
-          <details className="rounded-lg border border-hairline/40 bg-inset px-3 py-2">
+          <details open={!managed} className="rounded-lg border border-hairline/40 bg-inset px-3 py-2">
             <summary className="cursor-pointer text-[13px] text-ink-secondary">{t("Self-host connected apps")}</summary>
             <div className="mt-3">
               <ApiKeyRow section="composio" />

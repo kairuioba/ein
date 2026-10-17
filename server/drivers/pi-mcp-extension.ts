@@ -231,7 +231,7 @@ export class StdioMcp {
       {
         protocolVersion: "2024-11-05",
         capabilities: {},
-        clientInfo: { name: "openmausbot-pi", version: "1" },
+        clientInfo: { name: "ein-pi", version: "1" },
       },
       MCP_STARTUP_TIMEOUT_MS,
     );

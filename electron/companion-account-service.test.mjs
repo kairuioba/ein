@@ -104,10 +104,13 @@ function signedCredentials(overrides = {}) {
 }
 
 describe("Companion account service", () => {
-  it("uses the packaged hosted default and only explicit safe development origins", () => {
-    expect(resolveCompanionControlPlaneURL({ isPackaged: true, environment: {} })).toBe(
-      "https://accounts.openmausbot.com",
-    );
+  it("ships without a hosted service and accepts only explicit safe origins", () => {
+    // Ein operates no phone relay yet: a packaged build offers none by default
+    expect(resolveCompanionControlPlaneURL({ isPackaged: true, environment: {} })).toBe("");
+    expect(resolveCompanionControlPlaneURL({
+      isPackaged: true,
+      environment: { OMB_CONTROL_PLANE_URL: "https://accounts.example" },
+    })).toBe("https://accounts.example");
     expect(resolveCompanionControlPlaneURL({
       isPackaged: false,
       environment: { OMB_CONTROL_PLANE_URL: "http://127.0.0.1:8787/" },
@@ -133,6 +136,19 @@ describe("Companion account service", () => {
       available: true,
       status: "signed-out",
     });
+  });
+
+  it("reports a build without a hosted service as not offered, not as a failure", async () => {
+    const { service } = serviceFixture({ client: null });
+
+    await expect(service.restore()).resolves.toMatchObject({
+      available: false,
+      offered: false,
+      status: "signed-out",
+    });
+    await expect(service.requestCode("ada@example.com")).rejects.toThrow(
+      "Secure access is not available right now",
+    );
   });
 
   it("hides account onboarding until the configured control plane is healthy", async () => {

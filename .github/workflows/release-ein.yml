@@ -126,6 +126,13 @@ jobs:
           for app in release/mac-arm64/*.app release/mac/*.app; do
             codesign --verify --deep --strict "$app"
             res="$app/Contents/Resources"
+            # Ein's own identity: auto-update refuses a bundle whose id differs
+            [ "$(basename "$app")" = "Ein.app" ] || { echo "::error::unexpected bundle name $app"; exit 1; }
+            id=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$app/Contents/Info.plist")
+            [ "$id" = "com.kairuioba.ein" ] || { echo "::error::$app has bundle id $id"; exit 1; }
+            for helper in "Ein Speech.app" "Ein Recorder.app"; do
+              [ -d "$res/$helper" ] || { echo "::error::missing $res/$helper"; exit 1; }
+            done
             OMB_SMOKE_DIST="$res/server" node scripts/smoke-packaged-server.mjs \
               || { echo "::error::packaged server in $app failed to start"; exit 1; }
             grep -q "repo: ein-releases" "$res/app-update.yml" \

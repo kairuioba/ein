@@ -85,7 +85,7 @@ chmod +x release/OpenMausBot-*-x86_64.AppImage
 
 For a downloaded release AppImage, use `OpenMausBot.AppImage` in place of the versioned path above.
 
-Application data remains local in `~/.openmausbot`. Electron browser data and window state use the normal XDG
+Application data remains local in `~/.ein`. Electron browser data and window state use the normal XDG
 configuration directory (`~/.config/openmausbot` unless the environment overrides it).
 
 ## Develop the desktop shell

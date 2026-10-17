@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { NotYetAvailable } from "./SettingsPrimitives";
 
 const MAX_TEAM_FILE_BYTES = 1_000_000;
 const COMMUNITY_TEAMS_REPOSITORY = "https://github.com/milind-soni/openmausbot-teams";
@@ -45,7 +46,9 @@ interface TeamCatalogEntry {
 }
 
 interface TeamCatalog {
-  repositoryUrl: string;
+  repositoryUrl?: string;
+  /** false while Ein offers no template catalog of its own (not yet) */
+  available?: boolean;
   teams: TeamCatalogEntry[];
 }
 
@@ -162,6 +165,9 @@ export function TeamLibraryPanel({
   const scoutRequest = useRef(0);
 
   const currentBotCount = state.bots.filter((bot) => !bot.hidden).length;
+  // Ready-made team templates wait for Ein's own catalog; until then Explore
+  // says so and points at importing a file or a GitHub link, which work now.
+  const catalogOffered = catalog?.available !== false;
 
   const loadCatalog = useCallback(async () => {
     setCatalogLoading(true);
@@ -463,7 +469,7 @@ export function TeamLibraryPanel({
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-1">
-            {!pending && (
+            {!pending && catalogOffered && (
               <button
                 onClick={() => void openExternal(catalog?.repositoryUrl ?? COMMUNITY_TEAMS_REPOSITORY)}
                 className="flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink"
@@ -617,7 +623,7 @@ export function TeamLibraryPanel({
                   {t("From a folder")}
                 </button>
               </div>
-              {tab === "explore" && (
+              {tab === "explore" && catalogOffered && (
                 <label className="flex h-11 w-full items-center gap-2.5 rounded-xl bg-raised/70 px-3.5 sm:w-[320px]">
                   <Search size={17} className="shrink-0 text-ink-secondary" />
                   <input
@@ -634,9 +640,11 @@ export function TeamLibraryPanel({
             <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-7 pt-5 sm:px-8">
               {tab === "explore" && (
                 <div>
-                  <div className="mb-3 text-[12px] font-medium text-ink-secondary">
-                    {search ? t("Search results") : t("Community teams")}
-                  </div>
+                  {catalogOffered && (
+                    <div className="mb-3 text-[12px] font-medium text-ink-secondary">
+                      {search ? t("Search results") : t("Community teams")}
+                    </div>
+                  )}
                   {catalogLoading && (
                     <div className="flex items-center justify-center gap-2 py-24 text-[13px] text-ink-secondary">
                       <Loader2 size={16} className="animate-spin" /> {t("Loading teams…")}
@@ -648,7 +656,25 @@ export function TeamLibraryPanel({
                       <button onClick={() => void loadCatalog()} className="mt-3 rounded-full bg-raised px-3.5 py-2 text-ink hover:bg-raised-hover">{t("Try again")}</button>
                     </div>
                   )}
-                  {!catalogLoading && catalog && (
+                  {!catalogLoading && catalog && !catalogOffered && (
+                    <div className="flex min-h-56 flex-col items-center justify-center px-6 text-center">
+                      <div className="text-[14px] font-medium text-ink">{t("Team templates")}</div>
+                      <NotYetAvailable className="mt-2" />
+                      <p className="mt-3 max-w-[420px] text-[12.5px] leading-relaxed text-ink-secondary">
+                        {t("Ready-made teams will arrive in a later update. You can bring your own team now: import a file or a public GitHub link.")}
+                      </p>
+                      <button
+                        onClick={() => {
+                          setTab("import");
+                          setError("");
+                        }}
+                        className="mt-4 rounded-full bg-raised px-3.5 py-2 text-[12.5px] text-ink hover:bg-raised-hover"
+                      >
+                        {t("Import a team")}
+                      </button>
+                    </div>
+                  )}
+                  {!catalogLoading && catalog && catalogOffered && (
                     <div className="grid grid-cols-1 gap-x-10 md:grid-cols-2">
                       {visibleTeams.map((entry, index) => (
                         <article key={entry.slug} className="flex min-h-[104px] items-center gap-3 border-b border-hairline/35 px-1 py-4">
@@ -674,7 +700,7 @@ export function TeamLibraryPanel({
                       ))}
                     </div>
                   )}
-                  {!catalogLoading && catalog && visibleTeams.length === 0 && (
+                  {!catalogLoading && catalog && catalogOffered && visibleTeams.length === 0 && (
                     <div className="flex min-h-56 flex-col items-center justify-center text-center">
                       <div className="text-[14px] font-medium text-ink">{t("No teams found")}</div>
                       <div className="mt-1 text-[12.5px] text-ink-secondary">{t("Try a different search.")}</div>

@@ -367,7 +367,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
 
   const saveProfile = () => {
     if (emailValid) identifyEmail(email.trim().toLowerCase());
-    // persisted server-side (~/.openmausbot/config.json) — the sidebar
+    // persisted server-side (~/.ein/config.json) — the sidebar
     // footer reads it back through /api/config
     void fetch("/api/config", {
       method: "PUT",

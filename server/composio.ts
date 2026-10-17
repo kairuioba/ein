@@ -388,7 +388,7 @@ export async function prepareProjectSession(
     ) {
       return {
         apiKey: trimmed,
-        userId: existing.config?.user_id ?? current.userId ?? `openmausbot_${randomUUID()}`,
+        userId: existing.config?.user_id ?? current.userId ?? `ein_${randomUUID()}`,
         sessionId: existing.session_id,
       };
     }
@@ -398,7 +398,7 @@ export async function prepareProjectSession(
     priorUserId = existing?.config?.user_id ?? priorUserId;
   }
 
-  const userId = priorUserId ?? `openmausbot_${randomUUID()}`;
+  const userId = priorUserId ?? `ein_${randomUUID()}`;
   const sessionRequest: SessionCreateRequest = {
     user_id: userId,
     manage_connections: {

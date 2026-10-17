@@ -68,7 +68,7 @@ test("the swap script copies beside the app, renames twice and rolls back", () =
   assert.match(SWAP_SCRIPT, /xattr -dr com\.apple\.quarantine/);
 });
 
-function world({ zipBytes = Buffer.from("zip-contents"), bundleId = "com.openmausbot.app", current = "0.1.43", arch = "arm64" } = {}) {
+function world({ zipBytes = Buffer.from("zip-contents"), bundleId = "com.kairuioba.ein", current = "0.1.43", arch = "arm64" } = {}) {
   const root = mkdtempSync(join(tmpdir(), "bundle-updater-"));
   const app = join(root, "Applications/OpenMausBot.app");
   mkdirSync(join(app, "Contents"), { recursive: true });
@@ -92,7 +92,7 @@ function world({ zipBytes = Buffer.from("zip-contents"), bundleId = "com.openmau
       writeFileSync(join(into, "Ein.app/Contents/Info.plist"), "<plist/>");
       return "";
     }
-    if (file === "/usr/libexec/PlistBuddy") return args[2].startsWith(app) ? "com.openmausbot.app\n" : `${bundleId}\n`;
+    if (file === "/usr/libexec/PlistBuddy") return args[2].startsWith(app) ? "com.kairuioba.ein\n" : `${bundleId}\n`;
     return "";
   };
   const updater = createBundleUpdater({
@@ -195,7 +195,7 @@ test("refuses a download whose bytes do not match latest-mac.yml", async () => {
       cacheDir: join(root, "cache"),
       fetch: async (url) =>
         url.endsWith(".yml") ? new Response(LATEST, { status: 200 }) : new Response(Buffer.from("other bytes"), { status: 200 }),
-      run: async () => "com.openmausbot.app",
+      run: async () => "com.kairuioba.ein",
       spawnDetached: () => {},
       writable: () => true,
       quit: () => {},

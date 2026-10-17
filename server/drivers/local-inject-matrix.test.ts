@@ -233,7 +233,7 @@ describe("Grok / Kimi / Droid / OpenCode writers × live ids", () => {
       UNSLOTH_STUDIO_AUTH_TOKEN: "unsloth-secret",
     });
     expect(id).toBe(droidInjectId(host.id, "gemma-4-31b-it-bf16"));
-    expect(id.startsWith("custom:openmausbot-")).toBe(true);
+    expect(id.startsWith("custom:ein-")).toBe(true);
     const settings = JSON.parse(readFileSync(join(home, ".factory", "settings.json"), "utf8")) as {
       customModels: Array<{ provider: string; baseUrl: string; apiKey: string; model: string }>;
     };

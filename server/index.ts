@@ -210,7 +210,7 @@ import { captureOutsideHumanControl } from "./private-screen-capture.ts";
 import { RoutineRequestService } from "./routine-requests.ts";
 import { fetchBotDirectory, matchDirectoryBots, type MatchedDirectoryBot } from "./bot-directory.ts";
 import { scoutProject, suggestTeam } from "./project-scout.ts";
-import { fetchGithubTeam, fetchLibraryTeam, fetchTeamCatalog } from "./team-library.ts";
+import { TEAM_LIBRARY_OFFERED, fetchGithubTeam, fetchLibraryTeam, fetchTeamCatalog } from "./team-library.ts";
 import { isBotPackage, packageAgentAsMember, parseBotPackage, renderBotPackageMarkdown } from "./bot-package.ts";
 import { createTeamManifest, importedMemberProfile, parseTeamManifest } from "./team-manifest.ts";
 import { readThreadEvents } from "./thread-events.ts";
@@ -5881,6 +5881,8 @@ const server = createServer(async (req, res) => {
       }
     }
     if (method === "GET" && path === "/api/team-library/catalog") {
+      // not offered yet (no Ein catalog): an answer, not an outage
+      if (!TEAM_LIBRARY_OFFERED) return json(res, 200, { available: false, teams: [] });
       try {
         return json(res, 200, await fetchTeamCatalog());
       } catch (error) {

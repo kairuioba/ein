@@ -49,7 +49,7 @@ function isSameFile(left, right) {
 async function resolveSource(rawPath, { home, fsp, platform }) {
   const target = normalizeSourcePath(rawPath);
   const root = await canonicalPath(
-    path.join(home, ".openmausbot"),
+    path.join(home, ".ein"),
     fsp,
     t("Only files created by your bots can be saved"),
   );

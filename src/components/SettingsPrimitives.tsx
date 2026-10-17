@@ -31,6 +31,21 @@ export function Switch({
   );
 }
 
+/** The quiet label for a feature Ein keeps but has not opened yet (it waits
+ * for Ein's own online service). Informational, never an error. */
+export function NotYetAvailable({ className }: { className?: string }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex shrink-0 items-center whitespace-nowrap rounded-full bg-inset px-2.5 py-1 text-[11.5px] font-medium text-ink-secondary",
+        className,
+      )}
+    >
+      {t("Not available yet")}
+    </span>
+  );
+}
+
 /** A white settings card with the hairline edge. */
 export function Card({
   title,

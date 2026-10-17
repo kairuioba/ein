@@ -2,9 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   TEAM_LIBRARY_CATALOG_URL,
+  TEAM_LIBRARY_OFFERED,
   TEAM_LIBRARY_RAW_ROOT,
+  TeamLibraryNotOffered,
   fetchGithubTeam,
   fetchLibraryTeam,
+  fetchTeamCatalog,
   githubManifestUrls,
   parseTeamCatalog,
 } from "./team-library.ts";
@@ -70,10 +73,20 @@ describe("team library", () => {
       return response({}, 404);
     }) as unknown as typeof fetch;
 
-    const loaded = await fetchLibraryTeam("engineering", fetcher);
+    // the catalog machinery itself, as it runs once a catalog is offered
+    const loaded = await fetchLibraryTeam("engineering", fetcher, true);
     if (loaded.format !== "openmaus.team") throw new Error("expected a legacy team");
     expect(loaded.team.name).toBe("Engineering");
     expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("fetches nothing while Ein offers no catalog of its own", async () => {
+    const fetcher = vi.fn(async () => response(catalog)) as unknown as typeof fetch;
+
+    expect(TEAM_LIBRARY_OFFERED).toBe(false);
+    await expect(fetchTeamCatalog(fetcher)).rejects.toBeInstanceOf(TeamLibraryNotOffered);
+    await expect(fetchLibraryTeam("engineering", fetcher)).rejects.toMatchObject({ status: 404 });
+    expect(fetcher).not.toHaveBeenCalled();
   });
 
   it("normalizes public GitHub repository, blob, and raw links", () => {

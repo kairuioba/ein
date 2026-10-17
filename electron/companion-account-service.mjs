@@ -10,7 +10,12 @@ import {
 } from "./managed-companion-tunnel.mjs";
 import { msg, t } from "./i18n.cjs";
 
-export const DEFAULT_COMPANION_CONTROL_PLANE_URL = "https://accounts.openmausbot.com";
+// 一念 Ein runs no phone relay service of its own yet, so packaged builds
+// ship without one: phones pair directly on the same Wi-Fi (or Tailscale),
+// and the online route reports itself as not offered rather than failing.
+// The account and relay code stays whole; a build can point at Ein's own
+// service with OMB_CONTROL_PLANE_URL once there is one.
+export const DEFAULT_COMPANION_CONTROL_PLANE_URL = "";
 
 export const COMPANION_CLIENT_INSTANCE_FIELD = "companionClientInstanceId";
 export const COMPANION_ACCOUNT_TOKEN_FIELD = "companionAccountToken";
@@ -29,7 +34,7 @@ const DEFAULT_HEALTH_CACHE_MS = 30_000;
 const ownString = (document, field) =>
   typeof document?.[field] === "string" ? document[field] : "";
 
-/** Packaged builds have a safe hosted default. Development must opt into an
+/** Packaged builds use the default above (none today). Development must opt into an
  * exact HTTPS origin (or HTTP loopback Worker) so a contributor never sends
  * an OTP or bearer to an accidental host. An explicitly invalid override
  * disables the feature instead of silently falling back to production. */
@@ -165,8 +170,11 @@ export function friendlyCompanionAccountError(error, { localize = false } = {}) 
   return `${message}${reference}`;
 }
 
-function publicState({ available, status, email, endpoint, message }) {
+function publicState({ available, offered = true, status, email, endpoint, message }) {
   const state = { available: Boolean(available), status };
+  // Only the absence of a service is spelled out: "not offered by this
+  // build" reads as "not available yet", never as an error to retry.
+  if (offered === false) state.offered = false;
   const normalizedEmail = normalizeAccountEmail(email);
   if (normalizedEmail) state.email = normalizedEmail;
   const accessEndpoint = (() => {
@@ -259,6 +267,7 @@ export function createCompanionAccountService({
     if (!configured) {
       return publicState({
         available: false,
+        offered: false,
         status: "signed-out",
         message: t(FRIENDLY_MESSAGES.control_plane_unavailable),
       });

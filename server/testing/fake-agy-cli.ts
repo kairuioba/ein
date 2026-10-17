@@ -31,7 +31,7 @@ function agentsMcpEntry(): McpEntry | null {
     const config = JSON.parse(
       readFileSync(join(home, ".gemini", "config", "mcp_config.json"), "utf8"),
     );
-    const entry = config.mcpServers?.["openmausbot-agents"];
+    const entry = config.mcpServers?.["ein-agents"];
     if (!entry?.command) return null;
     return {
       command: String(entry.command),

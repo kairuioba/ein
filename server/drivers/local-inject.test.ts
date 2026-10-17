@@ -756,7 +756,7 @@ describe("ensureDroidInjectModel", () => {
     writeFileSync(join(home, ".factory", "settings.json"), JSON.stringify({ hooks: { Stop: [] } }));
     const first = ensureDroidInjectModel("omlx::MiniMax-M3-4bit", { HOME: home });
     const again = ensureDroidInjectModel("omlx::MiniMax-M3-4bit", { HOME: home });
-    expect(first).toBe("custom:openmausbot-omlx-MiniMax-M3-4bit");
+    expect(first).toBe("custom:ein-omlx-MiniMax-M3-4bit");
     expect(again).toBe(first);
     const settings = JSON.parse(readFileSync(join(home, ".factory", "settings.json"), "utf8")) as {
       hooks: unknown;
@@ -786,7 +786,7 @@ describe("ensureDroidInjectModel", () => {
     const settings = JSON.parse(readFileSync(join(home, ".factory", "settings.json"), "utf8")) as {
       customModels: Array<{ id?: string; model: string }>;
     };
-    expect(id).toBe("custom:openmausbot-omlx-MiniMax-M3-4bit");
+    expect(id).toBe("custom:ein-omlx-MiniMax-M3-4bit");
     expect(settings.customModels).toHaveLength(1);
     expect(settings.customModels[0]?.id).toBe(id);
   });
@@ -796,9 +796,9 @@ describe("applyDroidLocalAuthEnv", () => {
   it("fills a placeholder Factory key only for a local inject pick", () => {
     const env: Record<string, string | undefined> = {};
     applyDroidLocalAuthEnv(env, "ollama::ornith:35b-bf16");
-    expect(env.FACTORY_API_KEY).toBe("openmausbot-local");
+    expect(env.FACTORY_API_KEY).toBe("ein-local");
     applyDroidLocalAuthEnv(env, "ollama::ornith:35b-bf16");
-    expect(env.FACTORY_API_KEY).toBe("openmausbot-local");
+    expect(env.FACTORY_API_KEY).toBe("ein-local");
   });
 
   it("leaves a real Factory key and cloud slugs alone", () => {
@@ -841,7 +841,7 @@ describe("applyDroidLocalAuthEnv", () => {
         model: "ollama::ornith:35b-bf16",
       });
       await recorder.until((e) => e.type === "turn.completed");
-      expect(JSON.parse(readFileSync(dump, "utf8")).env.FACTORY_API_KEY).toBe("openmausbot-local");
+      expect(JSON.parse(readFileSync(dump, "utf8")).env.FACTORY_API_KEY).toBe("ein-local");
 
       await instance.adapter.sendTurn({
         threadId: "t-cloud",
@@ -850,7 +850,7 @@ describe("applyDroidLocalAuthEnv", () => {
       });
       await recorder.until((e) => e.type === "turn.completed" && e.threadId === "t-cloud");
       expect(JSON.parse(readFileSync(dump, "utf8")).env.FACTORY_API_KEY).not.toBe(
-        "openmausbot-local",
+        "ein-local",
       );
     } finally {
       await instance.dispose();

@@ -117,9 +117,9 @@ export function startUpdater(mainWindow) {
     setState({ status: "idle" });
     return;
   }
-  // No feed baked in (electron-builder `publish: null`): the Chinese edition
-  // must never replace itself with the upstream English release, so it stays
-  // put until a team configures its own feed (README.zh-CN.md).
+  // No feed baked in (a build made with `publish: null`): nothing to check
+  // against, so the updater stays dormant. Release builds bake in
+  // kairuioba/ein-releases (electron-builder.yml → publish).
   if (!existsSync(join(process.resourcesPath, "app-update.yml"))) {
     updaterCoordinator = null;
     setState({ status: "idle", unavailable: true });

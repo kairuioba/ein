@@ -1,5 +1,5 @@
 // PostHog usage analytics + the email → person identity link.
-// The phc_ token is a write-only public key (safe to ship in the client).
+// The phc_ key is a write-only public key (safe to ship in the client).
 // Only the named events below are sent — autocapture is OFF on purpose:
 // it would ship the $el_text of clicked elements, and the sidebar/option
 // cards render model output and message previews, so it would leak fragments
@@ -7,11 +7,24 @@
 // identify(), so PostHog's Persons tab doubles as the collected-email list.
 import posthog from "posthog-js";
 
-const TOKEN = "phc_m2hP39w8y2gLPvHgDvSXAu6xcZ3agjf4ruL56rGcMZEe";
+// 一念 Ein has no analytics project of its own yet, so this module ships
+// switched off: with no key it never calls posthog.init(), and nothing leaves
+// the machine whatever the stored choice says. Settings shows the row as "not
+// available yet". The module stays whole for the day Ein runs its own cloud:
+// build with VITE_EIN_POSTHOG_KEY (and VITE_EIN_POSTHOG_HOST for a
+// self-hosted PostHog) and the opt-in below works as before.
+const BUILD_ENV = (import.meta as { env?: Record<string, string | undefined> }).env ?? {};
+const TOKEN = BUILD_ENV.VITE_EIN_POSTHOG_KEY?.trim() ?? "";
+const API_HOST = BUILD_ENV.VITE_EIN_POSTHOG_HOST?.trim() || "https://us.i.posthog.com";
 
-// This edition starts with analytics OFF: the events go to the upstream
-// OpenMausBot project's PostHog in the United States, which nobody installing
-// the Chinese build agreed to. Settings → General can turn them on. The choice
+/** True when this build carries an analytics key. Without one the setting is
+ * shown as not available yet and nothing is ever sent. */
+export function analyticsAvailable(): boolean {
+  return TOKEN !== "";
+}
+
+// When a build does carry a key, analytics still starts OFF: it only runs
+// after the person opts in under Settings → General. The choice
 // lives in localStorage because it has to be readable BEFORE init() runs: an
 // install that has not opted in must never call posthog.init(), so no
 // request — not even the library's own — leaves the machine. Once running,
@@ -71,9 +84,9 @@ export function setAnalyticsEnabled(enabled: boolean) {
 }
 
 export function initAnalytics() {
-  if (ready || !analyticsEnabled()) return;
+  if (ready || !analyticsAvailable() || !analyticsEnabled()) return;
   posthog.init(TOKEN, {
-    api_host: "https://us.i.posthog.com",
+    api_host: API_HOST,
     autocapture: false, // never capture clicked-element text (conversation leak)
     capture_pageview: false, // single-window desktop app — no page routes
     person_profiles: "identified_only",

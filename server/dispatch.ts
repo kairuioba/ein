@@ -1517,14 +1517,14 @@ export class Dispatcher {
     if (parent && parentSubtask) {
       const boss = this.host.bot(parent.chiefBotId)?.name ?? "the company's chief";
       return [
-        `[OpenMausBot dispatch finished] Your team has finished your plan "${run.goal}" for the subtask “${parentSubtask.title}”, which @${boss} assigned to your department. Their results follow.`,
+        `[Ein dispatch finished] Your team has finished your plan "${run.goal}" for the subtask “${parentSubtask.title}”, which @${boss} assigned to your department. Their results follow.`,
         `Reply with the finished deliverable for that subtask: merge the results into one coherent result for @${boss}, and say what failed or needs a decision. It goes back to @${boss} automatically. Do not dispatch or delegate again in this turn.`,
         "",
         ...lines,
       ].join("\n");
     }
     return [
-      `[OpenMausBot dispatch finished] Every subtask of your plan "${run.goal}" has settled. Their results follow.`,
+      `[Ein dispatch finished] Every subtask of your plan "${run.goal}" has settled. Their results follow.`,
       "Write the user one consolidated answer: what was done, the key outputs merged into a single coherent deliverable, and anything that failed or needs the user's decision. Do not dispatch or delegate again in this turn.",
       "",
       ...lines,

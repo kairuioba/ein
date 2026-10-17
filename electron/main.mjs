@@ -81,7 +81,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 127.0.0.1 explicitly — vite binds IPv4; a bare "localhost" here can
 // resolve to ::1 and paint a black window
 const DEV_URL = process.env.ELECTRON_START_URL ?? "http://127.0.0.1:5199";
-const DEFAULT_COMPOSIO_BROKER_URL = "https://openmausbot-composio.milindsoni201.workers.dev";
+// Ein runs no managed Composio broker of its own (yet): connected apps use
+// the person's own Composio key and talk to Composio directly. A broker can
+// still be supplied with OMB_COMPOSIO_BROKER_URL.
+const DEFAULT_COMPOSIO_BROKER_URL = "";
 let SERVER_PORT = 8799;
 const APP_ICON = path.join(__dirname, "resources/app-icon.png");
 let desktopViewerWindow = null;
@@ -183,14 +186,14 @@ function applyUnreadBadge(win = mainWindow) {
 // intercepting input. This app is not graphics-heavy, so reliability wins.
 if (process.platform === "linux") {
   app.disableHardwareAcceleration();
-  app.setDesktopName("com.openmausbot.app.desktop");
+  app.setDesktopName("com.kairuioba.ein.desktop");
 }
 
 // One instance per user: without this lock a second launch forks a second
 // harness server on a fallback port and splits data dirs in two. The loser
 // exits before any child or window exists; the winner surfaces itself.
 if (!app.requestSingleInstanceLock()) {
-  console.log("[desktop] OpenMausBot is already running — focusing that window");
+  console.log("[desktop] Ein is already running — focusing that window");
   process.exit(0);
 }
 function deliverPackageInstall(win) {
@@ -277,7 +280,7 @@ async function saveSecureCredentials(credentials) {
 }
 
 async function secureComposioConfig() {
-  const dataDir = process.env.OMB_DATA_DIR || path.join(app.getPath("home"), ".openmausbot");
+  const dataDir = process.env.OMB_DATA_DIR || path.join(app.getPath("home"), ".ein");
   const configPath = path.join(dataDir, "config.json");
   try {
     const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
@@ -319,7 +322,7 @@ async function secureComposioConfig() {
 // migrates plaintext left by older versions or direct development clients.
 // See workspace-credentials.mjs for the exact rules.
 async function secureWorkspaceConfig() {
-  const dataDir = process.env.OMB_DATA_DIR || path.join(app.getPath("home"), ".openmausbot");
+  const dataDir = process.env.OMB_DATA_DIR || path.join(app.getPath("home"), ".ein");
   const configPath = path.join(dataDir, "config.json");
   try {
     const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
@@ -346,8 +349,8 @@ function composioBrokerUrl() {
 }
 
 // The packaged app has no terminal: everything about the server child's life
-// goes to server.log in the OS log dir (~/Library/Logs/OpenMausBot on macOS,
-// Console.app-visible; %APPDATA%\OpenMausBot\logs on Windows), which is also
+// goes to server.log in the OS log dir (~/Library/Logs/Ein on macOS,
+// Console.app-visible; %APPDATA%\Ein\logs on Windows), which is also
 // why stdio is piped, not inherited — under a Finder/Explorer launch the
 // parent's stdio leads nowhere and a failed boot is otherwise undiagnosable.
 const LOG_DIR = app.getPath("logs");
@@ -1313,15 +1316,15 @@ function readHomepage() {
     const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8"));
     if (typeof manifest.homepage === "string" && /^https:\/\//.test(manifest.homepage)) return manifest.homepage;
   } catch {
-    // fall through to the project's own repository
+    // fall through to the public releases page
   }
-  return "https://github.com/kairuioba/ein";
+  return "https://github.com/kairuioba/ein-releases";
 }
 
 function installApplicationMenu() {
   const template = applicationMenuTemplate({
-    // The name people read ("Quit Ein" / 退出“一念”). app.getName() stays
-    // "OpenMausBot": it names the data folders and the keychain entry.
+    // The name people read ("Quit Ein" / 退出“一念”); app.getName() is the
+    // bundle's own name, Ein.
     appName: t("Ein"),
     platform: process.platform,
     isFullScreen: menuFullScreen,
@@ -1346,9 +1349,9 @@ function installAboutPanel() {
     copyright: "© 2026 kairuioba",
   };
   if (process.platform === "darwin" || process.platform === "win32") {
-    options.credits = "一念起，万 Bot 动\n基于开源项目 OpenMausBot（CuriosityOS，Apache-2.0）二次开发";
+    options.credits = "一念起，万 Bot 动";
   }
-  if (process.platform === "linux") options.website = "https://github.com/kairuioba/ein";
+  if (process.platform === "linux") options.website = "https://github.com/kairuioba/ein-releases";
   try {
     app.setAboutPanelOptions(options);
   } catch (error) {
@@ -1646,14 +1649,14 @@ ipcMain.handle("desktop:export-diagnostics", async (event) => {
   return result.filePath;
 });
 
-// Bots hand users files as markdown links to paths inside the OpenMausBot
+// Bots hand users files as markdown links to paths inside the Ein
 // home (workspaces, attachments). As plain anchors those resolved against the
 // page origin, so the click opened http://127.0.0.1:8799<path> in the default
 // browser and the server's SPA fallback answered with index.html — a second
 // copy of the chat UI instead of the file. Ask where to put it and copy it
 // there instead: a save dialog tells the user the file landed somewhere and
 // where, which a silent copy into ~/Downloads does not. The path is
-// renderer-controlled, so it must resolve inside ~/.openmausbot and be a
+// renderer-controlled, so it must resolve inside ~/.ein and be a
 // regular file — never a symlink escape or directory.
 ipcMain.handle("desktop:save-file", async (event, rawPath) => {
   return withSavableFile(rawPath, { home: os.homedir() }, async ({ defaultName, copyTo }) => {
@@ -1699,7 +1702,7 @@ ipcMain.handle("desktop:open-external", async (_event, rawUrl) => {
 
 // The Box VNC viewer must be a top-level page for its token exchange. A
 // sandboxed modal BrowserWindow satisfies that requirement while keeping the
-// live desktop inside OpenMausBot instead of sending the person to a browser.
+// live desktop inside Ein instead of sending the person to a browser.
 ipcMain.handle("desktop-viewer:open", (event, rawUrl, title, contextId) => {
   const owner = BrowserWindow.fromWebContents(event.sender);
   return openDesktopViewer(owner, rawUrl, title, contextId);
@@ -1932,7 +1935,7 @@ setCuaStateListener((connection) => {
 app.whenReady().then(async () => {
   installApplicationMenu();
   installAboutPanel();
-  if (app.isPackaged) app.setAsDefaultProtocolClient("openmausbot");
+  if (app.isPackaged) app.setAsDefaultProtocolClient("ein");
   if (process.platform === "darwin") app.dock.setIcon(APP_ICON);
   secureCredentials = await loadSecureCredentials();
   if (app.isPackaged) {

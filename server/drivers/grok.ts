@@ -50,7 +50,7 @@ export const GrokDriver: ProviderDriver<GrokConfig> = {
         return t("no xAI key — set {env} or config.json xai.key", { env: config.apiKeyEnv });
       },
       get unavailableReason() {
-        return t("no xAI API key — add {snippet} to ~/.openmausbot/config.json or set {env}", {
+        return t("no xAI API key — add {snippet} to ~/.ein/config.json or set {env}", {
           snippet: '{"xai":{"key":"xai-…"}}',
           env: config.apiKeyEnv,
         });

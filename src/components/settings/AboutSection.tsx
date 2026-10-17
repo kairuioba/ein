@@ -1,7 +1,9 @@
-// Settings → About: what this app is, who makes it, and the open-source
-// project it is built on. The version is the one this build was made from:
-// package.json is also where the desktop shell's app.getVersion() comes from,
-// so the page and the native About panel always agree.
+// Settings → About: what this app is, who makes it, and where its releases
+// live. The version is the one this build was made from: package.json is also
+// where the desktop shell's app.getVersion() comes from, so the page and the
+// native About panel always agree. The open-source license is the last, quiet
+// row: Ein includes code from the Apache-2.0 OpenMausBot project, and that
+// license and its NOTICE ship inside the app (Resources/licenses).
 import type { ReactNode } from "react";
 import { ExternalLink } from "lucide-react";
 import { version } from "../../../package.json";
@@ -14,8 +16,8 @@ export const APP_VERSION: string = version;
 
 const AUTHOR = "kairuioba";
 const AUTHOR_URL = "https://github.com/kairuioba";
-const REPOSITORY_URL = "https://github.com/kairuioba/ein";
-const UPSTREAM_URL = "https://github.com/CuriosityOS/OpenMausBot";
+// The source repository is private; installers and updates are public here.
+const RELEASES_URL = "https://github.com/kairuioba/ein-releases";
 
 /** A link that leaves the app. The desktop window hands target=_blank links
  * to the default browser (setWindowOpenHandler → shell.openExternal). */
@@ -38,7 +40,7 @@ const withoutScheme = (url: string) => url.replace(/^https:\/\//, "");
 export function AboutSection() {
   return (
     <>
-      <SectionHeader title={t("About")} description={t("The app, who makes it, and the open-source project it builds on.")} />
+      <SectionHeader title={t("About")} description={t("The app, who makes it, and where to get it.")} />
       <div className="flex flex-col gap-3.5">
         <Card className="pb-1.5">
           <div className="flex items-center gap-4 pb-4">
@@ -53,13 +55,13 @@ export function AboutSection() {
             <SettingRow label={t("Author")}>
               <OutLink href={AUTHOR_URL}>{AUTHOR}</OutLink>
             </SettingRow>
-            <SettingRow label={t("Source code")}>
-              <OutLink href={REPOSITORY_URL}>{withoutScheme(REPOSITORY_URL)}</OutLink>
+            <SettingRow label={t("Downloads and updates")}>
+              <OutLink href={RELEASES_URL}>{withoutScheme(RELEASES_URL)}</OutLink>
+            </SettingRow>
+            <SettingRow label={t("Open-source license")} sub={t("Includes code from the OpenMausBot project")}>
+              <span className="text-ink-secondary">Apache-2.0</span>
             </SettingRow>
           </div>
-        </Card>
-        <Card title={t("Open source")} subtitle={t("Based on the open-source OpenMausBot by CuriosityOS (Apache-2.0)")}>
-          <OutLink href={UPSTREAM_URL}>{withoutScheme(UPSTREAM_URL)}</OutLink>
         </Card>
       </div>
     </>

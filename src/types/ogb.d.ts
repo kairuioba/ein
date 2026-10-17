@@ -198,7 +198,7 @@ type SkillRecordingPayload = {
       setLocale?(locale: "zh-CN" | "en"): Promise<boolean>;
       /** Menu-bar commands the page carries out. */
       onMenuCommand?(cb: (name: "new-bot" | "open-settings" | "open-workbench" | string) => void): () => void;
-      /** Receives a GitHub package URL opened through openmausbot://install. */
+      /** Receives a GitHub package URL opened through ein://install. */
       onPackageInstall?(cb: (url: string) => void): () => void;
       /** Updates the native Dock/taskbar unread indicator. */
       setUnreadCount?(count: number): void;
@@ -258,7 +258,7 @@ type SkillRecordingPayload = {
       /** Writes the redacted diagnostics report to a user-chosen file;
        * resolves the path, or null when cancelled. */
       exportDiagnostics?(): Promise<string | null>;
-      /** Asks where to save a bot-created file (inside ~/.openmausbot), copies
+      /** Asks where to save a bot-created file (inside ~/.ein), copies
        * it there and reveals it. Resolves the chosen path, or null if the
        * user cancelled the dialog. */
       saveFile?(filePath: string): Promise<string | null>;
@@ -312,8 +312,8 @@ export interface UpdaterState {
   version?: string;
   percent?: number;
   message?: string;
-  /** The build has no update feed (the Chinese edition ships without one,
-   * so it can never "update" itself to the upstream English release). */
+  /** The build has no update feed (made without electron-builder `publish`),
+   * so there is nothing to check against. */
   unavailable?: boolean;
   /** The version running now. */
   current?: string;
@@ -321,6 +321,9 @@ export interface UpdaterState {
 
 export interface CompanionAccountState {
   available: boolean;
+  /** false when this build has no online phone service at all (Ein has none
+   * yet): shown as "not available yet", never as something to retry */
+  offered?: boolean;
   status: "signed-out" | "connecting" | "ready" | "error";
   email?: string;
   endpoint?: string;

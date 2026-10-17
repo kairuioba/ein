@@ -95,7 +95,7 @@ harness API:
   If an API payload changes, regenerate the fixtures with
   `node scripts/capture-companion-fixtures.mjs` and review the diff.
 
-The sidecar keeps its device registry in `~/.openmausbot/devices.json`. That is
+The sidecar keeps its device registry in `~/.ein/devices.json`. That is
 security state owned by the network boundary, not transcript data, so it does
 not belong in the message database.
 

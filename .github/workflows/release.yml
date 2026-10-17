@@ -1,3 +1,7 @@
+# 一念 Ein ships with release-ein.yml (to kairuioba/ein-releases). This is the
+# original project's pipeline, kept for reference: it only runs by hand and
+# targets that project's releases repository, which this repository cannot write to.
+#
 # One-button releases: builds macOS (arm64 + x64, signed, notarized, stapled),
 # Windows, and Ubuntu from ONE commit, assembles a complete draft on
 # openmausbot-releases with verified feeds, and publishes after a human
@@ -328,7 +332,7 @@ jobs:
         run: pnpm smoke:linux-package
       - name: Remove the installed upgrade fixture
         if: always()
-        run: sudo dpkg --purge openmausbot || true
+        run: sudo dpkg --purge ein || true
       - name: Stable-named copies and checksums
         run: |
           v=$(node -p "require('./package.json').version")

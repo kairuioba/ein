@@ -3,6 +3,13 @@ import { isBotPackage, parseBotPackage, type ParsedBotPackage } from "./bot-pack
 import { parseTeamManifest, type ParsedTeamManifest } from "./team-manifest.ts";
 import { t } from "../shared/i18n.ts";
 
+// 一念 Ein has no team template catalog of its own yet. The catalog below is
+// the original project's, so Ein does not fetch it: the library reports
+// itself as not available yet, while importing a team file or a public GitHub
+// link keeps working. To open the library, publish Ein's own catalog (same
+// format) and point these three constants at it, then set this to true.
+export const TEAM_LIBRARY_OFFERED = false;
+
 export const TEAM_LIBRARY_REPOSITORY = "https://github.com/milind-soni/openmausbot-teams";
 export const TEAM_LIBRARY_RAW_ROOT = "https://raw.githubusercontent.com/milind-soni/openmausbot-teams/main";
 export const TEAM_LIBRARY_CATALOG_URL = `${TEAM_LIBRARY_RAW_ROOT}/catalog.json`;
@@ -153,7 +160,16 @@ async function fetchText(url: string, maxBytes: number, fetcher: Fetcher): Promi
   return raw;
 }
 
-export async function fetchTeamCatalog(fetcher: Fetcher = fetch): Promise<TeamCatalog> {
+/** Thrown instead of fetching while the library is not offered. */
+export class TeamLibraryNotOffered extends Error {
+  readonly status = 404;
+  constructor() {
+    super(t("Team templates are not available yet"));
+  }
+}
+
+export async function fetchTeamCatalog(fetcher: Fetcher = fetch, offered = TEAM_LIBRARY_OFFERED): Promise<TeamCatalog> {
+  if (!offered) throw new TeamLibraryNotOffered();
   return parseTeamCatalog(await fetchJson(TEAM_LIBRARY_CATALOG_URL, MAX_CATALOG_BYTES, fetcher));
 }
 
@@ -170,9 +186,13 @@ async function fetchShareable(url: string, fetcher: Fetcher): Promise<ParsedShar
     : parseShareable(await fetchJson(url, MAX_MANIFEST_BYTES, fetcher));
 }
 
-export async function fetchLibraryTeam(slug: string, fetcher: Fetcher = fetch): Promise<ParsedShareableTeam> {
+export async function fetchLibraryTeam(
+  slug: string,
+  fetcher: Fetcher = fetch,
+  offered = TEAM_LIBRARY_OFFERED,
+): Promise<ParsedShareableTeam> {
   if (!/^[a-z0-9][a-z0-9-]*$/.test(slug)) throw new Error(t("That team name is invalid"));
-  const catalog = await fetchTeamCatalog(fetcher);
+  const catalog = await fetchTeamCatalog(fetcher, offered);
   const entry = catalog.teams.find((team) => team.slug === slug);
   if (!entry) throw Object.assign(new Error(t("That library team was not found")), { status: 404 });
   return fetchShareable(`${TEAM_LIBRARY_RAW_ROOT}/${entry.package ?? entry.manifest}`, fetcher);

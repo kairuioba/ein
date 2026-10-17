@@ -195,11 +195,11 @@ export function AppsPage() {
               <div className="mt-1.5 text-[13px] leading-relaxed text-ink-secondary">
                 {configured
                   ? t("Connect the software your team works in — docs, chat, code, design — and your bots can read and act in it, within what you allow.")
-                  : t("Connected apps are temporarily unavailable. You can retry after restarting, or configure your own connection service.")}
+                  : t("Hosted connected apps are not available yet. Add your own Composio key in Settings → Connections to connect apps now.")}
               </div>
               <div className="mt-4 flex gap-2">
                 <Button onClick={openBrowser}><Plus size={15} strokeWidth={2.4} />{t("Add app")}</Button>
-                {!configured && <Button variant="soft" onClick={() => dispatch({ type: "toggleAppSettings", open: true })}>{t("Open settings")}</Button>}
+                {!configured && <Button variant="soft" onClick={() => dispatch({ type: "toggleAppSettings", open: true, section: "connections" })}>{t("Open settings")}</Button>}
               </div>
             </div>
           )

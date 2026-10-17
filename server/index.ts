@@ -2188,6 +2188,31 @@ function taskFolderStatus(run: DispatchRun | undefined): TaskFolderStatus {
   }
 }
 
+/** The bounded, read-only sources for context sharing: accepted tasks lend
+ * their approach, failed ones only negative lessons. */
+function contextSourcesForFolders(ids: readonly string[]): ContextSource[] {
+  const sources: ContextSource[] = [];
+  for (const id of ids.slice(0, 3)) {
+    const source = taskFolders?.byId(id);
+    if (!source) continue;
+    const run = source.runId ? dispatcher.get(source.runId) : undefined;
+    const accepted = Boolean(run && run.status === "done" && run.subtasks.every((subtask) => subtask.status === "done" || subtask.status === "skipped"));
+    sources.push({
+      taskId: source.id,
+      title: source.title,
+      accepted,
+      acceptedBasis: "proxy",
+      ...(run?.goal ? { goal: run.goal } : {}),
+      artifacts: run?.subtasks.flatMap((subtask) => subtask.handoff?.artifacts ?? []) ?? [],
+      decisions: run?.subtasks.flatMap((subtask) => subtask.handoff?.decisions?.map((entry) => entry.what) ?? []) ?? [],
+      acceptance: run?.subtasks.flatMap((subtask) => (subtask.acceptance ? [subtask.acceptance] : [])) ?? [],
+      pitfalls: run?.subtasks.flatMap((subtask) => subtask.handoff?.risks?.map((entry) => entry.risk) ?? []) ?? [],
+      openIssues: run?.subtasks.flatMap((subtask) => subtask.handoff?.openQuestions ?? []) ?? [],
+    });
+  }
+  return sources;
+}
+
 /** Folders plus what their dispatch run knows: status, progress, people and
  * the departments the task actually uses. */
 function taskFolderViews(): TaskFolderView[] {
@@ -2223,6 +2248,9 @@ function taskFolderViews(): TaskFolderView[] {
           total: run.subtasks.filter((subtask) => !subtask.childRunId).length,
         }
       : { done: 0, total: 0 };
+    const conversationBot = folder.conversationId
+      ? store.bots.find((bot) => bot.tasks?.some((task) => task.threadId === folder.conversationId))
+      : undefined;
     return {
       ...folder,
       status: taskFolderStatus(run),
@@ -2230,6 +2258,7 @@ function taskFolderViews(): TaskFolderView[] {
       memberCount: members.length,
       departments,
       ...(lead ? { leadName: lead.name } : {}),
+      ...(conversationBot ? { conversationBotId: conversationBot.id } : {}),
     };
   });
 }
@@ -5653,6 +5682,63 @@ const server = createServer(async (req, res) => {
         return json(res, 200, { task: tasks.find((task) => task.id === created.id), tasks });
       }
     }
+    if (path === "/api/tasks" && method === "POST") {
+      if (!taskFolders) return json(res, 503, { error: "task folders are not ready yet" });
+      const body = (await readBody(req)) ?? {};
+      const chiefId = companyChiefId();
+      if (!chiefId) return json(res, 400, { error: "no company chief yet" });
+      const title = typeof body.title === "string" && body.title.trim() ? body.title.trim().slice(0, 120) : t("New task");
+      const leadBotId = typeof body.leadBotId === "string" && store.bot(body.leadBotId) ? body.leadBotId : chiefId;
+      // window + folder together: a new task is always a new conversation
+      const window = store.createTask(chiefId, title, true);
+      if (!window) return json(res, 500, { error: "could not open a task window" });
+      const folder = taskFolders.create({ title, leadBotId, conversationId: window.threadId });
+      if ("error" in folder) return json(res, 400, folder);
+      const tasks = taskFolderViews();
+      broadcast({ kind: "task-folders", tasks });
+      return json(res, 200, { task: tasks.find((task) => task.id === folder.id), conversationId: window.threadId, botId: chiefId });
+    }
+    const forkMatch = path.match(/^\/api\/tasks\/([\w-]+)\/fork$/);
+    if (forkMatch && method === "POST") {
+      if (!taskFolders) return json(res, 503, { error: "task folders are not ready yet" });
+      const body = (await readBody(req)) ?? {};
+      const requestId = typeof body.clientRequestId === "string" ? body.clientRequestId : "";
+      if (requestId) {
+        const existing = taskFolders.byForkRequest(requestId);
+        if (existing) {
+          const window = existing.conversationId;
+          const owner = window ? store.bots.find((bot) => bot.tasks?.some((task) => task.threadId === window)) : undefined;
+          return json(res, 200, { task: taskFolderViews().find((task) => task.id === existing.id), conversationId: window, botId: owner?.id, duplicate: true });
+        }
+      }
+      const source = taskFolders.byId(forkMatch[1]!);
+      if (!source) return json(res, 404, { error: "no such task folder" });
+      const chiefId = companyChiefId();
+      if (!chiefId) return json(res, 400, { error: "no company chief yet" });
+      const title = typeof body.title === "string" && body.title.trim() ? body.title.trim().slice(0, 120) : `${source.title} · 续`;
+      const window = store.createTask(chiefId, title, true);
+      if (!window) return json(res, 500, { error: "could not open a task window" });
+      const folder = taskFolders.create({
+        title,
+        leadBotId: chiefId,
+        conversationId: window.threadId,
+        forkedFromTaskId: source.id,
+        ...(requestId ? { forkRequestId: requestId } : {}),
+      });
+      if ("error" in folder) return json(res, 400, folder);
+      // reference the source task's approach (bounded, read-only), never copy
+      // its transcript: reuse the same builder as an explicit context share
+      const rendered = buildContextShare(contextSourcesForFolders([source.id]));
+      if (rendered.text) taskFolders.setContextShare(folder.id, { fromTaskIds: [source.id], tokens: rendered.tokens, text: rendered.text });
+      const tasks = taskFolderViews();
+      broadcast({ kind: "task-folders", tasks });
+      return json(res, 200, {
+        task: tasks.find((task) => task.id === folder.id),
+        conversationId: window.threadId,
+        botId: chiefId,
+        draft: `基于「${source.title}」的结论，我想继续：`,
+      });
+    }
     const shareMatch = path.match(/^\/api\/task-folders\/([\w-]+)\/context-shares$/);
     if (shareMatch && method === "POST") {
       if (!taskFolders) return json(res, 503, { error: "task folders are not ready yet" });
@@ -5673,7 +5759,6 @@ const server = createServer(async (req, res) => {
         return sections;
       };
       const targetSections = sectionsOf(target);
-      const sources: ContextSource[] = [];
       for (const id of ids) {
         const source = taskFolders.byId(id);
         if (!source || source.id === target.id) return json(res, 400, { error: "unknown or self source task" });
@@ -5682,21 +5767,8 @@ const server = createServer(async (req, res) => {
         if (targetSections.size && sourceSections.size && ![...sourceSections].some((section) => targetSections.has(section))) {
           return json(res, 400, { error: "context can only be shared inside the same department" });
         }
-        const run = source.runId ? dispatcher.get(source.runId) : undefined;
-        const accepted = Boolean(run && run.status === "done" && run.subtasks.every((subtask) => subtask.status === "done" || subtask.status === "skipped"));
-        sources.push({
-          taskId: source.id,
-          title: source.title,
-          accepted,
-          ...(run?.goal ? { goal: run.goal } : {}),
-          artifacts: run?.subtasks.flatMap((subtask) => subtask.handoff?.artifacts ?? []) ?? [],
-          decisions: run?.subtasks.flatMap((subtask) => subtask.handoff?.decisions?.map((entry) => entry.what) ?? []) ?? [],
-          acceptance: run?.subtasks.flatMap((subtask) => (subtask.acceptance ? [subtask.acceptance] : [])) ?? [],
-          pitfalls: run?.subtasks.flatMap((subtask) => subtask.handoff?.risks?.map((entry) => entry.risk) ?? []) ?? [],
-          openIssues: run?.subtasks.flatMap((subtask) => subtask.handoff?.openQuestions ?? []) ?? [],
-        });
       }
-      const rendered = buildContextShare(sources);
+      const rendered = buildContextShare(contextSourcesForFolders(ids));
       const saved = taskFolders.setContextShare(target.id, rendered);
       if ("error" in saved) return json(res, 400, saved);
       broadcast({ kind: "task-folders", tasks: taskFolderViews() });

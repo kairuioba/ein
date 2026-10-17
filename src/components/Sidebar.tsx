@@ -123,6 +123,7 @@ import {
 import { phoneSettingsAction, SidebarPhoneButton } from "./SidebarPhoneButton";
 import { SidebarSectionHeader } from "./SidebarSectionHeader";
 import { InboxPanel } from "./InboxPanel";
+import { TaskFolderList } from "./TaskFolderList";
 import { useInbox } from "@/lib/inbox";
 import { BOT_DRAG_TYPE } from "@/components/routines/calendar-model";
 
@@ -2125,6 +2126,15 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
       <div ref={listRef} className={cn("min-h-0 flex-1 overflow-y-auto pb-2 pt-2", iconOnly ? "px-2.5" : "px-3")}>
         <div className="flex flex-col">
           {chief && <div className="mb-0.5">{renderBot(chief, "chief")}</div>}
+          {!iconOnly && (
+            <TaskFolderList
+              needsYouByTask={approvalInbox.counts.byTask}
+              onOpenTask={(botId, threadId) => {
+                dispatch({ type: "select", id: botId });
+                dispatch({ type: "switchTask", botId, threadId });
+              }}
+            />
+          )}
           {sectionIds.map((id, index) => {
             const view = views.get(id);
             if (!view) return null;

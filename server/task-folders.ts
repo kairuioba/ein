@@ -51,6 +51,9 @@ export class TaskFolderStore {
           createdAt: Number.isFinite(entry.createdAt) ? entry.createdAt : Date.now(),
           ...(typeof entry.leadBotId === "string" && entry.leadBotId ? { leadBotId: entry.leadBotId } : {}),
           ...(typeof entry.runId === "string" && entry.runId ? { runId: entry.runId } : {}),
+          ...(typeof entry.conversationId === "string" && entry.conversationId ? { conversationId: entry.conversationId } : {}),
+          ...(typeof entry.forkedFromTaskId === "string" ? { forkedFromTaskId: entry.forkedFromTaskId } : {}),
+          ...(typeof entry.forkRequestId === "string" ? { forkRequestId: entry.forkRequestId } : {}),
           ...(Array.isArray(entry.contextShares) ? { contextShares: entry.contextShares } : {}),
           ...((entry as TaskFolderRecord & { contextShare?: unknown }).contextShare &&
           typeof (entry as TaskFolderRecord & { contextShare?: unknown }).contextShare === "object"
@@ -93,6 +96,14 @@ export class TaskFolderStore {
     return this.folders.find((folder) => folder.runId === runId);
   }
 
+  byConversation(conversationId: string): TaskFolderRecord | undefined {
+    return this.folders.find((folder) => folder.conversationId === conversationId);
+  }
+
+  byForkRequest(requestId: string): TaskFolderRecord | undefined {
+    return this.folders.find((folder) => folder.forkRequestId === requestId);
+  }
+
   byId(id: string): TaskFolderRecord | undefined {
     return this.folders.find((folder) => folder.id === id);
   }
@@ -104,6 +115,24 @@ export class TaskFolderStore {
   /** Create the folder for a dispatch run (idempotent). The caller supplies
    * the task's own lead; the store never assumes the company chief. */
   ensureForRun(run: DispatchRun, leadBotId?: string, conversationId?: string): TaskFolderRecord {
+    // a task window created up-front (POST /api/tasks) owns the folder before
+    // the dispatch run exists; attach the run to it instead of creating a twin
+    if (conversationId) {
+      const bound = this.byConversation(conversationId);
+      if (bound) {
+        let changed = false;
+        if (!bound.runId) {
+          bound.runId = run.id;
+          changed = true;
+        }
+        if (leadBotId && bound.leadBotId !== leadBotId) {
+          bound.leadBotId = leadBotId;
+          changed = true;
+        }
+        if (changed) this.save();
+        return bound;
+      }
+    }
     const existing = this.byRun(run.id);
     if (existing) {
       let changed = false;
@@ -161,7 +190,7 @@ export class TaskFolderStore {
   }
 
   /** A manual task (no dispatch run yet). */
-  create(input: { title?: unknown; color?: unknown; leadBotId?: unknown }): TaskFolderRecord | { error: string } {
+  create(input: { title?: unknown; color?: unknown; leadBotId?: unknown; conversationId?: unknown; forkedFromTaskId?: unknown; forkRequestId?: unknown }): TaskFolderRecord | { error: string } {
     const title = cleanTitle(input.title);
     if (!title) return { error: "a task folder needs a title" };
     const folder: TaskFolderRecord = {
@@ -171,6 +200,9 @@ export class TaskFolderStore {
       order: this.nextOrder(),
       collapsed: false,
       ...(typeof input.leadBotId === "string" && input.leadBotId ? { leadBotId: input.leadBotId } : {}),
+      ...(typeof input.conversationId === "string" && input.conversationId ? { conversationId: input.conversationId } : {}),
+      ...(typeof input.forkedFromTaskId === "string" && input.forkedFromTaskId ? { forkedFromTaskId: input.forkedFromTaskId } : {}),
+      ...(typeof input.forkRequestId === "string" && input.forkRequestId ? { forkRequestId: input.forkRequestId } : {}),
       createdAt: Date.now(),
     };
     this.folders.push(folder);

@@ -58,6 +58,26 @@ describe("task folders", () => {
     expect(store.create({ title: "手动任务", leadBotId: "lead-b" })).toMatchObject({ leadBotId: "lead-b" });
   });
 
+  it("attaches a dispatch run to the task window created before it", () => {
+    const { store } = temp();
+    const created = store.create({ title: "新任务", conversationId: "win-1", leadBotId: "lead" });
+    if ("error" in created) throw new Error(created.error);
+    const folder = store.ensureForRun(run("run-1", "新任务目标"), "lead-2", "win-1");
+    expect(folder.id).toBe(created.id);
+    expect(folder.runId).toBe("run-1");
+    expect(folder.leadBotId).toBe("lead-2");
+    expect(store.byConversation("win-1")?.id).toBe(created.id);
+  });
+
+  it("records fork lineage and is idempotent by client request id", () => {
+    const { store } = temp();
+    const forked = store.create({ title: "续作", conversationId: "win-2", forkedFromTaskId: "old", forkRequestId: "req-1" });
+    if ("error" in forked) throw new Error(forked.error);
+    expect(forked).toMatchObject({ forkedFromTaskId: "old", forkRequestId: "req-1", conversationId: "win-2" });
+    expect(store.byForkRequest("req-1")?.id).toBe(forked.id);
+    expect(store.byForkRequest("nope")).toBeUndefined();
+  });
+
   it("keeps every context share as an append-only audit snapshot", () => {
     const { dir, store } = temp();
     const target = store.create({ title: "新任务" });

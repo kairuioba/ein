@@ -23,6 +23,10 @@ export interface TaskFolderRecord {
    * task. A new task always gets a new window; an old task keeps it for review
    * even after its employees are reused by a later task. */
   conversationId?: string;
+  /** when this task was forked from another one ("基于此新建") */
+  forkedFromTaskId?: string;
+  /** idempotency key for a fork request (double-click safe) */
+  forkRequestId?: string;
   /** handoff summaries explicitly shared from earlier tasks (read-only
    * context, never the old transcript) */
   sharedFromTaskIds?: string[];
@@ -57,6 +61,8 @@ export interface TaskFolderView extends TaskFolderRecord {
   memberCount: number;
   departments: TaskFolderDepartment[];
   leadName?: string;
+  /** the bot whose conversation is the task window (to open it) */
+  conversationBotId?: string;
 }
 
 export const TASK_FOLDER_COLORS = ["#0EA5E9", "#EC4899", "#8B5CF6", "#F59E0B", "#14B8A6", "#F97316", "#65A30D", "#475467"] as const;

@@ -16,8 +16,8 @@
 // no list command, so the catalog is discovered from what `session/new`
 // advertises (ACP `models.availableModels` or a `model` config option). The
 // probe runs in the background, its result is cached on disk, and the picker
-// always offers "default" — the CLI's own choice — so a fresh install works
-// before the first probe lands. On top of that, the user's own
+// defaults to DeepSeek V4.1 Flash, even before the first probe lands. The old
+// "default" placeholder is accepted on input but never shown. The user's own
 // ~/.codebuddy/models.json is read on every refresh, as the CLI itself merges
 // it (workbuddy.ai/docs/cli/models): its added models appear as Custom at
 // once, and its `availableModels` allow-list trims the picker like the CLI's
@@ -34,7 +34,8 @@ import type { ModelCatalog, ProviderErrorCode } from "../../contracts.ts";
 import { resolveCli } from "../../procs.ts";
 import { createAcpDriver, type AcpConfig, type AcpSupport } from "./core.ts";
 
-export const WORKBUDDY_DEFAULT_MODEL = "default";
+export const WORKBUDDY_DEFAULT_MODEL = "deepseek-v4.1-flash";
+const LEGACY_DEFAULT_MODEL = "default";
 export const WORKBUDDY_ENVIRONMENTS = ["international", "internal", "ioa"] as const;
 export type WorkBuddyEnvironment = (typeof WORKBUDDY_ENVIRONMENTS)[number];
 
@@ -42,7 +43,7 @@ export type WorkBuddyEnvironment = (typeof WORKBUDDY_ENVIRONMENTS)[number];
 const STATIC_MODELS: ModelCatalog = {
   default: WORKBUDDY_DEFAULT_MODEL,
   get options() {
-    return [{ id: WORKBUDDY_DEFAULT_MODEL, label: t("WorkBuddy default") }];
+    return workbuddyCatalog([]).options;
   },
 };
 
@@ -166,7 +167,7 @@ export function readCodeBuddyModels(env: Record<string, string | undefined>): Co
   return { models, available: available.length ? available : null };
 }
 
-/** The picker catalog: "default" first, then whatever the account advertises,
+/** The picker catalog: DeepSeek first, then the account's models,
  *  then the user's own models.json models (Custom), trimmed to the
  *  `availableModels` allow-list when there is one — the CLI applies it after
  *  merging, and so does this. */
@@ -176,8 +177,11 @@ export function workbuddyCatalog(
 ): ModelCatalog {
   const own = new Map(local.models.map((model) => [model.id, model]));
   const rows: ModelCatalog["options"] = [];
-  for (const model of advertised) {
-    if (model.id === WORKBUDDY_DEFAULT_MODEL || rows.some((row) => row.id === model.id)) continue;
+  const models = advertised.some((model) => model.id === WORKBUDDY_DEFAULT_MODEL)
+    ? advertised
+    : [{ id: WORKBUDDY_DEFAULT_MODEL, label: "DeepSeek V4.1 Flash" }, ...advertised];
+  for (const model of models) {
+    if (model.id === LEGACY_DEFAULT_MODEL || rows.some((row) => row.id === model.id)) continue;
     const mine = own.get(model.id);
     rows.push({
       id: model.id,
@@ -187,19 +191,28 @@ export function workbuddyCatalog(
     });
   }
   for (const model of local.models) {
-    if (model.id === WORKBUDDY_DEFAULT_MODEL || rows.some((row) => row.id === model.id)) continue;
+    if (model.id === LEGACY_DEFAULT_MODEL || rows.some((row) => row.id === model.id)) continue;
     rows.push({ id: model.id, label: model.name ?? model.id, custom: true });
   }
   let shown = rows;
   if (local.available) {
     const allowed = local.available;
-    shown = rows.filter((row) => allowed.includes(row.id));
-    // an allowed built-in the probe has not reported yet is still the user's choice
-    for (const id of allowed) {
-      if (id !== WORKBUDDY_DEFAULT_MODEL && !shown.some((row) => row.id === id)) shown.push({ id, label: id });
-    }
+    // Keep allow-list order so catalog refresh and turn resolution agree,
+    // even before the probe has reported an allowed built-in.
+    shown = [...new Set(allowed)]
+      .filter((id) => id !== LEGACY_DEFAULT_MODEL)
+      .map((id) => rows.find((row) => row.id === id) ?? { id, label: id });
   }
-  return { default: WORKBUDDY_DEFAULT_MODEL, options: [{ id: WORKBUDDY_DEFAULT_MODEL, label: t("WorkBuddy default") }, ...shown] };
+  // A legacy allow-list containing only "default" still needs a real model.
+  if (!shown.length) shown.push({ id: WORKBUDDY_DEFAULT_MODEL, label: "DeepSeek V4.1 Flash" });
+  const preferred = shown.find((row) => row.id === WORKBUDDY_DEFAULT_MODEL);
+  return {
+    default: preferred?.id ?? shown[0]!.id,
+    options: [
+      ...(preferred ? [preferred] : []),
+      ...shown.filter((row) => row !== preferred),
+    ],
+  };
 }
 
 let cacheLoaded = false;
@@ -362,11 +375,12 @@ export function workbuddyIsAuthenticated(
   return knownState(probeFingerprint(env, config.cli))?.signedIn ?? true;
 }
 
-/** argv after the binary: ACP over stdio, the picked model unless it is the
- * CLI's own default, and auto-approval only on a full-auto instance. */
+/** argv after the binary: ACP over stdio, a real model (DeepSeek when
+ * unspecified), and auto-approval only on a full-auto instance. */
 export function workbuddySpawnArgs(config: Pick<AcpConfig, "fullAuto">, model: string | undefined): string[] {
   const args = ["--acp"];
-  if (model && model !== WORKBUDDY_DEFAULT_MODEL) args.push("--model", model);
+  const selected = !model || model === LEGACY_DEFAULT_MODEL ? WORKBUDDY_DEFAULT_MODEL : model;
+  args.push("--model", selected);
   if (config.fullAuto) args.push("--permission-mode", "bypassPermissions");
   return args;
 }
@@ -392,6 +406,9 @@ const support: AcpSupport = {
   },
   credentialEnv: ["CODEBUDDY_API_KEY"],
   resolveModels,
+  resolveTurnModel: (model, env) => !model || model === LEGACY_DEFAULT_MODEL
+    ? workbuddyCatalog([], readCodeBuddyModels(env)).default
+    : model,
   spawnArgs: (config, turn) => workbuddySpawnArgs(config, turn.model),
   pickAuthMethod: (methods) => {
     const ids = methods.map((method) => method.id).filter((id): id is string => typeof id === "string");
@@ -410,7 +427,7 @@ const support: AcpSupport = {
   // the argv choice.
   configureSession: async ({ request, sessionId, turn, sessionModels }) => {
     const model = turn.model;
-    if (!model || model === WORKBUDDY_DEFAULT_MODEL) return;
+    if (!model) return;
     if (!sessionModels.some((entry) => entry.modelId === model)) return;
     try {
       await request("session/set_model", { sessionId, modelId: model });

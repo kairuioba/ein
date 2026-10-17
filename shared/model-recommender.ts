@@ -39,6 +39,9 @@ export interface ModelCandidate {
   images: boolean;
   subscription: boolean;
   effortLevels: readonly string[];
+  /** Position in its engine's catalog. Engines list their current models
+   * first, so between equally suited models the earlier one is the newer. */
+  rank?: number;
 }
 
 export interface Recommendation {
@@ -126,9 +129,10 @@ export function candidatesFromInstances(instances: readonly InstanceLike[]): Mod
     if (instance.snapshot?.state !== "available" || instance.snapshot.authenticated === false) continue;
     if (instance.driverKind === "boxAgent") continue; // the cloud-computer runner is not a chat engine
     const options = instance.models?.options ?? [];
-    for (const option of options) {
+    for (const [rank, option] of options.entries()) {
       if (!option?.id) continue;
       candidates.push({
+        rank,
         instanceId: instance.instanceId,
         engineName: instance.displayName ?? instance.instanceId,
         driverKind: instance.driverKind,
@@ -201,7 +205,7 @@ export function recommendModels(
   options: { limit?: number; overrides?: Readonly<Record<string, ProfileOverride>> } = {},
 ): Recommendation[] {
   const weights = WEIGHTS[policy];
-  const scored: Recommendation[] = [];
+  const scored: Array<Recommendation & { rank: number }> = [];
   for (const candidate of candidates) {
     if (task.requiresTools && !candidate.tools) continue;
     if (task.requiresComputer && !candidate.computer) continue;
@@ -237,10 +241,20 @@ export function recommendModels(
       score: Math.round(score * 100) / 100,
       profile,
       reasons,
+      rank: candidate.rank ?? Number.MAX_SAFE_INTEGER,
     });
   }
-  scored.sort((a, b) => b.score - a.score || a.profile.cost - b.profile.cost || a.modelLabel.localeCompare(b.modelLabel));
-  return scored.slice(0, options.limit ?? 3);
+  // Ties go to the model its engine lists first — the current one. A label
+  // tie-break picked "Claude Fable 5" over "Claude Fable 5.1" and "Sonnet
+  // 4.6" over "Sonnet 5.5" once engines listed their older models too.
+  scored.sort(
+    (a, b) =>
+      b.score - a.score ||
+      a.profile.cost - b.profile.cost ||
+      a.rank - b.rank ||
+      a.modelLabel.localeCompare(b.modelLabel),
+  );
+  return scored.slice(0, options.limit ?? 3).map(({ rank: _rank, ...recommendation }) => recommendation);
 }
 
 /** Convenience: assess the text and recommend in one call. */

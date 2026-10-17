@@ -102,6 +102,33 @@ describe("recommendations", () => {
     expect(best?.reasons.length).toBeGreaterThan(0);
   });
 
+  // Regression: with the live Claude menu listing older models as well, an
+  // alphabetical tie-break picked Fable 5 over Fable 5.1 and Sonnet 4.6 over
+  // Sonnet 5.5 for dispatched subtasks.
+  it("between equally suited models picks the one its engine lists first, the current one", () => {
+    const live: InstanceLike = {
+      ...INSTANCES[0]!,
+      models: {
+        default: "claude-sonnet-5-5",
+        options: [
+          { id: "claude-opus-5-5", label: "Claude Opus 5.5" },
+          { id: "claude-fable-5-1", label: "Claude Fable 5.1" },
+          { id: "claude-sonnet-5-5", label: "Claude Sonnet 5.5" },
+          { id: "claude-haiku-5-5", label: "Claude Haiku 5.5" },
+          { id: "claude-fable-5", label: "Claude Fable 5" },
+          { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
+        ],
+      },
+    };
+    const pool = candidatesFromInstances([live]);
+    const hard = recommendModels(assessTask("设计并实现一个复杂的分布式任务调度系统架构，端到端完成", { difficulty: 5 }), pool, "quality", { limit: 1 });
+    expect(hard[0]?.model).toBe("claude-opus-5-5");
+    const sonnetTier = recommendModels(assessTask("整理这份销售数据并写一段分析"), pool, "balanced", { limit: 6 })
+      .filter((pick) => pick.profile.id === "claude-sonnet");
+    expect(sonnetTier[0]?.model).toBe("claude-sonnet-5-5");
+    expect(Object.keys(hard[0]!)).not.toContain("rank");
+  });
+
   it("explains each pick and orders best first", () => {
     const { task, recommendations } = recommendForText("分析竞品并写一份对比报告", INSTANCES, "balanced");
     expect(task.needs).toContain("reasoning");

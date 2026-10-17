@@ -252,6 +252,31 @@ process.stdin.on("data", (c) => {
     } catch {
       continue;
     }
+    // the model-list probe: an `initialize` control request answered with
+    // the models this CLI offers (FAKE_CLAUDE_MODELS: JSON array of the real
+    // CLI's model rows; "none" answers without a list, like an old CLI)
+    const control = prompt as { type?: unknown; request_id?: unknown; request?: { subtype?: unknown } } | null;
+    if (control && typeof control === "object" && control.type === "control_request") {
+      if (control.request?.subtype === "initialize") {
+        const raw = process.env.FAKE_CLAUDE_MODELS;
+        const models = raw === "none" ? undefined : raw ? JSON.parse(raw) : [
+          { value: "default", resolvedModel: "claude-sonnet-5-5", displayName: "Default (recommended)", description: "Sonnet 5.5" },
+          { value: "opus", resolvedModel: "claude-opus-5-5", displayName: "Opus 5.5", description: "Best for everyday, complex tasks" },
+          { value: "sonnet", resolvedModel: "claude-sonnet-5-5", displayName: "Sonnet 5.5", description: "Efficient for routine tasks" },
+          { value: "haiku", resolvedModel: "claude-haiku-5-5", displayName: "Haiku 5.5", description: "Fastest for quick answers" },
+        ];
+        if (process.env.FAKE_CLAUDE_PROBE_LOG) appendFileSync(process.env.FAKE_CLAUDE_PROBE_LOG, JSON.stringify({ argv }) + "\n");
+        out({
+          type: "control_response",
+          response: {
+            subtype: "success",
+            request_id: control.request_id,
+            response: { commands: [], ...(models ? { models } : {}), account: { subscriptionType: "max", apiProvider: "firstParty" } },
+          },
+        });
+      }
+      continue;
+    }
     if (turnRunning) steered.push(promptText(prompt));
     else {
       playTurn(prompt);

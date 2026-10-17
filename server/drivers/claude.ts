@@ -39,6 +39,7 @@ import {
   resolveInjectId,
 } from "./local-inject.ts";
 import { appendNative } from "./native.ts";
+import { CLAUDE_MODEL_ID, claudeLiveModels, type ClaudeModelProbe } from "./claude-models.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
 import { t } from "../../shared/i18n.ts";
 
@@ -167,8 +168,11 @@ function claudeEnvironment(
   source: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...source, PATH: augmentedPath(), NPM_CONFIG_LOGLEVEL: "error" };
-  delete env.CLAUDECODE;
-  delete env.CLAUDE_CODE_ENTRYPOINT;
+  // Ein started from inside a Claude Code session must not hand that
+  // session's identity to the CLIs it runs: they would write into it.
+  for (const key of ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_REMOTE_SESSION_ID", "CLAUDE_CODE_CHILD_SESSION"]) {
+    delete env[key];
+  }
   // The harness process may hold workspace credentials (xai/box/voice keys,
   // env-injected at boot); none of them are this CLI's to see.
   stripWorkspaceCredentialEnv(env);
@@ -193,18 +197,34 @@ export interface ClaudeConfig {
   disallowedTools?: string[];
 }
 
-// model catalog ported from upstream packages/contracts/src/model.ts
+/** The fallback catalog, for before the installed CLI has been asked (see
+ * claude-models.ts) or when it cannot be: the current models first, then the
+ * older ids saved bots may still hold — those stay listed so a bot keeps its
+ * label and its pick. The live list replaces the order and adds whatever
+ * Anthropic ships next without a code change. */
 export const STATIC_CLAUDE_MODELS: ModelCatalog = {
-  default: "claude-sonnet-5",
+  default: "claude-sonnet-5-5",
   options: [
-    { id: "claude-fable-5", label: "Claude Fable 5" },
+    { id: "claude-opus-5-5", label: "Claude Opus 5.5" },
+    { id: "claude-fable-5-1", label: "Claude Fable 5.1" },
+    { id: "claude-sonnet-5-5", label: "Claude Sonnet 5.5" },
+    { id: "claude-haiku-5-5", label: "Claude Haiku 5.5" },
     { id: "claude-opus-5", label: "Claude Opus 5" },
+    { id: "claude-fable-5", label: "Claude Fable 5" },
     { id: "claude-sonnet-5", label: "Claude Sonnet 5" },
     { id: "claude-haiku-4-5", label: "Claude Haiku 4.5" },
   ],
 };
 
-const CLAUDE_MODEL_ID = /^[a-z0-9][a-z0-9._:/-]*$/i;
+/** Claude Code's own model aliases; `[1m]` marks a 1M-context variant. */
+const CLAUDE_ALIASES = new Set(["default", "opus", "sonnet", "haiku", "fable", "best", "opusplan"]);
+
+/** An id Claude Code resolves itself — never a leftover API slug that a
+ * local host might be serving. */
+function isOfficialClaudeModel(model: string): boolean {
+  const base = model.replace(/\[[a-z0-9]+\]$/i, "");
+  return base.startsWith("claude-") || CLAUDE_ALIASES.has(base) || /^([a-z]+\.)?anthropic\.claude-/.test(base);
+}
 
 /** Rewrite a leftover API slug (`orcarouter/Qwen…`) to `host::model` when a
  *  local host is serving it, so the turn injects instead of asking for /login.
@@ -213,7 +233,7 @@ async function resolveClaudeTurnModel(
   model: string | null | undefined,
   env: Record<string, string | undefined>,
 ): Promise<string | null | undefined> {
-  if (!model || decodeInjectId(model) || STATIC_CLAUDE_MODELS.options.some((option) => option.id === model)) {
+  if (!model || decodeInjectId(model) || isOfficialClaudeModel(model)) {
     return model;
   }
   return resolveInjectId(model, await probeLocalInjects(env)) ?? model;
@@ -239,17 +259,51 @@ function extrasFromUnknown(value: unknown): Array<{ id: string; label: string }>
   });
 }
 
-/** Extra ids from ~/.claude/settings.json. Official cloud rows stay untagged.
- *  `model` is Claude Code's last-used slug, not a catalog — listing it as
- *  Custom put a non-inject id in the picker and the turn then had no
- *  ANTHROPIC_API_KEY ("Not logged in · Please run /login"). Live injects
- *  come from mergeLocalInject. */
-export function readClaudeModelCatalog(env: Record<string, string | undefined> = process.env) {
+/** The official rows: the CLI's own menu when it has answered, then every
+ * fallback id it did not list. A dated id the fallback knows undated
+ * ("claude-haiku-4-5-20251001") is listed as the undated alias, so bots that
+ * saved the alias keep their row and the picker shows one Haiku 4.5. */
+function officialClaudeModels(live: ClaudeModelProbe | null): ModelCatalog {
+  if (!live?.models.length) return STATIC_CLAUDE_MODELS;
+  const staticIds = new Set(STATIC_CLAUDE_MODELS.options.map((option) => option.id));
+  const options: ModelCatalog["options"] = [];
+  const seen = new Set<string>();
+  for (const row of live.models) {
+    const undated = row.id.replace(/-\d{8}$/, "");
+    const id = undated !== row.id && staticIds.has(undated) ? undated : row.id;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    options.push({ id, label: row.label });
+  }
+  for (const option of STATIC_CLAUDE_MODELS.options) {
+    if (seen.has(option.id)) continue;
+    seen.add(option.id);
+    options.push({ ...option });
+  }
+  const preferred = [live.sonnet, live.recommended, STATIC_CLAUDE_MODELS.default];
+  const fallbackDefault = options[0]?.id ?? STATIC_CLAUDE_MODELS.default;
+  return {
+    default: preferred.find((id): id is string => Boolean(id) && seen.has(id!)) ?? fallbackDefault,
+    options,
+  };
+}
+
+/** The Claude catalog: the official rows (live from the installed CLI, see
+ *  claude-models.ts, or the fallback), then extra ids from
+ *  ~/.claude/settings.json tagged custom. `model` is Claude Code's last-used
+ *  slug, not a catalog — listing it as Custom put a non-inject id in the
+ *  picker and the turn then had no ANTHROPIC_API_KEY ("Not logged in ·
+ *  Please run /login"). Live injects come from mergeLocalInject. */
+export function readClaudeModelCatalog(
+  env: Record<string, string | undefined> = process.env,
+  live: ClaudeModelProbe | null = null,
+): ModelCatalog {
+  const official = officialClaudeModels(live);
   let settings: Record<string, unknown> = {};
   try {
     settings = JSON.parse(readFileSync(join(claudeConfigDir(env), "settings.json"), "utf8")) as Record<string, unknown>;
   } catch {
-    return STATIC_CLAUDE_MODELS;
+    return official;
   }
 
   const extras = [
@@ -261,14 +315,15 @@ export function readClaudeModelCatalog(env: Record<string, string | undefined> =
   const envModel = nestedEnv.ANTHROPIC_MODEL ?? env.ANTHROPIC_MODEL;
   if (typeof envModel === "string") extras.push(...extrasFromUnknown([envModel]));
 
-  const options = STATIC_CLAUDE_MODELS.options.map((option) => ({ ...option }));
+  const options = official.options.map((option) => ({ ...option }));
   const seen = new Set(options.map((option) => option.id));
   for (const extra of extras) {
-    if (seen.has(extra.id)) continue;
+    // an alias ("sonnet") names an official row the menu already has
+    if (seen.has(extra.id) || CLAUDE_ALIASES.has(extra.id.replace(/\[[a-z0-9]+\]$/i, ""))) continue;
     seen.add(extra.id);
     options.push({ id: extra.id, label: extra.label, custom: true });
   }
-  return { default: STATIC_CLAUDE_MODELS.default, options };
+  return { default: official.default, options };
 }
 
 // Resolved from the server root, never relative to this file: bundling inlines
@@ -541,9 +596,15 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     const { instanceId, config } = input;
     const catalogEnv: Record<string, string | undefined> = { ...process.env, ...input.environment };
     let models = STATIC_CLAUDE_MODELS;
-    const refreshModels = async () => {
+    // The CLI is asked in the background (never while the picker waits); its
+    // answer lands on the next refresh, or right away through onUpdate.
+    // Test runs ask only when they opt in, so no suite spawns a real CLI.
+    const probeEnv = claudeEnvironment(undefined, catalogEnv);
+    const askCli = !process.env.VITEST || process.env.EIN_CLAUDE_MODEL_PROBE === "1";
+    const refreshModels = async (): Promise<void> => {
       try {
-        const resolved = await mergeLocalInject(readClaudeModelCatalog(catalogEnv), catalogEnv);
+        const live = askCli ? claudeLiveModels(config.cli, probeEnv, () => void refreshModels()) : null;
+        const resolved = await mergeLocalInject(readClaudeModelCatalog(catalogEnv, live), catalogEnv);
         if (resolved.options.length) models = resolved;
       } catch {
         // Keep the last usable catalog when settings.json is unreadable.
@@ -1195,10 +1256,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       new Promise((resolve, reject) => {
         const child = spawnCli(
           config.cli,
-          ["-p", "--model", "claude-haiku-4-5", "--output-format", "text"],
+          // the alias, so it follows whatever Haiku the installed CLI has
+          ["-p", "--model", "haiku", "--output-format", "text"],
           {
             stdio: ["pipe", "pipe", "pipe"],
-            env: claudeEnvironment("claude-haiku-4-5", { ...process.env, ...input.environment }),
+            env: claudeEnvironment("haiku", { ...process.env, ...input.environment }),
           },
         );
         let stdout = "";

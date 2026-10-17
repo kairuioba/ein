@@ -620,10 +620,10 @@ describe("pending queued chip", () => {
   });
 
   it("opens on the 主 Bot, never on an archived or merely newest bot", () => {
-    const newest = { ...bot, id: "new", threadId: "t-new", name: "newest" };
-    const archived = { ...bot, id: "old", threadId: "t-old", hidden: true };
-    const main = { ...bot, id: "main", threadId: "t-main", chiefOfStaff: true, pinned: true, section: undefined };
-    const lead = { ...bot, id: "lead", threadId: "t-lead", chiefOfStaff: true, section: "市场部" };
+    const newest = { ...bot, messages: [], id: "new", threadId: "t-new", name: "newest" };
+    const archived = { ...bot, messages: [], id: "old", threadId: "t-old", hidden: true };
+    const main = { ...bot, messages: [], id: "main", threadId: "t-main", chiefOfStaff: true, pinned: true, section: undefined };
+    const lead = { ...bot, messages: [], id: "lead", threadId: "t-lead", chiefOfStaff: true, section: "市场部" };
     const opened = reducer(initialState, { type: "hydrate", bots: [archived, newest, lead, main], groups: [], computerControl: {} });
     expect(opened.selectedId).toBe("main");
     // without a 主 Bot, the first bot that is not archived

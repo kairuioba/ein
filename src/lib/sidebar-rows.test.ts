@@ -37,7 +37,7 @@ function subtask(id: string, assigneeBotId: string, status: DispatchSubtask["sta
     brief: "",
     role: "",
     needs: [],
-    difficulty: "medium" as DispatchSubtask["difficulty"],
+    difficulty: 3,
     dependsOn: [],
     assigneeBotId,
     status,

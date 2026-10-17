@@ -285,7 +285,7 @@ describe("routine panel", () => {
     const weekdays = { type: "daily" as const, time: "18:00", weekdays: [1, 2, 3, 4, 5] };
     expect(dayChoice(weekdays)).toBe("weekdays");
     expect(withDayChoice(weekdays, "daily")).toEqual({ type: "daily", time: "18:00", weekdays: [0, 1, 2, 3, 4, 5, 6] });
-    expect(withDayChoice({ type: "daily", time: "08:30", weekdays: [1, 3] }, "custom").weekdays).toEqual([1, 3]);
+    expect(withDayChoice({ type: "daily", time: "08:30", weekdays: [1, 3] }, "custom")).toMatchObject({ weekdays: [1, 3] });
     const once = withDayChoice(weekdays, "once", at(17, 0));
     expect(once).toEqual({ type: "once", at: at(18, 0) });
     expect(withTime(weekdays, "07:45")).toEqual({ ...weekdays, time: "07:45" });

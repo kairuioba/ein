@@ -21,6 +21,7 @@ import {
   ensurePiInjectModel,
   fetchPiModels,
   parsePiCatalog,
+  settlePiModels,
   PiDriver,
   preferPiInjectRows,
   splitPiModel,
@@ -54,6 +55,16 @@ describe("parsePiCatalog", () => {
     expect(
       parsePiCatalog('{"type":"response","command":"get_available_models","success":true,"data":{"models":[]}}\n'),
     ).toEqual({ default: "", options: [] });
+  });
+
+  it("carries pi's context window through to the picker", () => {
+    const catalog = parsePiCatalog(
+      '{"type":"response","command":"get_available_models","success":true,"data":{"models":[{"provider":"anthropic","id":"claude-opus-5-5","name":"Claude Opus 5.5","contextWindow":1000000},{"provider":"x","id":"y","contextWindow":-1}]}}\n',
+    );
+    expect(catalog.options).toEqual([
+      { id: "anthropic/claude-opus-5-5", label: "Claude Opus 5.5", custom: true, contextWindow: 1_000_000 },
+      { id: "x/y", label: "y", custom: true },
+    ]);
   });
 
   it("ignores non-response lines (pi emits TUI bookkeeping on stdout too)", () => {
@@ -166,6 +177,28 @@ describe("PiDriver catalog (fake CLI)", () => {
     ]);
     // no ~/.pi/agent/settings.json in the throwaway home → first option wins
     expect(catalog.default).toBe("ollama-cloud/glm-5.2");
+  });
+
+  it("fills the instance catalog from a background probe instead of waiting on pi", async () => {
+    const environment = { EIN_PROBE_LIVE_MODELS: "1", FAKE_PI_MODELS: "anthropic/claude-opus-5-5,openai/gpt-6.1-sol" };
+    const instance = await PiDriver.create({
+      instanceId: "pi-live-catalog",
+      displayName: undefined,
+      environment,
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: false },
+    });
+    try {
+      await settlePiModels(FAKE_CLI, { ...process.env, ...environment, PATH: process.env.PATH ?? "" });
+      await instance.refreshModels?.();
+      expect(instance.models.options.map((option) => option.id)).toEqual([
+        "anthropic/claude-opus-5-5",
+        "openai/gpt-6.1-sol",
+      ]);
+      expect(instance.models.options.every((option) => option.custom)).toBe(true);
+    } finally {
+      await instance.dispose();
+    }
   });
 
   it("keeps an empty catalog when the probe reports no models", async () => {
@@ -335,7 +368,13 @@ describe("PiDriver turns (fake CLI)", () => {
         FAKE_PI_DUMP: dump,
         ANTHROPIC_API_KEY: "anthropic-secret-value",
         OPENAI_API_KEY: "openai-secret-value",
+        // the catalog probe is one of the children under test; it runs in the
+        // background, so opt in and wait for it (a home of its own keeps it
+        // from reusing another test's cached answer)
+        EIN_PROBE_LIVE_MODELS: "1",
+        HOME: dir,
       });
+      await settlePiModels(FAKE_CLI, { ...process.env, HOME: dir });
       await instance.dispose();
     } finally {
       if (savedBox === undefined) delete process.env.BOX_TOKEN;

@@ -11,10 +11,13 @@ import {
   classifyCursorError,
   createCursorAgentDriver,
   CursorAgentDriver,
+  cursorModelCatalog,
   decodeCursorAuthStatus,
   decodeCursorAuthText,
   decodeCursorModelCatalog,
   decodeCursorModelText,
+  probeCursorModels,
+  settleCursorModels,
   STATIC_CURSOR_MODELS,
   resolveCursorAcpModelId,
 } from "./cursor.ts";
@@ -45,7 +48,7 @@ describe("decodeCursorAuthText", () => {
 });
 
 describe("decodeCursorModelCatalog", () => {
-  it("merges live ids onto the static cloud set", () => {
+  it("uses the CLI's own list, in its order, instead of the static rows", () => {
     const catalog = decodeCursorModelCatalog({
       default: "composer-2.5",
       models: [
@@ -56,9 +59,13 @@ describe("decodeCursorModelCatalog", () => {
       ],
     });
     expect(catalog?.default).toBe("composer-2.5");
-    expect(catalog?.options.slice(0, STATIC_CURSOR_MODELS.options.length)).toEqual(STATIC_CURSOR_MODELS.options);
-    expect(catalog?.options).toContainEqual({ id: "cursor-live", label: "Cursor Live" });
-    expect(catalog?.options.some((option) => option.id === "bad id")).toBe(false);
+    // The account's list is authoritative: a static row it does not name
+    // (a model the team blocked, or one Cursor retired) is not offered.
+    expect(catalog?.options).toEqual([
+      { id: "composer-2.5", label: "Composer 2.5" },
+      { id: "cursor-live", label: "Cursor Live" },
+      { id: "gpt-5.3-codex", label: "Gpt 5.3 Codex" },
+    ]);
   });
 
   it("reads { data: [...] } and a bare array", () => {
@@ -96,6 +103,23 @@ cursor-text - Cursor Text
   it("falls back to the first parsed id when static default is absent", () => {
     const catalog = decodeCursorModelText("cursor-only - Cursor Only");
     expect(catalog?.default).toBe("cursor-only");
+  });
+
+  it("lists a newly released model straight from the CLI, first rows first", () => {
+    const catalog = decodeCursorModelText(
+      ["auto - Auto (default)", "claude-opus-5-5-thinking-high - Opus 5.5 Thinking", "composer-2.5 - Composer 2.5"].join("\n"),
+    );
+    expect(catalog?.options.map((option) => option.id)).toEqual([
+      "auto",
+      "claude-opus-5-5-thinking-high",
+      "composer-2.5",
+    ]);
+    expect(catalog?.options[1]).toEqual({ id: "claude-opus-5-5-thinking-high", label: "Opus 5.5 Thinking" });
+  });
+
+  it("ignores a stray banner word once the CLI prints labelled rows", () => {
+    const catalog = decodeCursorModelText(["Loading…", "Updated", "auto - Auto", "grok-4.7 - Grok 4.7"].join("\n"));
+    expect(catalog?.options.map((option) => option.id)).toEqual(["auto", "grok-4.7"]);
   });
 });
 
@@ -135,22 +159,40 @@ describe("CursorAgentDriver", () => {
     expect(CursorAgentDriver.install?.signInCommand).toBe("cursor-agent login");
   });
 
-  it("refreshes the catalog from `cursor-agent models` on the instance CLI", async () => {
+  it("refreshes the catalog from `cursor-agent models` in the background", async () => {
     chmodSync(FAKE_CLI, 0o755);
     const driver = createCursorAgentDriver();
+    const environment = { EIN_PROBE_LIVE_MODELS: "1" };
     const instance = await driver.create({
       instanceId: "cursor-catalog",
       displayName: "Cursor",
-      environment: {},
+      environment,
       enabled: true,
       config: { cli: FAKE_CLI, fullAuto: false },
     });
     try {
-      expect(instance.models.options.some((option) => option.id === "cursor-live")).toBe(true);
+      // create() never waits on the CLI; the probe it started lands on the
+      // next refresh, which is what the picker's describe() does.
+      await settleCursorModels(FAKE_CLI, { ...process.env, ...environment });
+      await instance.refreshModels?.();
+      expect(instance.models.options.map((option) => option.id)).toEqual([
+        "auto",
+        "composer-2.5",
+        "gpt-5.3-codex",
+        "cursor-live",
+      ]);
       expect(instance.models.default).toBe("auto");
     } finally {
       await instance.dispose();
     }
+  });
+
+  it("offers the static fallback until a list arrives, and when the CLI is missing", async () => {
+    const missing = join(tmpdir(), "no-such-cursor-agent");
+    await expect(probeCursorModels(missing, process.env)).resolves.toBeNull();
+    expect(cursorModelCatalog(missing, { ...process.env, EIN_PROBE_LIVE_MODELS: "1" })).toEqual(STATIC_CURSOR_MODELS);
+    await settleCursorModels(missing, { ...process.env, EIN_PROBE_LIVE_MODELS: "1" });
+    expect(cursorModelCatalog(missing, { ...process.env, EIN_PROBE_LIVE_MODELS: "1" })).toEqual(STATIC_CURSOR_MODELS);
   });
 
   it("treats CURSOR_API_KEY as signed in without asking the CLI", async () => {

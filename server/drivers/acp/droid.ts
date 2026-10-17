@@ -15,10 +15,21 @@
 // ~/.factory/settings.json selected. Model and autonomy are session config
 // options set over the wire (session/set_model, session/set_mode), which is
 // why both live in configureSession() below and NOT in spawnArgs.
+import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import type { ModelCatalog } from "../../contracts.ts";
+import {
+  createLiveCatalog,
+  mergeOptions,
+  pickDefault,
+  probeJsonLines,
+  reviveCatalog,
+  secretId,
+  type CatalogOption,
+} from "../live-catalog.ts";
 import { decodeInjectId, hostApiKey, localHost, mergeLocalInject } from "../local-inject.ts";
 import { t } from "../../../shared/i18n.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
@@ -63,6 +74,8 @@ interface FactorySettings {
 }
 
 const INJECT_ID_PREFIX = "custom:ein-";
+/** Default of the shipped fallback list: an id every droid release knows. */
+const SHIPPED_DEFAULT_MODEL = "claude-opus-5";
 
 export function droidInjectId(host: string, model: string): string {
   const safe = `${host}-${model}`.replace(/[^a-zA-Z0-9._+-]+/g, "-").replace(/-+/g, "-");
@@ -141,8 +154,108 @@ function readSettings(env: Record<string, string | undefined>): FactorySettings 
   return JSON.parse(readFileSync(join(factoryHome(env), ".factory", "settings.json"), "utf8")) as FactorySettings;
 }
 
-async function resolveModels(env: Record<string, string | undefined>) {
-  let catalog = MODELS;
+// ── live catalog ────────────────────────────────────────────────────────
+// Factory decides which models an account may use and ships new ones
+// server-side, so the installed CLI is asked — exactly the way the Droid SDK's
+// listModels() does it (@factory/droid-sdk 0.9): `droid exec --input-format
+// stream-jsonrpc --output-format stream-jsonrpc`, one `droid.list_models`
+// request in Factory's JSON-RPC envelope, answered from the catalog "without
+// creating a session". Disabled models are left out unless asked for, which
+// is what a picker wants. Older droids answer -32601 and keep the fallback.
+const DROID_SDK_ARGS = ["exec", "--input-format", "stream-jsonrpc", "--output-format", "stream-jsonrpc"];
+const PROBE_TIMEOUT_MS = 20_000;
+
+/** `droid.list_models` result → picker rows. Factory's own models stay in the
+ * main list; the account's BYOK models (`isCustom`) go to Custom. */
+export function parseDroidModelList(result: unknown): CatalogOption[] | null {
+  const models = result && typeof result === "object" ? (result as { models?: unknown }).models : null;
+  if (!Array.isArray(models)) return null;
+  const options: CatalogOption[] = [];
+  const seen = new Set<string>();
+  for (const raw of models) {
+    if (!raw || typeof raw !== "object") continue;
+    const model = raw as {
+      id?: unknown;
+      modelId?: unknown;
+      displayName?: unknown;
+      shortDisplayName?: unknown;
+      isCustom?: unknown;
+      disabled?: unknown;
+    };
+    const id = typeof model.id === "string" ? model.id.trim() : typeof model.modelId === "string" ? model.modelId.trim() : "";
+    if (!id || seen.has(id) || model.disabled === true || id.startsWith(INJECT_ID_PREFIX)) continue;
+    seen.add(id);
+    const label =
+      (typeof model.displayName === "string" && model.displayName.trim()) ||
+      (typeof model.shortDisplayName === "string" && model.shortDisplayName.trim()) ||
+      id;
+    options.push({ id, label, ...(model.isCustom === true || id.startsWith("custom:") ? { custom: true } : {}) });
+  }
+  return options.length ? options : null;
+}
+
+/** Ask the installed droid for its model catalog. Null when the CLI is
+ * missing, signed out, too old for `droid.list_models`, or silent. */
+export function probeDroidModels(
+  cli: string,
+  env: Record<string, string | undefined>,
+  timeoutMs = PROBE_TIMEOUT_MS,
+): Promise<CatalogOption[] | null> {
+  const id = randomUUID();
+  return probeJsonLines<CatalogOption[]>({
+    cli,
+    args: DROID_SDK_ARGS,
+    env,
+    cwd: factoryHome(env),
+    timeoutMs,
+    start: (send) =>
+      send({ jsonrpc: "2.0", factoryApiVersion: "1.0.0", type: "request", id, method: "droid.list_models", params: {} }),
+    onMessage: (message) => {
+      if (!message || message.id !== id) return undefined;
+      if (message.error) return null;
+      return parseDroidModelList(message.result);
+    },
+  });
+}
+
+const droidCatalogs = createLiveCatalog<ModelCatalog>({ file: "droid.json", revive: reviveCatalog });
+
+function droidFingerprint(cli: string, env: Record<string, string | undefined>): string {
+  return [cli, factoryHome(env), secretId(env.FACTORY_API_KEY)].join("|");
+}
+
+/** Tests: wait for the background catalog refresh for this CLI/account. */
+export function settleDroidModels(cli: string, env: Record<string, string | undefined>): Promise<void> {
+  return droidCatalogs.settle(droidFingerprint(cli, env));
+}
+
+/** The CLI's live list when there is one, else null. Never waits — a stale
+ * list refreshes in the background. */
+function liveDroidRows(cli: string, env: Record<string, string | undefined>): CatalogOption[] | null {
+  const live = droidCatalogs.read(
+    droidFingerprint(cli, env),
+    async () => {
+      const rows = await probeDroidModels(cli, env);
+      return rows ? { default: rows[0]!.id, options: rows } : null;
+    },
+    env,
+  );
+  return live?.options ?? null;
+}
+
+/** With a live list, the newest flagship it confirms becomes the default for
+ * new bots. The shipped fallback keeps an id every droid release knows. */
+const LIVE_DEFAULTS = ["claude-opus-5-5", SHIPPED_DEFAULT_MODEL];
+
+async function resolveModels(env: Record<string, string | undefined>, config: { cli: string }) {
+  const live = liveDroidRows(config.cli || "droid", env);
+  const rows = live ?? MODELS.options;
+  const official = rows.filter((row) => !row.custom);
+  const liveCustom = rows.filter((row) => row.custom);
+  let catalog: ModelCatalog = {
+    default: live ? pickDefault(official, ...LIVE_DEFAULTS) : MODELS.default,
+    options: mergeOptions(liveCustom, official),
+  };
   try {
     const settings = readSettings(env);
     const custom = (settings.customModels ?? []).flatMap((m) => {
@@ -153,21 +266,25 @@ async function resolveModels(env: Record<string, string | undefined>) {
       if (!id) return [];
       return [{ id, label: m.displayName || m.model || id, custom: true as const }];
     });
-    const merged = [...custom, ...MODELS.options.filter((o) => !custom.some((c) => c.id === o.id))];
+    const merged = mergeOptions(mergeOptions(custom, liveCustom), official);
 
     // Favourites first, in the user's own order; everything else keeps its
     // existing order (Array.prototype.sort is stable).
     const rank = new Map((settings.modelFavorites ?? []).map((id, i) => [id, i]));
     const options = merged.sort((a, b) => (rank.get(a.id) ?? Infinity) - (rank.get(b.id) ?? Infinity));
 
-    const configured = settings.sessionDefaultSettings?.model;
-    const fallback = options[0]?.id ?? MODELS.default;
     catalog = {
-      default: configured && options.some((o) => o.id === configured) ? configured : fallback,
+      // the CLI's own session default, then the user's first favourite
+      default: pickDefault(
+        options,
+        settings.sessionDefaultSettings?.model,
+        settings.modelFavorites?.find((id) => options.some((o) => o.id === id)),
+        catalog.default,
+      ),
       options,
     };
   } catch {
-    // no settings file yet, or unreadable: ship the built-ins
+    // no settings file yet, or unreadable: the catalog alone
   }
   return mergeLocalInject(catalog, env);
 }
@@ -200,25 +317,37 @@ async function applySetting(
 const MODE_DEFAULT = "normal"; // auto-approves reads only; everything else asks
 const MODE_FULL_AUTO = "auto-high";
 
-// A curated slice of `droid exec -m <bogus>`'s built-in catalog (0.196.0 lists
-// 43). Custom models from ~/.factory/settings.json are per-machine and carry a
-// `custom:` prefix, so they can't be enumerated statically; a bot can still be
-// switched onto one through the model picker (PATCH /api/bots/:id).
-const MODELS = {
-  default: "claude-opus-5",
+// The fallback before the CLI answers (or when it is too old to): a curated
+// slice of Factory's catalog as of 2026-10 (docs.factory.com/models), newest
+// first, keeping every id the earlier slice shipped so saved bots still match.
+// Custom models from ~/.factory/settings.json are per-machine and carry a
+// `custom:` prefix; they are read live above.
+const MODELS: ModelCatalog = {
+  default: SHIPPED_DEFAULT_MODEL,
   options: [
     { id: "auto", label: "Auto (Factory picks)" },
+    { id: "claude-opus-5-5", label: "Claude Opus 5.5" },
     { id: "claude-opus-5", label: "Claude Opus 5" },
+    { id: "claude-sonnet-5-5", label: "Claude Sonnet 5.5" },
     { id: "claude-sonnet-5", label: "Claude Sonnet 5" },
+    { id: "claude-haiku-5-5", label: "Claude Haiku 5.5" },
     { id: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5" },
+    { id: "gpt-6.1-sol", label: "GPT-6.1 Sol" },
     { id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
     { id: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
     { id: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro" },
-    { id: "glm-5.2", label: "GLM 5.2" },
-    { id: "kimi-k3", label: "Kimi K3" },
+    { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash" },
+    { id: "grok-4.7", label: "Grok 4.7" },
     { id: "grok-4.6", label: "Grok 4.6" },
+    { id: "glm-5.3", label: "GLM-5.3" },
+    { id: "glm-5.2", label: "GLM-5.2" },
+    { id: "kimi-k3", label: "Kimi K3" },
+    { id: "minimax-m3", label: "MiniMax M3" },
   ],
 };
+
+/** Exported for the catalog tests. */
+export const STATIC_DROID_MODELS = MODELS;
 
 const support: AcpSupport = {
   driverKind: "droidAgent",
@@ -254,7 +383,9 @@ const support: AcpSupport = {
   // droid itself advertises, and it is checked last so an ambient key can
   // never be what makes an otherwise logged-out instance look ready.
   isAuthenticated: (env) => authFilePaths(env).some(existsSync) || Boolean(env.FACTORY_API_KEY),
-  resolveModels,
+  // Never waits: the CLI's live list (cached, refreshed in the background)
+  // plus ~/.factory/settings.json custom models, favourites and default.
+  resolveModels: (env, config) => resolveModels(env, config),
   resolveTurnModel: (model, env) => (model ? ensureDroidInjectModel(model, env) : model),
   applyTurnEnv: (env, { requestedModel }) => {
     applyDroidLocalAuthEnv(env, requestedModel);

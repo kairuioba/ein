@@ -11,6 +11,7 @@
 import type { ModelCatalog, ProviderErrorCode } from "../../contracts.ts";
 import { execCli } from "../../procs.ts";
 import { t } from "../../../shared/i18n.ts";
+import { createLiveCatalog, reviveCatalog, secretId } from "../live-catalog.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 
 /** Translate an argv `--model` slug into the id this ACP session will accept.
@@ -102,8 +103,9 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function labelFor(id: string, explicit?: string): string {
   if (explicit?.trim()) return explicit.trim();
+  // Dots stay: they are version numbers (`gpt-5.3-codex` → "Gpt 5.3 Codex").
   return id
-    .split(/[-_./]+/g)
+    .split(/[-_/]+/g)
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
@@ -122,7 +124,10 @@ function pushModel(
 }
 
 /** Turn `cursor-agent models` JSON (or a close cousin) into a picker catalog.
- *  Unknown shapes return null so the caller can try text / keep the fallback. */
+ *  The CLI's list is authoritative — it is what this account (and its team's
+ *  admin policy) can actually run, in the CLI's own order — so the static
+ *  rows are only a fallback, never mixed in. Unknown shapes return null so
+ *  the caller can try text / keep the fallback. */
 export function decodeCursorModelCatalog(payload: unknown): ModelCatalog | null {
   const records: unknown[] = Array.isArray(payload)
     ? payload
@@ -159,17 +164,7 @@ export function decodeCursorModelCatalog(payload: unknown): ModelCatalog | null 
       ? (asRecord(payload)!.default as string)
       : undefined) ??
     (seen.has(STATIC_CURSOR_MODELS.default) ? STATIC_CURSOR_MODELS.default : options[0]!.id);
-
-  // Keep the static cloud set at the front (stable picker rail) and append
-  // live ids the static list does not already name.
-  const merged: ModelCatalog["options"] = STATIC_CURSOR_MODELS.options.map((option) => ({ ...option }));
-  const mergedSeen = new Set(merged.map((option) => option.id));
-  for (const option of options) {
-    if (mergedSeen.has(option.id)) continue;
-    mergedSeen.add(option.id);
-    merged.push(option);
-  }
-  return { default: defaultId, options: merged };
+  return { default: defaultId, options };
 }
 
 function stripModelMarkers(label: string): { label: string; isDefault: boolean; isCurrent: boolean } {
@@ -196,6 +191,7 @@ export function decodeCursorModelText(text: string): ModelCatalog | null {
   const seen = new Set<string>();
   let markedDefault: string | undefined;
   let markedCurrent: string | undefined;
+  const rows: Array<{ id: string; label: string; isDefault: boolean; isCurrent: boolean }> = [];
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.trim();
     if (!line || line.startsWith("#") || /^available\s+models?\b/i.test(line) || /^models?\b/i.test(line)) continue;
@@ -203,24 +199,23 @@ export function decodeCursorModelText(text: string): ModelCatalog | null {
     const parts = stripped.split(/\s+[—–|:]\s+|\s+-\s+|\s{2,}/);
     const id = (parts[0] ?? "").trim();
     const rawLabel = parts.slice(1).join(" ").trim();
-    const { label, isDefault, isCurrent } = stripModelMarkers(rawLabel);
-    pushModel(options, seen, id, label || undefined);
-    if (isDefault) markedDefault = id;
-    if (isCurrent) markedCurrent = id;
+    rows.push({ id, ...stripModelMarkers(rawLabel) });
+  }
+  // The live CLI prints `slug - Label`. Once any row has that shape, a bare
+  // word on its own line is a banner or notice, not a model.
+  const labelled = rows.some((row) => row.label);
+  for (const row of rows) {
+    if (labelled && !row.label) continue;
+    pushModel(options, seen, row.id, row.label || undefined);
+    if (row.isDefault) markedDefault = row.id;
+    if (row.isCurrent) markedCurrent = row.id;
   }
   if (!options.length) return null;
-  const merged: ModelCatalog["options"] = STATIC_CURSOR_MODELS.options.map((option) => ({ ...option }));
-  const mergedSeen = new Set(merged.map((option) => option.id));
-  for (const option of options) {
-    if (mergedSeen.has(option.id)) continue;
-    mergedSeen.add(option.id);
-    merged.push(option);
-  }
   const defaultId =
     (markedDefault && seen.has(markedDefault) ? markedDefault : undefined) ??
     (markedCurrent && seen.has(markedCurrent) ? markedCurrent : undefined) ??
     (seen.has(STATIC_CURSOR_MODELS.default) ? STATIC_CURSOR_MODELS.default : options[0]!.id);
-  return { default: defaultId, options: merged };
+  return { default: defaultId, options };
 }
 
 function truthyAuthFlag(value: unknown): boolean | null {
@@ -295,12 +290,14 @@ export async function probeCursorAuth(
   return false;
 }
 
-export async function fetchCursorModels(
+/** Ask the installed CLI which models this account can use. `agent models`
+ *  prints `slug - Label` lines (no JSON flag as of 2026.10); `--list-models`
+ *  is the older spelling. Null when neither answers with a model. */
+export async function probeCursorModels(
   cli: string,
   env: Record<string, string | undefined>,
   run: typeof execCli = execCli,
-): Promise<ModelCatalog> {
-  // Live CLI prints plain text (`slug - Label`); `--format json` is not supported yet.
+): Promise<ModelCatalog | null> {
   for (const args of [["models"], ["--list-models"]] as const) {
     const stdout = await execText(run, cli, [...args], env);
     if (stdout == null) continue;
@@ -309,7 +306,41 @@ export async function fetchCursorModels(
     const fromJson = decodeCursorModelCatalog(firstJsonValue(stdout));
     if (fromJson) return fromJson;
   }
-  return STATIC_CURSOR_MODELS;
+  return null;
+}
+
+export async function fetchCursorModels(
+  cli: string,
+  env: Record<string, string | undefined>,
+  run: typeof execCli = execCli,
+): Promise<ModelCatalog> {
+  return (await probeCursorModels(cli, env, run)) ?? STATIC_CURSOR_MODELS;
+}
+
+const cursorCatalogs = createLiveCatalog<ModelCatalog>({ file: "cursor.json", revive: reviveCatalog });
+
+/** Which CLI, home and key a cached list belongs to (the key as a hash). */
+export function cursorCatalogFingerprint(cli: string, env: Record<string, string | undefined>): string {
+  return [cli, env.HOME || env.USERPROFILE || "", secretId(env.CURSOR_API_KEY || env.CURSOR_AUTH_TOKEN)].join("|");
+}
+
+/** The picker catalog without waiting: the last list `cursor-agent models`
+ *  printed for this CLI and account (refreshed in the background when stale),
+ *  or the static fallback before the first answer. */
+export function cursorModelCatalog(
+  cli: string,
+  env: Record<string, string | undefined>,
+  run: typeof execCli = execCli,
+): ModelCatalog {
+  return (
+    cursorCatalogs.read(cursorCatalogFingerprint(cli, env), () => probeCursorModels(cli, env, run), env) ??
+    STATIC_CURSOR_MODELS
+  );
+}
+
+/** Tests: wait for the background refresh of this CLI/account to finish. */
+export function settleCursorModels(cli: string, env: Record<string, string | undefined>): Promise<void> {
+  return cursorCatalogs.settle(cursorCatalogFingerprint(cli, env));
 }
 
 export function classifyCursorError(error: unknown): ProviderErrorCode | undefined {
@@ -362,7 +393,8 @@ const support = (run: typeof execCli): AcpSupport => ({
   ],
   credentialEnv: ["CURSOR_API_KEY", "CURSOR_AUTH_TOKEN"],
 
-  resolveModels: (environment, config) => fetchCursorModels(config.cli || "cursor-agent", environment, run),
+  // Never waits: the last list the CLI printed, refreshed in the background.
+  resolveModels: (environment, config) => cursorModelCatalog(config.cli || "cursor-agent", environment, run),
 
   // Prefer the advertised ACP method. An already-signed-in CLI should accept
   // cursor_login without a browser; a missing method rides the ambient login

@@ -1,11 +1,15 @@
 // Qwen Code — Alibaba's `qwen --acp` CLI. Custom-only in OpenMausBot:
-// the official pane has no Qwen Cloud catalog; live local hosts land in
-// Custom and are written into ~/.qwen/settings.json modelProviders.
+// the official pane has no Qwen Cloud catalog (the free Qwen OAuth tier
+// ended 2026-04-15). The picker offers what Qwen Code's own /model offers —
+// every `modelProviders` entry in ~/.qwen/settings.json, which its Coding
+// Plan / Token Plan setup and hand-added providers write — plus live local
+// hosts, which a pick writes into that same file.
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 import type { ModelCatalog } from "../../contracts.ts";
+import { pickDefault, type CatalogOption } from "../live-catalog.ts";
 import { decodeInjectId, hostApiKey, localHost, mergeLocalInject } from "../local-inject.ts";
 import { t } from "../../../shared/i18n.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
@@ -16,8 +20,73 @@ function qwenHome(env: Record<string, string | undefined>): string {
   return join(env.HOME || env.USERPROFILE || homedir(), ".qwen");
 }
 
+const INJECT_ENV_PREFIX = "EIN_QWEN_";
+
 function envKeyFor(hostId: string): string {
-  return `EIN_QWEN_${hostId.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_API_KEY`;
+  return `${INJECT_ENV_PREFIX}${hostId.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_API_KEY`;
+}
+
+/** Qwen Code reads settings.json with comments allowed; drop them (outside
+ *  strings) so a commented file still parses. */
+function stripJsonComments(text: string): string {
+  let out = "";
+  let quote = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!;
+    if (quote) {
+      out += c;
+      if (c === "\\") {
+        out += text[i + 1] ?? "";
+        i += 1;
+      } else if (c === '"') quote = false;
+      continue;
+    }
+    if (c === '"') {
+      quote = true;
+      out += c;
+    } else if (c === "/" && text[i + 1] === "/") {
+      while (i < text.length && text[i] !== "\n") i += 1;
+      out += "\n";
+    } else if (c === "/" && text[i + 1] === "*") {
+      const end = text.indexOf("*/", i + 2);
+      i = end < 0 ? text.length : end + 1;
+    } else out += c;
+  }
+  return out;
+}
+
+/** The models Qwen Code's own /model picker would offer: every
+ *  `modelProviders.<provider>[]` entry in ~/.qwen/settings.json, labelled with
+ *  its `name`, with `model.name` as the default. Rows a local-host pick wrote
+ *  are left to the live inject probe so a model is never listed twice. */
+export function readQwenModelCatalog(env: Record<string, string | undefined>): ModelCatalog {
+  let settings: { modelProviders?: unknown; model?: { name?: unknown } } = {};
+  try {
+    settings = JSON.parse(stripJsonComments(readFileSync(join(qwenHome(env), "settings.json"), "utf8")));
+  } catch {
+    return EMPTY;
+  }
+  const providers =
+    settings.modelProviders && typeof settings.modelProviders === "object" && !Array.isArray(settings.modelProviders)
+      ? (settings.modelProviders as Record<string, unknown>)
+      : {};
+  const options: CatalogOption[] = [];
+  const seen = new Set<string>();
+  for (const entries of Object.values(providers)) {
+    if (!Array.isArray(entries)) continue;
+    for (const entry of entries) {
+      if (!entry || typeof entry !== "object") continue;
+      const row = entry as { id?: unknown; name?: unknown; envKey?: unknown };
+      const id = typeof row.id === "string" ? row.id.trim() : "";
+      if (!id || seen.has(id)) continue;
+      if (typeof row.envKey === "string" && row.envKey.startsWith(INJECT_ENV_PREFIX)) continue;
+      seen.add(id);
+      const label = typeof row.name === "string" && row.name.trim() ? row.name.trim() : id;
+      options.push({ id, label, custom: true });
+    }
+  }
+  const configured = typeof settings.model?.name === "string" ? settings.model.name.trim() : "";
+  return { default: pickDefault(options, configured), options };
 }
 
 /** Upsert an OpenAI-compatible provider row so `qwen -m` can reach the host. */
@@ -82,8 +151,8 @@ export function ensureQwenInjectModel(
 }
 
 async function resolveModels(env: Record<string, string | undefined>): Promise<ModelCatalog> {
-  const catalog = await mergeLocalInject(EMPTY, env);
-  return { default: catalog.options[0]?.id ?? "", options: catalog.options };
+  const catalog = await mergeLocalInject(readQwenModelCatalog(env), env);
+  return { default: pickDefault(catalog.options, catalog.default), options: catalog.options };
 }
 
 const support: AcpSupport = {

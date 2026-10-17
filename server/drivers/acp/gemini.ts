@@ -30,7 +30,130 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { t } from "../../../shared/i18n.ts";
+import type { ModelCatalog } from "../../contracts.ts";
+import { createLiveCatalog, mergeOptions, reviveCatalog, secretId, type CatalogOption } from "../live-catalog.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
+
+// What Gemini CLI's own /model picker offers (gemini-cli models.ts and
+// acp/acpUtils.ts buildAvailableModels, 2026-10): Auto — the CLI's default,
+// which routes to the newest Pro/Flash this account can use — then the
+// preview and stable rows, plus the 2.5 Flash id earlier releases shipped.
+// A getter so "Auto" follows the active language.
+export const STATIC_GEMINI_MODELS: ModelCatalog = {
+  default: "auto",
+  get options() {
+    return [
+      { id: "auto", label: t("Auto") },
+      { id: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro Preview" },
+      { id: "gemini-3-pro-preview", label: "Gemini 3 Pro Preview" },
+      { id: "gemini-3-flash-preview", label: "Gemini 3 Flash Preview" },
+      { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
+      { id: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash-Lite" },
+      { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
+      { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
+    ];
+  },
+};
+
+const GEMINI_API = "https://generativelanguage.googleapis.com";
+// Gemini models that cannot drive a coding agent: media generation, speech,
+// live audio, embeddings, robotics and computer-use specialists.
+const NOT_FOR_CHAT = /embedding|image|imagen|veo|lyria|tts|audio|live|robotics|computer-use|aqa/i;
+
+/** Gemini API `models.list` → picker rows: generateContent models only,
+ * labelled the way Google names them and sized by their input limit. */
+export function parseGeminiApiModels(payload: unknown): CatalogOption[] {
+  const models = payload && typeof payload === "object" ? (payload as { models?: unknown }).models : null;
+  if (!Array.isArray(models)) return [];
+  const options: CatalogOption[] = [];
+  for (const raw of models) {
+    if (!raw || typeof raw !== "object") continue;
+    const model = raw as {
+      name?: unknown;
+      displayName?: unknown;
+      inputTokenLimit?: unknown;
+      supportedGenerationMethods?: unknown;
+    };
+    const id = typeof model.name === "string" ? model.name.replace(/^models\//, "") : "";
+    if (!id.startsWith("gemini-") || NOT_FOR_CHAT.test(id)) continue;
+    const methods = Array.isArray(model.supportedGenerationMethods) ? model.supportedGenerationMethods : [];
+    if (!methods.includes("generateContent")) continue;
+    if (options.some((option) => option.id === id)) continue;
+    const label = typeof model.displayName === "string" && model.displayName.trim() ? model.displayName.trim() : id;
+    const limit = typeof model.inputTokenLimit === "number" && model.inputTokenLimit > 0 ? model.inputTokenLimit : 0;
+    options.push({ id, label, ...(limit ? { contextWindow: limit } : {}) });
+  }
+  return options;
+}
+
+function geminiKey(env: Record<string, string | undefined>): string {
+  return env.GEMINI_API_KEY?.trim() || env.GOOGLE_API_KEY?.trim() || "";
+}
+
+function geminiApiBase(env: Record<string, string | undefined>): string {
+  return (env.GOOGLE_GEMINI_BASE_URL?.trim() || GEMINI_API).replace(/\/+$/, "");
+}
+
+/** The models a Gemini API key can call, from the free `models.list`
+ * endpoint (no tokens spent). Null without a key or on any failure. */
+export async function probeGeminiApiModels(
+  env: Record<string, string | undefined>,
+  fetchImpl: typeof fetch = fetch,
+): Promise<CatalogOption[] | null> {
+  const key = geminiKey(env);
+  if (!key) return null;
+  const options: CatalogOption[] = [];
+  let pageToken = "";
+  try {
+    for (let page = 0; page < 5; page++) {
+      const url = `${geminiApiBase(env)}/v1beta/models?pageSize=1000${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ""}`;
+      // the key rides a header, never the URL, so it stays out of logs
+      const response = await fetchImpl(url, { headers: { "x-goog-api-key": key }, signal: AbortSignal.timeout(8_000) });
+      if (!response.ok) return options.length ? options : null;
+      const payload = (await response.json()) as { nextPageToken?: unknown };
+      for (const option of parseGeminiApiModels(payload)) {
+        if (!options.some((row) => row.id === option.id)) options.push(option);
+      }
+      pageToken = typeof payload.nextPageToken === "string" ? payload.nextPageToken : "";
+      if (!pageToken) break;
+    }
+  } catch {
+    return options.length ? options : null;
+  }
+  return options.length ? options : null;
+}
+
+const geminiCatalogs = createLiveCatalog<ModelCatalog>({ file: "gemini.json", revive: reviveCatalog });
+
+function geminiFingerprint(env: Record<string, string | undefined>): string {
+  return [geminiApiBase(env), secretId(geminiKey(env))].join("|");
+}
+
+/** The picker catalog without waiting: Gemini CLI's own rows, then every
+ * other model the API key can use (cached, refreshed in the background).
+ * Vertex and Code Assist logins have no free listing; Auto still reaches
+ * the newest models through the CLI's own routing. */
+export function geminiModelCatalog(
+  env: Record<string, string | undefined>,
+  fetchImpl: typeof fetch = fetch,
+): ModelCatalog {
+  const base = STATIC_GEMINI_MODELS.options;
+  if (!geminiKey(env)) return { default: STATIC_GEMINI_MODELS.default, options: base };
+  const live = geminiCatalogs.read(
+    geminiFingerprint(env),
+    async () => {
+      const rows = await probeGeminiApiModels(env, fetchImpl);
+      return rows ? { default: rows[0]!.id, options: rows } : null;
+    },
+    env,
+  );
+  return { default: STATIC_GEMINI_MODELS.default, options: mergeOptions(base, live?.options ?? []) };
+}
+
+/** Tests: wait for the background API listing for this key. */
+export function settleGeminiModels(env: Record<string, string | undefined>): Promise<void> {
+  return geminiCatalogs.settle(geminiFingerprint(env));
+}
 
 // Prefer an explicit key method, then personal OAuth, then Vertex — but fall
 // back to whatever the CLI advertises so a new method id still works.
@@ -77,13 +200,8 @@ export function geminiIsAuthenticated(env: Record<string, string | undefined>): 
 const support: AcpSupport = {
   driverKind: "geminiAgent",
   displayName: "Gemini",
-  models: {
-    default: "gemini-2.5-pro",
-    options: [
-      { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
-      { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
-    ],
-  },
+  models: STATIC_GEMINI_MODELS,
+  resolveModels: (env) => geminiModelCatalog(env),
   defaultCli: "gemini",
   nativeSource: "gemini.acp",
   get loginNote() {

@@ -11,11 +11,16 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import type { ModelCatalog } from "../../contracts.ts";
+import { pickDefault, type CatalogOption } from "../live-catalog.ts";
 import { decodeInjectId, hostApiKey, LOCAL_HOSTS, localHost, mergeLocalInject } from "../local-inject.ts";
 import { t } from "../../../shared/i18n.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 
-const STATIC_KIMI_MODELS: ModelCatalog = {
+// The Kimi Code subscription's models as of 2026-10 (kimi.com/code/docs
+// "Models": k3, k3-256k, kimi-for-coding, kimi-for-coding-highspeed). Only a
+// fallback: `/login` provisions the account's real list into config.toml,
+// which readKimiModelCatalog() reads.
+export const STATIC_KIMI_MODELS: ModelCatalog = {
   default: "kimi-code/k3",
   options: [
     { id: "kimi-code/k3", label: "Kimi K3" },
@@ -106,8 +111,8 @@ function takeTomlBasicEscape(
   return { ok: true, value: named[code]!, next: i + 2 };
 }
 
-/** Canonical `a.b.c` form of a `[table]` heading, quotes and comments removed. */
-function canonicalizeTomlHeading(heading: string): string | null {
+/** The dotted key parts of a `[table]` heading, quotes and comments removed. */
+function tomlHeadingParts(heading: string): string[] | null {
   const trimmed = stripTomlLineComment(heading).trim();
   const match = trimmed.match(/^\[([^[\]]+)\]$/);
   if (!match) return null;
@@ -148,7 +153,12 @@ function canonicalizeTomlHeading(heading: string): string | null {
     if (part) parts.push(part);
     skipSep();
   }
-  return parts.length ? parts.join(".") : null;
+  return parts.length ? parts : null;
+}
+
+/** Canonical `a.b.c` form of a `[table]` heading, quotes and comments removed. */
+function canonicalizeTomlHeading(heading: string): string | null {
+  return tomlHeadingParts(heading)?.join(".") ?? null;
 }
 
 /** Unwrap `"key"` / `'key'` so a quoted assignment matches the bare name. */
@@ -453,55 +463,141 @@ function stripKimiModelEnv(env: Record<string, string | undefined>): void {
   for (const key of KIMI_MODEL_ENV) delete env[key];
 }
 
-function readKimiModelCatalog(env: Record<string, string | undefined>): ModelCatalog {
-  const dataRoot = kimiDataRoot(env);
+/** A TOML scalar on the right of `key = value`: a basic or literal string or
+ *  an integer. Anything else (arrays, tables, floats) is not needed here. */
+function tomlScalar(raw: string): string | number | null {
+  const value = stripTomlLineComment(raw).trim();
+  if (value.startsWith('"')) {
+    let out = "";
+    for (let i = 1; i < value.length; i++) {
+      const c = value[i]!;
+      if (c === '"') return out;
+      if (c === "\\") {
+        const taken = takeTomlBasicEscape(value, i);
+        if (!taken.ok) return null;
+        out += taken.value;
+        i = taken.next - 1;
+        continue;
+      }
+      out += c;
+    }
+    return null;
+  }
+  if (value.startsWith("'")) {
+    const end = value.indexOf("'", 1);
+    return end > 0 ? value.slice(1, end) : null;
+  }
+  if (/^[+-]?\d[\d_]*$/.test(value)) return Number(value.replace(/_/g, ""));
+  return null;
+}
+
+interface KimiModelTable {
+  alias: string;
+  provider?: string;
+  model?: string;
+  label?: string;
+  contextWindow?: number;
+}
+
+/** `default_model` and every `[models."<alias>"]` table, in file order. */
+function parseKimiConfig(text: string): { defaultModel: string; models: KimiModelTable[] } {
+  let defaultModel = "";
+  const models: KimiModelTable[] = [];
+  let current: KimiModelTable | null = null;
+  let topLevel = true;
+  // inside a multi-line string (a migration note, say) nothing is a key
+  let multiline: '"""' | "'''" | null = null;
+  for (const line of text.split(/\r?\n/)) {
+    const stripped = line.trim();
+    const delimiter: '"""' | "'''" | null =
+      multiline ?? (stripped.includes('"""') ? '"""' : stripped.includes("'''") ? "'''" : null);
+    const opensOrCloses = delimiter ? stripped.split(delimiter).length - 1 : 0;
+    if (multiline) {
+      if (opensOrCloses % 2 === 1) multiline = null;
+      continue;
+    }
+    if (delimiter && opensOrCloses % 2 === 1) multiline = delimiter;
+    if (!stripped || stripped.startsWith("#")) continue;
+    if (stripped.startsWith("[")) {
+      topLevel = false;
+      current = null;
+      if (stripped.startsWith("[[")) continue;
+      const parts = tomlHeadingParts(stripped);
+      // `[models."kimi-code/k3".overrides]` is a sub-table, not another model
+      if (parts?.length === 2 && (parts[0] === "models" || parts[0] === "model")) {
+        current = { alias: parts[1]! };
+        models.push(current);
+      }
+      continue;
+    }
+    const eq = stripped.indexOf("=");
+    if (eq <= 0) continue;
+    const key = unquoteTomlKey(stripped.slice(0, eq));
+    const value = tomlScalar(stripped.slice(eq + 1));
+    if (topLevel) {
+      if (key === "default_model" && typeof value === "string") defaultModel = value.trim();
+      continue;
+    }
+    if (!current || value === null) continue;
+    if (key === "provider" && typeof value === "string") current.provider = value.trim();
+    else if (key === "model" && typeof value === "string") current.model = value.trim();
+    // display_name is Kimi's field; name/label are older spellings we wrote
+    else if ((key === "display_name" || ((key === "name" || key === "label") && !current.label)) && typeof value === "string") {
+      if (value.trim()) current.label = value.trim();
+    } else if (key === "max_context_size" && typeof value === "number" && value > 0) current.contextWindow = value;
+  }
+  return { defaultModel, models };
+}
+
+/** A model the vendor provisioned for the account: `/login` writes the
+ *  subscription's models under a `managed:` provider (`managed:kimi-code`)
+ *  and refreshes them, so these rows follow Kimi's releases by themselves. */
+function isManagedKimiModel(table: KimiModelTable): boolean {
+  if (table.provider) return table.provider.startsWith("managed:");
+  return table.alias.startsWith("kimi-code/");
+}
+
+/** The picker catalog from the CLI's own config.toml. Vendor-provisioned
+ *  models are the official list, in the CLI's order and with its names;
+ *  providers the user added are Custom; `default_model` is the default. The
+ *  shipped list stands in only until `kimi login` has provisioned any. */
+export function readKimiModelCatalog(env: Record<string, string | undefined>): ModelCatalog {
   let text = "";
   try {
-    text = readFileSync(join(dataRoot, "config.toml"), "utf8");
+    text = readFileSync(join(kimiDataRoot(env), "config.toml"), "utf8");
   } catch {
     return STATIC_KIMI_MODELS;
   }
-  const options = STATIC_KIMI_MODELS.options.map((o) => ({ ...o }));
-  const seen = new Set(options.map((o) => o.id));
-  let current: { slug: string; name?: string } | null = null;
-  const flush = () => {
-    if (!current || !SLUG.test(current.slug) || seen.has(current.slug) || isLocalInjectAlias(current.slug)) {
-      current = null;
-      return;
-    }
-    seen.add(current.slug);
-    options.push({ id: current.slug, label: current.name || current.slug, custom: true });
-    current = null;
-  };
-  for (const line of text.split(/\r?\n/)) {
-    const stripped = line.trim();
-    if ((stripped.startsWith("[model.") || stripped.startsWith("[models.")) && stripped.endsWith("]")) {
-      flush();
-      let inner = stripped.replace(/^\[models?\./, "").slice(0, -1);
-      if (inner.startsWith('"') && inner.endsWith('"')) inner = inner.slice(1, -1);
-      current = { slug: inner };
-      continue;
-    }
-    if (stripped.startsWith("[")) {
-      flush();
-      continue;
-    }
-    if (!stripped || stripped.startsWith("#") || !stripped.includes("=")) continue;
-    const eq = stripped.indexOf("=");
-    const key = stripped.slice(0, eq).trim();
-    let value = stripped.slice(eq + 1).trim();
-    if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) value = value.slice(1, -1);
-    if (current && (key === "name" || key === "label") && value) current.name = value;
+  const { defaultModel, models } = parseKimiConfig(text);
+  const staticLabel = new Map(STATIC_KIMI_MODELS.options.map((option) => [option.id, option.label]));
+  const official: CatalogOption[] = [];
+  const custom: CatalogOption[] = [];
+  const seen = new Set<string>();
+  for (const table of models) {
+    const id = table.alias;
+    if (!SLUG.test(id) || seen.has(id) || isLocalInjectAlias(id)) continue;
+    seen.add(id);
+    const managed = isManagedKimiModel(table);
+    const option: CatalogOption = {
+      id,
+      label: table.label || staticLabel.get(id) || table.model || id,
+      ...(managed ? {} : { custom: true as const }),
+      ...(table.contextWindow ? { contextWindow: table.contextWindow } : {}),
+    };
+    (managed ? official : custom).push(option);
   }
-  flush();
-  return { default: STATIC_KIMI_MODELS.default, options };
+  const base = official.length ? official : STATIC_KIMI_MODELS.options.map((option) => ({ ...option }));
+  const options = [...base, ...custom.filter((option) => !base.some((row) => row.id === option.id))];
+  return { default: pickDefault(options, defaultModel, STATIC_KIMI_MODELS.default), options };
 }
 
 const support: AcpSupport = {
   driverKind: "kimiAgent",
   displayName: "Kimi",
-  // Aliases from the CLI's own catalog (~/.kimi-code/config.toml
-  // [models."kimi-code/…"] — `kimi provider list` reports the same four).
+  // Live: the models `/login` provisions into ~/.kimi-code/config.toml
+  // ([models."kimi-code/…"] under provider "managed:kimi-code"; `kimi
+  // provider list --json` prints the same tables). Reading the file is free
+  // and never waits on the CLI.
   models: STATIC_KIMI_MODELS,
   resolveModels: (env) => mergeLocalInject(readKimiModelCatalog(env), env),
   defaultCli: "kimi",

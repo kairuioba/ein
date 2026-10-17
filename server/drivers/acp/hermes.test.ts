@@ -1,6 +1,7 @@
-import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
+import { chmodSync, mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { removeTempDir } from "../../testing/cleanup.ts";
@@ -8,10 +9,16 @@ import {
   HERMES_CONFIG_MODEL_ID,
   HERMES_OPENMAUS_SCREENSHOT_COMPAT,
   HERMES_OPENMAUS_SCREENSHOT_COMPAT_MODEL,
+  HermesAgentDriver,
   bindHermesScreenshotCompat,
+  fetchHermesAcpModels,
   hermesAcpModelId,
   hermesConfiguredModel,
+  parseHermesSessionModels,
+  settleHermesModels,
 } from "./hermes.ts";
+
+const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "testing", "fake-acp-cli.ts");
 
 describe("Hermes OpenMaus screenshot compatibility binding", () => {
   it("binds the exact leaf model for an injected local picker model", () => {
@@ -216,4 +223,74 @@ describe("hermesAcpModelId", () => {
   it("returns null for a bare word that names no provider", () => {
     expect(hermesAcpModelId("gpt-5")).toBeNull();
 });
+});
+
+describe("Hermes live catalog", () => {
+  const dirs: string[] = [];
+  afterEach(async () => {
+    for (const d of dirs.splice(0)) await removeTempDir(d);
+  });
+
+  const SESSION_MODELS = "openrouter:qwen/qwen3.8-max|OpenRouter · qwen/qwen3.8-max,nous:hermes-5-405b|Nous · hermes-5-405b";
+
+  it("reads the models a session advertises, all Custom, without duplicates", () => {
+    expect(
+      parseHermesSessionModels({
+        models: {
+          availableModels: [
+            { modelId: "openrouter:qwen/qwen3.8-max", name: "OpenRouter · qwen/qwen3.8-max" },
+            { modelId: "openrouter:qwen/qwen3.8-max", name: "dup" },
+            { modelId: "nous:hermes-5-405b" },
+            { name: "no id" },
+          ],
+        },
+      }),
+    ).toEqual([
+      { id: "openrouter:qwen/qwen3.8-max", label: "OpenRouter · qwen/qwen3.8-max", custom: true },
+      { id: "nous:hermes-5-405b", label: "nous:hermes-5-405b", custom: true },
+    ]);
+    expect(parseHermesSessionModels({ sessionId: "s" })).toEqual([]);
+  });
+
+  it("asks `hermes acp` for its catalog and gives up quietly without the CLI", async () => {
+    chmodSync(FAKE_CLI, 0o755);
+    const rows = await fetchHermesAcpModels(FAKE_CLI, { ...process.env, FAKE_ACP_SESSION_MODELS: SESSION_MODELS }, 10_000);
+    expect(rows.map((row) => row.id)).toEqual(["openrouter:qwen/qwen3.8-max", "nous:hermes-5-405b"]);
+    await expect(fetchHermesAcpModels(join(tmpdir(), "no-such-hermes"), process.env, 2_000)).resolves.toEqual([]);
+  });
+
+  it("fills the picker from a background probe instead of waiting on Hermes", async () => {
+    chmodSync(FAKE_CLI, 0o755);
+    const root = mkdtempSync(join(tmpdir(), "omb-hermes-live-"));
+    dirs.push(root);
+    const hermesHome = join(root, ".hermes");
+    mkdirSync(hermesHome, { recursive: true });
+    writeFileSync(join(hermesHome, "config.yaml"), "model:\n  default: qwen/qwen3.8-max\n  provider: openrouter\n");
+    const environment = {
+      HERMES_HOME: hermesHome,
+      EIN_PROBE_LIVE_MODELS: "1",
+      FAKE_ACP_SESSION_MODELS: SESSION_MODELS,
+    };
+    const instance = await HermesAgentDriver.create({
+      instanceId: "hermes-live",
+      displayName: "Hermes",
+      environment,
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: false },
+    });
+    try {
+      // create() returned before Hermes answered: only the config row so far
+      expect(instance.models.options.map((option) => option.id)).toEqual([HERMES_CONFIG_MODEL_ID]);
+      await settleHermesModels(FAKE_CLI, { ...process.env, ...environment });
+      await instance.refreshModels?.();
+      expect(instance.models.options.map((option) => option.id)).toEqual([
+        HERMES_CONFIG_MODEL_ID,
+        "openrouter:qwen/qwen3.8-max",
+        "nous:hermes-5-405b",
+      ]);
+      expect(instance.models.options.every((option) => option.custom)).toBe(true);
+    } finally {
+      await instance.dispose();
+    }
+  });
 });

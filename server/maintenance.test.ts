@@ -41,7 +41,7 @@ describe("developer mode", () => {
 
   it("caches the answer until asked to look again", async () => {
     let calls = 0;
-    const counting: ToolRunner = async (file, args) => {
+    const counting: ToolRunner = async (_file, args) => {
       calls += 1;
       return args[1] === "user" ? { ok: true, out: "me" } : { ok: true, out: "true" };
     };

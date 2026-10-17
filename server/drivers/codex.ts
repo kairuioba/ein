@@ -31,6 +31,7 @@ import { codexLocalProviderArgs } from "./local-inject.ts";
 import { augmentedPath } from "../env-path.ts";
 import { classifyError, computeBackoff, RETRY_MAX_ATTEMPTS } from "./retry.ts";
 import { appendNative } from "./native.ts";
+import { undeliveredField, withEarlySteers, type PendingSteer } from "./steer.ts";
 import { t } from "../../shared/i18n.ts";
 
 export { decodeCodexSelection, readCodexModelCatalog, STATIC_CODEX_MODELS } from "./codex-catalog.ts";
@@ -124,6 +125,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       stop: () => void;
       turnId: string;
       asks: Map<string, (behavior: "allow" | "deny" | "answer", message?: string, source?: "user" | "timeout" | "system") => void>;
+      steer: (text: string, steerId?: string) => Promise<boolean>;
     }
     const active = new Map<string, Turn>();
 
@@ -148,6 +150,69 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       // a retry relaunches the whole app-server; the backoff is scaled down in
       // tests so a fake's transient failures don't stall real seconds
       const retryScale = Number(process.env.FAKE_CODEX_RETRY_SCALE ?? "1");
+
+      // ── steer: a user message into this running turn ──────────────────
+      // Codex takes it natively: `turn/steer` appends input to the in-flight
+      // codex turn (no new turn/started; it fails when no turn is active —
+      // codex app-server docs and openai/codex#10821). A message that
+      // arrives before turn/start went out joins that turn/start instead.
+      // The steer state belongs to the whole turn and outlives a relaunch.
+      let finished = false;
+      let early: PendingSteer[] = [];
+      interface Attempt {
+        startSent: boolean;
+        /** turn/start answered (or the attempt ended): the id is as known as it gets */
+        idKnown: boolean;
+        codexThreadId: string | null;
+        codexTurnId: string | null;
+        /** steers riding this attempt's turn/start until codex accepts it */
+        folded: PendingSteer[];
+        ended: boolean;
+        waiters: Array<() => void>;
+        request: (method: string, params: unknown, timeoutMs?: number) => Promise<any>;
+      }
+      let attemptState: Attempt | null = null;
+      const releaseWaiters = (a: Attempt) => {
+        a.idKnown = true;
+        for (const wake of a.waiters.splice(0)) wake();
+      };
+      // the id arrives on turn/start's result or on turn/started, whichever
+      // is first; either one is enough to steer
+      const learnTurnId = (a: Attempt, id: unknown) => {
+        if (typeof id !== "string" || !id || a.codexTurnId) return;
+        a.codexTurnId = id;
+        if (a.startSent) releaseWaiters(a);
+      };
+      const steerTurn = async (text: string, steerId?: string): Promise<boolean> => {
+        if (finished || stopRequested) return false;
+        const a = attemptState;
+        if (!a || a.ended || !a.startSent) {
+          // not yet asked (or relaunching): ride along with the next turn/start
+          early.push({ text, steerId });
+          return true;
+        }
+        if (!a.idKnown) await new Promise<void>((resolve) => a.waiters.push(resolve));
+        if (finished || stopRequested) return false;
+        if (a.ended) {
+          // the attempt failed before codex named its turn and a relaunch is
+          // coming; its turn/start carries the message
+          early.push({ text, steerId });
+          return true;
+        }
+        // an app-server that names no turn (or predates turn/steer) cannot be
+        // steered: false sends the message to the harness's queue instead
+        if (!a.codexThreadId || !a.codexTurnId) return false;
+        try {
+          await a.request(
+            "turn/steer",
+            { threadId: a.codexThreadId, input: [{ type: "text", text }], expectedTurnId: a.codexTurnId },
+            30_000,
+          );
+          return true;
+        } catch {
+          return false;
+        }
+      };
 
       const launchAttempt = async (attempt: number): Promise<void> => {
         const env = childEnv();
@@ -240,6 +305,17 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           });
           send({ jsonrpc: "2.0", id, method, params });
         });
+      const live: Attempt = {
+        startSent: false,
+        idKnown: false,
+        codexThreadId: null,
+        codexTurnId: null,
+        folded: [],
+        ended: false,
+        waiters: [],
+        request,
+      };
+      attemptState = live;
 
       const stop = () => {
         stopRequested = true;
@@ -249,11 +325,27 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       const settle = (ok: boolean, stopReason: string | null) => {
         if (state.settled) return;
         state.settled = true;
+        finished = true;
+        live.ended = true;
+        releaseWaiters(live);
         for (const finish of [...asks.values()]) finish("deny", "Ein: the turn ended", "system");
         for (const p of rpcPending.values()) p.reject(new Error("turn settled"));
         rpcPending.clear();
         active.delete(threadId);
-        emit({ ...base(threadId, turnId), type: "turn.completed", ok, stopReason, cost: null, ...(state.usage ? { usage: state.usage } : {}) });
+        // anything still waiting for (or riding) a turn/start never reached
+        // the model
+        const undelivered = [...live.folded, ...early];
+        live.folded = [];
+        early = [];
+        emit({
+          ...base(threadId, turnId),
+          type: "turn.completed",
+          ok,
+          stopReason,
+          cost: null,
+          ...(state.usage ? { usage: state.usage } : {}),
+          ...undeliveredField(undelivered),
+        });
         stop(); // the app-server never exits on its own
       };
 
@@ -347,6 +439,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       const handleNotification = (msg: any) => {
         const p = msg.params ?? {};
         switch (msg.method) {
+          case "turn/started":
+            learnTurnId(live, p.turn?.id);
+            break;
           // token-level chat text; the item/completed frame follows with the
           // whole message, so its delta is only a fallback when none streamed
           case "item/agentMessage/delta": {
@@ -503,7 +598,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         }
       });
 
-      active.set(threadId, { stop, turnId, asks });
+      active.set(threadId, { stop, turnId, asks, steer: steerTurn });
       // Relaunching the app-server is still the same logical turn. Keep the
       // active process current on every attempt, but announce the turn once.
       if (attempt === 0) emit({ ...base(threadId, turnId), type: "turn.started" });
@@ -539,9 +634,13 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           startedModel = started?.model ?? null;
         }
         emit({ ...base(threadId, turnId), type: "session.started", sessionId: codexThreadId, model: startedModel ?? turn.model ?? null });
-        await request("turn/start", {
+        live.codexThreadId = codexThreadId;
+        live.folded = early;
+        early = [];
+        live.startSent = true;
+        const startedTurn = await request("turn/start", {
           threadId: codexThreadId,
-          input: [{ type: "text", text: turn.system ? `${turn.system}\n\n${turn.text}` : turn.text }],
+          input: [{ type: "text", text: withEarlySteers(turn.system ? `${turn.system}\n\n${turn.text}` : turn.text, live.folded) }],
           // Spread, not `effort: turn.effort ?? null`. Probed against
           // codex-cli 0.146.0: null is indistinguishable from an absent key
           // — both leave the thread's current effort alone, emitting no
@@ -553,7 +652,16 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           // thread rather than the current one.
           ...(turn.effort ? { effort: turn.effort } : {}),
         });
+        // codex names the turn in turn/start's result ({turn:{id}}); an
+        // older app-server that does not leaves steering to the queue
+        live.folded = [];
+        learnTurnId(live, startedTurn?.turn?.id);
+        releaseWaiters(live);
       } catch (e) {
+        // the turn/start that carried them never ran: they go first next
+        // time (a settle already handed them back to the harness)
+        if (!state.settled) early = [...live.folded, ...early];
+        live.folded = [];
         const failure = e instanceof Error ? e : { text: String(e) };
         const message = e instanceof Error ? e.message : String(e);
         const needsAuth = /(?:\b401\b|unauthorized|missing bearer|authentication required)/i.test(message);
@@ -571,6 +679,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           // This app-server never exits by itself. Retire the failed attempt
           // and silence its late handlers before the replacement launches.
           abandoned = true;
+          live.ended = true;
+          releaseWaiters(live);
           killCliTree(child);
           await new Promise<void>((resolve) => {
             const timer = setTimeout(resolve, Math.max(1, Math.round(delayMs * retryScale)));
@@ -638,8 +748,11 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         browserMcp: true,
         images: true,
         effortLevels: ["low", "medium", "high", "xhigh", "max"],
+        // turn/steer appends to the in-flight codex turn
+        queueing: true,
       },
       sendTurn,
+      steer: async (threadId, text, options) => (await active.get(threadId)?.steer(text, options?.steerId)) ?? false,
       interruptTurn: async (threadId) => active.get(threadId)?.stop(),
       respondToRequest: async (threadId, requestId, decision) => {
         const turn = active.get(threadId);

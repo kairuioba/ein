@@ -5,7 +5,7 @@
 //
 // The fake is a shebang script — the same constraint codex.cmd itself
 // hits on Windows. resolveCliSpawn covers both, so these run everywhere.
-import { chmodSync, mkdtempSync, readFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -571,5 +571,140 @@ describe("CodexDriver turns (fake app-server)", () => {
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     const turnStart = seen.calls.find((c: any) => c.method === "turn/start");
     expect(turnStart.params).not.toHaveProperty("effort");
+  });
+
+  // ── steer: turn/steer into the in-flight codex turn ─────────────────────
+  describe("steering", () => {
+    afterEach(() => {
+      delete process.env.FAKE_CODEX_STEER;
+      delete process.env.FAKE_CODEX_GATE_FILE;
+    });
+
+    it("advertises mid-turn steering", async () => {
+      await create();
+      expect(instance.adapter.capabilities.queueing).toBe(true);
+      expect(typeof instance.adapter.steer).toBe("function");
+    });
+
+    it("sends turn/steer with the active codex turn id and keeps ONE turn", async () => {
+      process.env.FAKE_CODEX_STEER = "hold";
+      await create();
+      const dump = join(scratch, "steer.json");
+      process.env.FAKE_CODEX_DUMP = dump;
+
+      await instance.adapter.sendTurn({ threadId: "t-steer", text: "build it" });
+      await recorder.until((e) => e.type === "item.started");
+      await expect(instance.adapter.steer!("t-steer", "also run the tests", { steerId: "s1" })).resolves.toBe(true);
+      const done = await recorder.until((e) => e.type === "turn.completed");
+
+      expect(done).toMatchObject({ ok: true });
+      expect((done as { undeliveredSteers?: string[] }).undeliveredSteers).toBeUndefined();
+      expect(recorder.events.filter((e) => e.type === "turn.started")).toHaveLength(1);
+      expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+      const reply = recorder.events.find((e) => e.type === "item.completed" && e.itemType === "assistant_text");
+      expect((reply as { text: string }).text).toBe("reply to: build it + steered: also run the tests");
+      const steerCall = JSON.parse(readFileSync(dump, "utf8")).calls.find((c: any) => c.method === "turn/steer");
+      expect(steerCall.params).toEqual({
+        threadId: "codex-thread-1",
+        input: [{ type: "text", text: "also run the tests" }],
+        expectedTurnId: "turn-1",
+      });
+    });
+
+    it("folds several steers into the same running turn, in order", async () => {
+      process.env.FAKE_CODEX_STEER = "gate";
+      const gate = join(scratch, "codex-steer.gate");
+      process.env.FAKE_CODEX_GATE_FILE = gate;
+      await create();
+
+      await instance.adapter.sendTurn({ threadId: "t-steer-many", text: "build it" });
+      await recorder.until((e) => e.type === "item.started");
+      expect(await instance.adapter.steer!("t-steer-many", "one")).toBe(true);
+      expect(await instance.adapter.steer!("t-steer-many", "two")).toBe(true);
+      writeFileSync(gate, "open");
+      await recorder.until((e) => e.type === "turn.completed");
+
+      const reply = recorder.events.find((e) => e.type === "item.completed" && e.itemType === "assistant_text");
+      expect((reply as { text: string }).text).toBe("reply to: build it + steered: one | two");
+      expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+    });
+
+    it("a message sent before turn/start goes out WITH turn/start", async () => {
+      process.env.FAKE_CODEX_STEER = "gate";
+      const gate = join(scratch, "codex-early.gate");
+      process.env.FAKE_CODEX_GATE_FILE = gate;
+      await create();
+
+      await instance.adapter.sendTurn({ threadId: "t-steer-early", text: "build it" });
+      // the handshake has not reached turn/start yet
+      expect(await instance.adapter.steer!("t-steer-early", "use the release profile")).toBe(true);
+      await recorder.until((e) => e.type === "item.started");
+      writeFileSync(gate, "open");
+      await recorder.until((e) => e.type === "turn.completed");
+
+      const reply = recorder.events.find((e) => e.type === "item.completed" && e.itemType === "assistant_text");
+      expect((reply as { text: string }).text).toBe("reply to: build it\n\nuse the release profile + steered: ");
+    });
+
+    it("returns false when codex says no turn is active, so the harness queues it", async () => {
+      process.env.FAKE_CODEX_STEER = "ended";
+      await create();
+
+      await instance.adapter.sendTurn({ threadId: "t-steer-ended", text: "build it" });
+      await recorder.until((e) => e.type === "item.started");
+      await expect(instance.adapter.steer!("t-steer-ended", "too late")).resolves.toBe(false);
+      const done = await recorder.until((e) => e.type === "turn.completed");
+      expect(done).toMatchObject({ ok: true });
+      expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+    });
+
+    it("returns false for an app-server that does not name its turn", async () => {
+      // the default fake answers turn/start with no turn id (older CLIs)
+      await create({ mode: "approval" });
+      await instance.adapter.sendTurn({ threadId: "t-steer-noid", text: "clean up" });
+      const opened = await recorder.until((e) => e.type === "request.opened");
+      await expect(instance.adapter.steer!("t-steer-noid", "careful")).resolves.toBe(false);
+      await instance.adapter.respondToRequest("t-steer-noid", opened.requestId!, { behavior: "allow" });
+      await recorder.until((e) => e.type === "turn.completed");
+    });
+
+    it("returns false once the turn has settled", async () => {
+      await create();
+      await instance.adapter.sendTurn({ threadId: "t-steer-after", text: "hi" });
+      await recorder.until((e) => e.type === "turn.completed");
+      await expect(instance.adapter.steer!("t-steer-after", "late")).resolves.toBe(false);
+      await expect(instance.adapter.steer!("never-ran", "late")).resolves.toBe(false);
+    });
+
+    it("a Stop before turn/start hands the waiting steer back to the harness", async () => {
+      process.env.FAKE_CODEX_STEER = "gate";
+      process.env.FAKE_CODEX_GATE_FILE = join(scratch, "never.gate");
+      await create();
+
+      await instance.adapter.sendTurn({ threadId: "t-steer-stop", text: "build it" });
+      expect(await instance.adapter.steer!("t-steer-stop", "keep me", { steerId: "keep-1" })).toBe(true);
+      await instance.adapter.interruptTurn("t-steer-stop");
+      const done = await recorder.until((e) => e.type === "turn.completed");
+      expect(done).toMatchObject({ ok: false, undeliveredSteers: ["keep-1"] });
+      await expect(instance.adapter.steer!("t-steer-stop", "after stop")).resolves.toBe(false);
+    });
+
+    it("an early steer survives a transient relaunch and rides the next turn/start", async () => {
+      process.env.FAKE_CODEX_TRANSIENTS = "1";
+      process.env.FAKE_CODEX_STATE = join(scratch, "codex-launches-steer");
+      process.env.FAKE_CODEX_RETRY_SCALE = "0.001";
+      await create();
+      const dump = join(scratch, "relaunch.json");
+      process.env.FAKE_CODEX_DUMP = dump;
+
+      await instance.adapter.sendTurn({ threadId: "t-steer-retry", text: "hi" });
+      expect(await instance.adapter.steer!("t-steer-retry", "and this", { steerId: "r1" })).toBe(true);
+      const done = await recorder.until((e) => e.type === "turn.completed");
+      expect(done).toMatchObject({ ok: true });
+      expect((done as { undeliveredSteers?: string[] }).undeliveredSteers).toBeUndefined();
+      expect(recorder.events.filter((e) => e.type === "turn.retrying")).toHaveLength(1);
+      const turnStart = JSON.parse(readFileSync(dump, "utf8")).calls.find((c: any) => c.method === "turn/start");
+      expect(turnStart.params.input).toEqual([{ type: "text", text: "hi\n\nand this" }]);
+    }, 20_000);
   });
 });

@@ -649,6 +649,7 @@ describe("Dispatcher", () => {
     expect(retros[0]!.subtasks).toHaveLength(2);
     expect(retros[0]!.subtasks[0]).toMatchObject({ title: "文案", role: "文案策划", reviewer: "总控" });
     expect(typeof retros[0]!.finishedAt).toBe("number");
+    expect(retros[0]!.versions).toMatchObject({ schema: 2, prompt: 1, gate: 1, models: [] });
   });
 
   it("falls back to the Chief's model when nothing can be recommended", () => {

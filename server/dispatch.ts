@@ -466,6 +466,12 @@ function isStopReason(reason: string | undefined): boolean {
 /** One dispatch run's retrospective record: hard facts only, written when the
  * run settles. The self-improvement loop reads these; nothing here is a model
  * judgment. */
+/** bump when the worker prompt / gate rules change: retros carry these so a
+ * later improvement can be attributed to a concrete change */
+const PROMPT_VERSION = 1;
+const GATE_VERSION = 1;
+const RETRO_SCHEMA_VERSION = 2;
+
 export interface DispatchRetro {
   at: number;
   runId: string;
@@ -477,6 +483,15 @@ export interface DispatchRetro {
   finishedAt: number;
   durationMs?: number;
   counts: { total: number; done: number; failed: number; canceled: number; skipped: number; retried: number };
+  /** version stamps: the self-evolution loop needs these to attribute a
+   * before/after change; without them a comparison is folklore */
+  versions: {
+    schema: number;
+    prompt: number;
+    gate: number;
+    models: string[];
+    efforts?: string[];
+  };
   subtasks: Array<{
     id: string;
     title: string;
@@ -622,6 +637,16 @@ export class Dispatcher {
         ...(run.createdAt && run.finishedAt ? { durationMs: run.finishedAt - run.createdAt } : {}),
         counts,
         subtasks,
+        versions: {
+          schema: RETRO_SCHEMA_VERSION,
+          prompt: PROMPT_VERSION,
+          gate: GATE_VERSION,
+          models: [...new Set(run.subtasks.flatMap((subtask) => (subtask.ranWith ? [subtask.ranWith.model] : [])))],
+          ...(() => {
+            const efforts = [...new Set(run.subtasks.flatMap((subtask) => (subtask.ranWith?.effort ? [subtask.ranWith.effort] : [])))];
+            return efforts.length ? { efforts } : {};
+          })(),
+        },
       };
       appendFileSync(this.retroFile, `${JSON.stringify(retro)}\n`, { mode: 0o600 });
     } catch (error) {

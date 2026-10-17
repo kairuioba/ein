@@ -108,27 +108,34 @@ export function useMeeting(group: Group, members: Bot[], allBots: Bot[]): Meetin
     const lastDecision = Math.max(0, ...base.decisions.map((decision) => decision.at));
     return { start: span.start, end: Math.max(span.end, lastDecision) };
   }, [base.spoken, base.decisions]);
-  const timing = meetingTiming(window, state, base.agenda?.limitMin, now);
+  const limitMin = base.agenda?.limitMin;
+  const timing = useMemo(() => meetingTiming(window, state, limitMin, now), [window, state, limitMin, now]);
 
   const minutesDoc = useMemo(
     () => minutesDocFor(docs, group.name, base.decisions.map((decision) => decision.id)),
     [docs, group.name, base.decisions],
   );
 
-  return {
-    agenda: base.agenda,
-    isMeeting: base.isMeeting,
-    state,
-    timing,
-    chair: base.chair,
-    chiefId: base.chiefId,
-    sources: base.sources,
-    decisions: base.decisions,
-    options: base.options,
-    ownerDecided: base.ownerDecided,
-    ownerSpoke: base.ownerSpoke,
-    docs,
-    minutesDoc,
-    colors: base.colors,
-  };
+  // One identity while nothing changed: the room's transcript is memoized on
+  // this object, and a fresh one per render re-rendered every message (and
+  // every icon in it) whenever anything in the room view did.
+  return useMemo(
+    () => ({
+      agenda: base.agenda,
+      isMeeting: base.isMeeting,
+      state,
+      timing,
+      chair: base.chair,
+      chiefId: base.chiefId,
+      sources: base.sources,
+      decisions: base.decisions,
+      options: base.options,
+      ownerDecided: base.ownerDecided,
+      ownerSpoke: base.ownerSpoke,
+      docs,
+      minutesDoc,
+      colors: base.colors,
+    }),
+    [base, state, timing, docs, minutesDoc],
+  );
 }

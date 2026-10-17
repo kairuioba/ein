@@ -7,6 +7,7 @@
 import type { DispatchRun, InboxItem } from "../shared/dispatch-types.ts";
 import type { TaskFolderRecord } from "../shared/task-folders.ts";
 import { buildDecisionStack, type DecisionRisk } from "./decision-stack.ts";
+import { readAck } from "./handoff-ack.ts";
 
 /** 成员状态：由数据推导，不落库、不允许自述。 */
 export type OfficePresence = "working" | "waiting" | "reviewing" | "blocked" | "idle";
@@ -58,6 +59,9 @@ export interface OfficeDecision {
   kind: InboxItem["kind"];
   title: string;
   reason: string;
+  /** the attempt the decision was made on: stale cards must not approve a
+   * newer, unseen attempt */
+  attemptId?: string;
   evidence: string[];
   risk: DecisionRisk;
 }
@@ -204,7 +208,10 @@ function waitingChains(
       const incomplete = dependency.status !== "done" && dependency.status !== "skipped";
       const handoff = !incomplete && dependency.status === "done" && Boolean(dependency.handoff);
       if (!incomplete && !handoff) continue;
-      const ack = dependency.handoff?.ack;
+      const read = dependency.handoff ? readAck(dependency as Parameters<typeof readAck>[0]) : null;
+      // legacy/implied acks predate receipts: never render them as blocked
+      if (read?.legacy || read?.implied) continue;
+      const ack = read?.ack;
       // a received handoff is consumed: nothing is waiting for it anymore
       if (handoff && ack?.state === "received") continue;
       const key = `${dependency.id}->${pending.id}`;
@@ -251,6 +258,7 @@ function decisionsFor(
     reason: card.reason,
     evidence: card.evidence,
     risk: card.risk,
+    ...(open.find((entry) => entry.id === card.id)?.attemptId ? { attemptId: open.find((entry) => entry.id === card.id)!.attemptId } : {}),
   }));
 }
 

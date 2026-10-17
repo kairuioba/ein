@@ -91,7 +91,7 @@ export function sweepHandoffs(
     if (now < expiresAt) continue;
     if (ack.state === "sent") {
       actions.push({ kind: "expire", subtaskId: subtask.id, round: ack.round, expectedVersion: ack.v, nudge: ack.nudgeCount < maxNudges, escalate: ack.nudgeCount + 1 > maxNudges });
-    } else if (ack.nudgeCount >= maxNudges) {
+    } else if (ack.nudgeCount >= maxNudges && !ack.escalatedAt) {
       actions.push({ kind: "escalate", subtaskId: subtask.id, round: ack.round, expectedVersion: ack.v });
     }
   }

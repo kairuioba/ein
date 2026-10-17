@@ -53,8 +53,9 @@ export function ProjectOfficePanel({
   const departments = office?.departments ?? [];
   // one-line conclusion: how much attention does this project need right now
   const oldest = waiting.reduce((max, entry) => Math.max(max, entry.minutes), 0);
-  const conclusion =
-    decisions.length > 0
+  const conclusion = !office
+    ? { tone: "muted", text: t("Connecting to the project office…") }
+    : decisions.length > 0
       ? { tone: "danger", text: t("{count} decision(s) waiting for you", { count: decisions.length }) }
       : anomalies.length > 0
         ? { tone: "warning", text: t("{count} thing(s) need a look", { count: anomalies.length }) }
@@ -87,6 +88,7 @@ export function ProjectOfficePanel({
               conclusion.tone === "danger" && "bg-danger/[0.09] text-danger",
               conclusion.tone === "warning" && "bg-warning/[0.12] text-warning",
               conclusion.tone === "ok" && "bg-select/[0.08] text-accent-text",
+              conclusion.tone === "muted" && "bg-raised text-ink-secondary",
             )}
           >
             {conclusion.text}
@@ -109,13 +111,13 @@ export function ProjectOfficePanel({
                       <div className="mt-1.5 flex flex-col gap-1.5">
                         <textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder={t("What is wrong? One sentence is enough.")} className="min-h-[56px] w-full rounded-lg bg-card px-2.5 py-1.5 text-[12px] text-ink shadow-[inset_0_0_0_1px_var(--color-hairline)] outline-none" />
                         <div className="flex gap-1.5">
-                          <Button size="sm" disabled={!note.trim() || busy !== null} onClick={() => void act(decision.id, "reject")}>{t("Not good — fix it")}</Button>
+                          <Button size="sm" disabled={!note.trim() || busy !== null} onClick={() => void act(decision.id, "reject", decision.attemptId)}>{t("Not good — fix it")}</Button>
                           <Button size="sm" variant="soft" onClick={() => { setRejecting(null); setNote(""); }}>{t("Cancel")}</Button>
                         </div>
                       </div>
                     ) : (
                       <div className="mt-1.5 flex gap-1.5">
-                        <Button size="sm" disabled={busy !== null} onClick={() => void act(decision.id, "approve")} className="gap-1"><CheckCircle2 size={12} /> {t("Approve, go on")}</Button>
+                        <Button size="sm" disabled={busy !== null} onClick={() => void act(decision.id, "approve", decision.attemptId)} className="gap-1"><CheckCircle2 size={12} /> {t("Approve, go on")}</Button>
                         <Button size="sm" variant="soft" disabled={busy !== null} onClick={() => { setRejecting(decision.id); setNote(""); }}>{t("Not good — fix it")}</Button>
                       </div>
                     )}
@@ -167,7 +169,7 @@ export function ProjectOfficePanel({
                   </div>
                   <ul className="space-y-1">
                     {anomalies.slice(0, 4).map((anomaly) => (
-                      <li key={anomaly.subtaskId} className="rounded-lg bg-warning/[0.08] px-2.5 py-1.5 text-[11.5px] text-ink-secondary">
+                      <li key={`${anomaly.subtaskId}-${anomaly.kind}`} className="rounded-lg bg-warning/[0.08] px-2.5 py-1.5 text-[11.5px] text-ink-secondary">
                         <b className="text-ink">{anomaly.title}</b> · {anomaly.detail}
                       </li>
                     ))}

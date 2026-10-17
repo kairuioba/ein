@@ -41,7 +41,7 @@ export interface ProjectOffice {
   };
   departments: Array<{ name: string; members: OfficeMember[] }>;
   now: { waiting: OfficeWaiting[] };
-  decisions: Array<{ id: string; kind: string; title: string; reason: string; risk?: string }>;
+  decisions: Array<{ id: string; kind: string; title: string; reason: string; risk?: string; attemptId?: string }>;
   activity: Array<{ at: number; kind: string; actor: string; summary: string }>;
   anomalies: OfficeAnomaly[];
 }
@@ -59,8 +59,8 @@ export function useProjectOffice(folderId: string | undefined, intervalMs = 5000
         const next = (await api(`/api/task-folders/${folderId}/office`)) as { office?: ProjectOffice };
         if (alive) setOffice(next.office ?? null);
       } catch {
-        // 旧服务端没有这个投影：静默隐藏，不影响聊天
-        if (alive) setOffice(null);
+        // a failed poll must not wipe the last snapshot (that would flip the
+        // panel to a fake green "all clear"); keep what we had
       }
     };
     void load();

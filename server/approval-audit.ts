@@ -66,7 +66,14 @@ export function foldAuditEvents(events: readonly AuditEvent[], options: { now?: 
     const manualApproved = approvals.filter((event) => event.mode === "manual" && sinceRevert(event)).length;
     const autoApproved = approvals.filter((event) => event.mode === "auto" && sinceRevert(event)).length;
     const revertedCount = reverts.length;
-    const locked = revertedCount >= ASK_ONLY_AFTER_REVERTS;
+    // lock per object, not per group: two reverts of one target are worse
+    // than one revert each of two targets
+    const revertsByTarget = new Map<string, number>();
+    for (const event of reverts) {
+      const key = event.target || event.idempotencyKey;
+      revertsByTarget.set(key, (revertsByTarget.get(key) ?? 0) + 1);
+    }
+    const locked = [...revertsByTarget.values()].some((count) => count >= ASK_ONLY_AFTER_REVERTS);
     const cooled = lastRevertAt !== undefined && now - lastRevertAt < AUTO_COOLDOWN_MS;
     const eligibleForAuto = !locked && !cooled && manualApproved >= AUTO_MANUAL_MIN;
     stats.set(key, {
@@ -96,17 +103,26 @@ export class ApprovalAuditStore {
 
   private load(): void {
     if (!existsSync(this.file)) return;
+    let raw = "";
     try {
-      for (const line of readFileSync(this.file, "utf8").split("\n")) {
-        if (!line.trim()) continue;
+      raw = readFileSync(this.file, "utf8");
+    } catch (error) {
+      console.error("approval audit: could not read the log", error);
+      return;
+    }
+    // a torn write must not hide the rest of the log (a reverted event could
+    // be dropped, silently restoring trust)
+    for (const line of raw.split("\n")) {
+      if (!line.trim()) continue;
+      try {
         const parsed = JSON.parse(line) as AuditEvent;
         if (parsed && typeof parsed.idempotencyKey === "string") {
           this.events.push(parsed);
           this.byKey.set(parsed.idempotencyKey, parsed);
         }
+      } catch {
+        console.error("approval audit: skipped a corrupt line");
       }
-    } catch (error) {
-      console.error("approval audit: could not read the log", error);
     }
   }
 
@@ -118,11 +134,17 @@ export class ApprovalAuditStore {
   append(input: Omit<AuditEvent, "id" | "decidedAt"> & { id?: string; decidedAt?: number }): { event: AuditEvent; deduped: boolean } {
     const existing = this.byKey.get(input.idempotencyKey);
     if (existing) return { event: existing, deduped: true };
-    const event: AuditEvent = { id: input.id ?? newId(), decidedAt: input.decidedAt ?? Date.now(), ...input };
+    const event: AuditEvent = { ...input, id: input.id ?? newId(), decidedAt: input.decidedAt ?? Date.now() };
     this.events.push(event);
     this.byKey.set(event.idempotencyKey, event);
     try {
-      appendFileSync(this.file, `${JSON.stringify(event)}\n`, { mode: 0o600 });
+      // if a crash left a line without newline, repair before appending
+      let prefix = "";
+      if (existsSync(this.file)) {
+        const tail = readFileSync(this.file, "utf8").slice(-1);
+        if (tail && tail !== "\n") prefix = "\n";
+      }
+      appendFileSync(this.file, `${prefix}${JSON.stringify(event)}\n`, { mode: 0o600 });
     } catch (error) {
       console.error("approval audit: could not persist", error);
     }

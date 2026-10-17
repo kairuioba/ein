@@ -36,6 +36,8 @@ export interface PipelineTransition {
   ok: boolean;
   run: PipelineRun;
   reason?: string;
+  /** ok=false but the run state changed: callers MUST persist `run` */
+  persist?: boolean;
 }
 
 const TERMINAL = new Set<PipelineState>(["merged", "aborted", "rejected", "expired"]);
@@ -47,6 +49,7 @@ const fail = (run: PipelineRun, reason: string, state?: PipelineState): Pipeline
   ok: false,
   run: state ? { ...run, state, updatedAt: Date.now() } : run,
   reason,
+  ...(state ? { persist: true } : {}),
 });
 
 export function transition(run: PipelineRun, event: PipelineEvent, now = Date.now()): PipelineTransition {
@@ -61,11 +64,11 @@ export function transition(run: PipelineRun, event: PipelineEvent, now = Date.no
       if (run.state !== "accepted") return fail(run, "provision only from accepted");
       return next({ baseSha: event.baseSha }, "provisioning");
     case "implement":
-      if (run.state !== "provisioning" && run.state !== "implementing" && run.state !== "testing" && run.state !== "reviewing" && run.state !== "merge_ready") return fail(run, "implement not allowed here");
+      if (run.state !== "provisioning" && run.state !== "implementing" && run.state !== "testing" && run.state !== "reviewing" && run.state !== "merge_ready" && run.state !== "guarding") return fail(run, "implement not allowed here");
       if (run.implementRounds + 1 > MAX_IMPLEMENT_ROUNDS) return fail(run, "too many implement rounds", "rejected");
       return next({ headSha: event.headSha, implementRounds: run.implementRounds + 1, guardOkAtHead: undefined, testsOkAtHead: undefined, reviewOkAtHead: undefined }, "implementing");
     case "guard_pass":
-      if (run.state !== "implementing") return fail(run, "guard_pass only after implement");
+      if (run.state !== "implementing" && run.state !== "guarding") return fail(run, "guard_pass only after implement or re-guard");
       return next({ guardOkAtHead: run.headSha }, "testing");
     case "guard_violation":
       // violations are never retried: retrying would invite bypassing the guard

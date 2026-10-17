@@ -36,7 +36,12 @@ export interface AttentionHistory {
   reverted?: boolean;
   autoApprovedToday?: number;
   autoApprovalCap?: number;
+  /** pushes already sent today (daily cap keeps the owner at ≤3) */
+  pushesToday?: number;
+  pushCap?: number;
 }
+
+import { AUTO_MANUAL_MIN } from "./approval-audit.ts";
 
 const BLAST = new Set<BlastRadius>(["external", "money", "prod"]);
 const RISK_ORDER: Record<CardRisk, number> = { low: 0, medium: 1, high: 2, critical: 3 };
@@ -50,11 +55,13 @@ export function classify(card: AttentionCard, history: AttentionHistory = {}): {
   const reasons: string[] = [];
   const cap = history.autoApprovalCap ?? 20;
   const reversible = isReversible(card);
-  const historyClean = (history.approvals ?? 0) >= 5 && (history.rejections ?? 0) === 0 && !history.reverted;
+  const historyClean = (history.approvals ?? 0) >= AUTO_MANUAL_MIN && (history.rejections ?? 0) === 0 && !history.reverted;
   const autoEligible =
     reversible &&
     (!card.blastRadius || card.blastRadius === "internal") &&
     !highImpact(card) &&
+    // never auto-approve something that would have needed an interruption
+    (card.risk === "low" || card.risk === "medium") &&
     historyClean &&
     (history.autoApprovedToday ?? 0) < cap;
   if (autoEligible) {
@@ -65,8 +72,13 @@ export function classify(card: AttentionCard, history: AttentionHistory = {}): {
   if (!reversible || highImpact(card)) {
     reasons.push("irreversible or external impact");
     if (card.hasSafeDefault === false) {
-      reasons.push("no safe default on timeout → push");
-      return { kind: "push", reasons };
+      const pushCap = history.pushCap ?? 3;
+      if ((history.pushesToday ?? 0) < pushCap || card.risk === "critical") {
+        reasons.push("no safe default on timeout → push");
+        return { kind: "push", reasons };
+      }
+      reasons.push("daily push budget exhausted → inbox");
+      return { kind: "inbox", reasons };
     }
     reasons.push("safe default exists → inbox, do not interrupt");
     return { kind: "inbox", reasons };

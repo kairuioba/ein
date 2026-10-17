@@ -94,7 +94,7 @@ describe("buildProjectOffice", () => {
     expect(members[2]).toMatchObject({ waitingOn: "评审" });
   });
 
-  it("draws the waiting chain: a running dependency and a delivered handoff waiting for the next worker", () => {
+  it("draws the waiting chain: a running dependency; legacy/implied handoffs are not blocked", () => {
     const office = buildProjectOffice({
       folder: folder(),
       run: run({
@@ -115,9 +115,9 @@ describe("buildProjectOffice", () => {
       inboxItems: [],
       now: NOW,
     });
-    // longest wait first: the delivered handoff (90 min) before the still-running dependency (20 min)
+    // a done handoff without an ack is historical (implied received): it must
+    // never show up as a long red block
     expect(office.now.waiting).toEqual([
-      { from: { botId: "zhe", name: "阿哲" }, to: { botId: "mei", name: "阿美" }, item: "做落地页", status: "handoff_unreceived", since: NOW - 90 * MIN, minutes: 90 },
       { from: { botId: "lin", name: "小林" }, to: { botId: "mei", name: "阿美" }, item: "做落地页", status: "running", since: NOW - 20 * MIN, minutes: 20 },
     ]);
   });

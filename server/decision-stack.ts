@@ -68,7 +68,7 @@ const APPROVE_EFFECT: Record<InboxItem["kind"], string> = {
   gate_failed: "通过后接受此结果",
   question: "通过即视为已答复，公司继续推进",
   failed_exhausted: "通过即接受失败，不再重试",
-  handoff_stuck: "通过即由你介入，把交接重新发下去",
+  handoff_stuck: "通过即视为已知悉；重发请在对话里让负责人处理",
 };
 
 /** 三种动作对四类条目都能落到现有的 resolve 语义上（approve/reject/abandon）。 */

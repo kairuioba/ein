@@ -642,7 +642,8 @@ describe("Dispatcher", () => {
     subtask.handoff!.ack = { state: "sent", round: 1, sentAt: 0, sentBy: "b1", expiresAt: 0, nudgeCount: 0, v: 1 };
     expect(dispatcher.sweepHandoffs(5_000)).toBe(1);
     expect(dispatcher.get(result.run.id)!.subtasks[0]!.handoff!.ack).toMatchObject({ state: "expired", nudgeCount: 1, v: 2 });
-    expect(dispatcher.sweepHandoffs(6_000)).toBeGreaterThanOrEqual(1);
+    // the nudge gets a fresh 10 minute window before escalating
+    expect(dispatcher.sweepHandoffs(5_000 + 10 * 60_000 + 1)).toBeGreaterThanOrEqual(1);
     expect(host.inbox.filter((item) => item.kind === "handoff_stuck")).toHaveLength(1);
   });
 

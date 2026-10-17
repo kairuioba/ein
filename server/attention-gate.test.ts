@@ -15,7 +15,7 @@ describe("attention gate", () => {
   it("auto-approves only reversible internal cards with a clean approval history", () => {
     const sample = make({ risk: "low", blastRadius: "internal", actionType: "retry", projectId: "p1" });
     expect(classify(sample, { approvals: 5, rejections: 0 }).kind).toBe("auto");
-    expect(classify(sample, { approvals: 4, rejections: 0 }).kind).toBe("inbox");
+    expect(classify(sample, { approvals: 2, rejections: 0 }).kind).toBe("inbox");
     expect(classify(sample, { approvals: 6, rejections: 1 }).kind).toBe("inbox");
     expect(classify(sample, { approvals: 6, reverted: true }).kind).toBe("inbox");
     expect(classify(sample, { approvals: 6, autoApprovedToday: 20 })).toMatchObject({ kind: "inbox" });

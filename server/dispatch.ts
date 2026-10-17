@@ -1230,6 +1230,10 @@ export class Dispatcher {
   sweepHandoffs(now = Date.now()): number {
     let changed = 0;
     for (const run of this.runs) {
+      // only active runs can have a downstream that will receive the handoff;
+      // cancelled/failed/done runs would otherwise spam handoff_stuck forever
+      if (run.status !== "running" && run.status !== "synthesizing") continue;
+      let runChanged = 0;
       const subtasks = run.subtasks.map((subtask) => ({ id: subtask.id, status: subtask.status, ...(subtask.handoff ? { handoff: subtask.handoff } : {}) }));
       const actions = sweepHandoffAcks(subtasks, now);
       for (const action of actions) {
@@ -1239,8 +1243,11 @@ export class Dispatcher {
         if (action.kind === "expire") {
           ack.state = "expired";
           ack.nudgeCount += 1;
+          // give the nudge a real window before escalating next tick
+          ack.expiresAt = now + 10 * 60_000;
           ack.v += 1;
           changed += 1;
+          runChanged += 1;
           if (action.escalate) {
             this.host.needsYou?.({
               kind: "handoff_stuck",
@@ -1256,6 +1263,7 @@ export class Dispatcher {
           ack.escalatedAt = now;
           ack.v += 1;
           changed += 1;
+          runChanged += 1;
           this.host.needsYou?.({
             kind: "handoff_stuck",
             runId: run.id,
@@ -1267,7 +1275,7 @@ export class Dispatcher {
           });
         }
       }
-      if (changed) this.touch(run);
+      if (runChanged) this.touch(run);
     }
     return changed;
   }

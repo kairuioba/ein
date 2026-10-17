@@ -200,11 +200,12 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
       expect(backendChange.body.error).toContain("stop the active turn");
       expect((await getBot(created.id)).cloudBackend).toBe(backendBefore);
 
-      // a second send while busy queues (steer-queue) — never a parallel
-      // turn: the words land in the transcript, the live turn keeps running
+      // a second send while busy is taken into the live turn (steered) or,
+      // before the engine has a prompt in flight, queued — never a parallel
+      // turn: the live turn keeps running
       const parallel = await api("POST", `/api/bots/${created.id}/messages`, { text: "sneaky second" });
       expect(parallel.status).toBe(202);
-      expect(parallel.body.queued).toBe(true);
+      expect(parallel.body.steered === true || parallel.body.queued === true).toBe(true);
       expect((await getBot(created.id)).busy).toBe(true);
 
       // switching versions under a live turn is refused too
@@ -219,14 +220,15 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
       expect(midTurn.status).toBe(409);
       expect((await getBot(created.id)).messages.filter((m: Msg) => m.text === "second try")).toHaveLength(0);
 
-      // stop the turn; the queued "sneaky second" auto-runs on settle
-      // (stop-then-steer), so that drained turn must be stopped too before
-      // the thread is truly quiet enough to edit
+      // stop the turn; "sneaky second" never reached the hung model, so it
+      // auto-runs on settle (stop-then-steer), and that turn must be stopped
+      // too before the thread is truly quiet enough to edit
       expect((await api("POST", `/api/bots/${created.id}/interrupt`)).status).toBe(200);
       await waitFor(async () => {
         const b = await getBot(created.id);
-        return b.busy === true && b.messages.some((m: Msg) => m.text === "sneaky second" && !m.queued);
-      }, "the queued message to drain into its own turn", 20_000);
+        const turns = b.tasks?.find((task: any) => task.threadId === b.threadId)?.usage?.turns ?? 0;
+        return turns >= 1 && b.busy === true && b.messages.some((m: Msg) => m.text === "sneaky second" && !m.queued);
+      }, "the held message to run as its own turn", 20_000);
       expect((await api("POST", `/api/bots/${created.id}/interrupt`)).status).toBe(200);
       await waitFor(async () => (await getBot(created.id)).busy === false, "the drained turn to settle", 20_000);
       expect((await api("POST", `/api/bots/${created.id}/messages/${first.id}/edit`, { text: "second try" })).status).toBe(202);

@@ -8,6 +8,10 @@
 //                     mcp-elicitation | question | logged-in-stdout | logged-out | unauthorized
 //                     (question: asks the user to pick a price through
 //                     item/tool/requestUserInput, then finishes the turn)
+//                     | echo-gated (an app-server that names no turn, as older
+//                     ones did, so it cannot be steered: the turn stays open
+//                     until FAKE_CODEX_GATE_FILE exists, then replies
+//                     "echo: <the whole turn/start input>")
 //   FAKE_CODEX_DUMP   path to write {argv, env, calls, decision} as JSON
 //   FAKE_CODEX_STEER  opt-in mid-turn steering surface (unset = byte-identical
 //                     to before). turn/start answers {turn:{id:"turn-1"}} and
@@ -256,6 +260,20 @@ process.stdin.on("data", (chunk) => {
           }
         }
         out({ jsonrpc: "2.0", id: msg.id, result: { ok: true } });
+        if (mode === "echo-gated") {
+          const input = String(msg.params?.input?.[0]?.text ?? "");
+          notify("item/started", { item: { id: "i1", type: "commandExecution", command: "think" } });
+          const poll = setInterval(() => {
+            const gate = process.env.FAKE_CODEX_GATE_FILE;
+            if (!gate || !existsSync(gate)) return;
+            clearInterval(poll);
+            notify("item/completed", { item: { id: "i1", type: "commandExecution", status: "completed" } });
+            notify("item/completed", { item: { id: "m1", type: "agentMessage", text: `echo: ${input}` } });
+            dump();
+            notify("turn/completed", { turn: { status: "completed" } });
+          }, 50);
+          break;
+        }
         const command = mode === "windows-command"
           ? [
               "\"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\"",

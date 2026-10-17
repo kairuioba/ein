@@ -41,6 +41,35 @@
 //                        core.ts has something to catch
 //   FAKE_ACP_USAGE_ROOT  put the prompt result's usage at the root instead of
 //                        under _meta (what opencode 1.18.18 actually does)
+//   FAKE_ACP_STEER       opt-in mid-turn steering scenarios (unset = byte-
+//                        identical to before). The FIRST session/prompt plays
+//                        "working" text and a tool call (tc-long, in_progress for
+//                        FAKE_ACP_TOOL_MS, default 300) and then keeps thinking
+//                        until something ends it; every LATER prompt answers
+//                        "echo: <prompt text>" with end_turn at once.
+//                          boundary — session/cancel ends the prompt with
+//                                     stopReason "cancelled" (a running tool is
+//                                     reported failed first, the way a real
+//                                     agent aborts it)
+//                          ignore-cancel — cancel is ignored; the prompt ends
+//                                     on its own FAKE_ACP_FINISH_MS (default 500)
+//                                     after the tool
+//                          error-on-cancel — cancel fails the prompt with a
+//                                     JSON-RPC error instead of "cancelled"
+//                          native — initialize advertises _meta.steering.supported
+//                                     and _session/steering injects into the
+//                                     running prompt, which then ends with
+//                                     "reply to: <first prompt> + steered: <texts>"
+//                          native-idle — advertised, but every steer answers
+//                                     promptRequired (the agent's prompt just ended)
+//                        FAKE_ACP_GATE_FILE ends a thinking first prompt with
+//                        end_turn once it exists. FAKE_ACP_STEER_PERMISSION asks
+//                        a permission for tc-long before it runs. Every method
+//                        is recorded in FAKE_ACP_RPC_DUMP; a session/cancel that
+//                        lands while a tool runs is also recorded as
+//                        "session/cancel:during-tool". FAKE_ACP_PROMPTS_DUMP
+//                        records every prompt text and _session/steering call.
+//   FAKE_ACP_LOAD_MS     delay the session/load answer (a slow history replay)
 //
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
 import { spawn } from "node:child_process";
@@ -243,6 +272,142 @@ function playInterleaveTurn() {
   out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: "after" } } } });
 }
 
+// ── FAKE_ACP_STEER: a turn that can be steered ─────────────────────────────
+const steerMode = process.env.FAKE_ACP_STEER ?? "";
+const steerLog: { prompts: string[]; steers: unknown[] } = { prompts: [], steers: [] };
+const writeSteerLog = () => {
+  if (process.env.FAKE_ACP_PROMPTS_DUMP) writeFileSync(process.env.FAKE_ACP_PROMPTS_DUMP, JSON.stringify(steerLog));
+};
+const chunk = (text: string) =>
+  out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text } } } });
+const toolUpdate = (status: string) =>
+  out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "tool_call_update", toolCallId: "tc-long", status } } });
+let steerPrompt: {
+  id: unknown;
+  first: string;
+  toolRunning: boolean;
+  finish: (stopReason: string) => void;
+  fail: (message: string) => void;
+} | null = null;
+const injected: string[] = [];
+
+function startSteerPrompt(msg: any) {
+  const text = String(msg.params?.prompt?.[0]?.text ?? "");
+  steerLog.prompts.push(text);
+  writeSteerLog();
+  let done = false;
+  const prompt = {
+    id: msg.id,
+    first: text,
+    toolRunning: false,
+    finish: (stopReason: string) => {
+      if (done) return;
+      done = true;
+      if (steerPrompt === prompt) steerPrompt = null;
+      recordMethod(`session/prompt.${stopReason}`);
+      result(msg.id, { stopReason, _meta: { inputTokens: 10, outputTokens: 5 } });
+    },
+    fail: (message: string) => {
+      if (done) return;
+      done = true;
+      if (steerPrompt === prompt) steerPrompt = null;
+      recordMethod("session/prompt.error");
+      out({ jsonrpc: "2.0", id: msg.id, error: { code: -32800, message } });
+    },
+  };
+  steerPrompt = prompt;
+  if (steerLog.prompts.length > 1) {
+    // a follow-up: answer it straight away
+    chunk(`echo: ${text}`);
+    prompt.finish("end_turn");
+    return;
+  }
+  chunk("working");
+  const runTool = (announced = false) => {
+    if (done) return;
+    prompt.toolRunning = true;
+    // a tool announced as pending (before its permission card) moves on
+    // with an update, the way real agents report it
+    if (announced) toolUpdate("in_progress");
+    else out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "tool_call", toolCallId: "tc-long", title: "make build", status: "in_progress" } } });
+    setTimeout(() => {
+      if (done) return;
+      prompt.toolRunning = false;
+      toolUpdate("completed");
+      // now "thinking" until a cancel, an injected steer, or the gate
+      if (steerMode === "ignore-cancel") {
+        setTimeout(() => {
+          chunk("finished on my own");
+          prompt.finish("end_turn");
+        }, Number(process.env.FAKE_ACP_FINISH_MS ?? "500"));
+      }
+      const gate = process.env.FAKE_ACP_GATE_FILE;
+      if (gate) {
+        const poll = setInterval(() => {
+          if (done) return clearInterval(poll);
+          if (!existsSync(gate)) return;
+          clearInterval(poll);
+          chunk("finished at the gate");
+          prompt.finish("end_turn");
+        }, 50);
+      }
+    }, Number(process.env.FAKE_ACP_TOOL_MS ?? "300"));
+  };
+  if (process.env.FAKE_ACP_STEER_PERMISSION) {
+    out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "tool_call", toolCallId: "tc-long", title: "make build", status: "pending" } } });
+    pendingPermissionId = 9002;
+    onPermissionAnswered = () => runTool(true);
+    out({
+      jsonrpc: "2.0",
+      id: pendingPermissionId,
+      method: "session/request_permission",
+      params: {
+        toolCall: { toolCallId: "tc-long", kind: "execute", rawInput: { command: "make build" }, title: "make build" },
+        options: [
+          { optionId: "allow-once", kind: "allow_once" },
+          { optionId: "reject", kind: "reject_once" },
+        ],
+      },
+    });
+    return;
+  }
+  runTool();
+}
+
+function cancelSteerPrompt() {
+  const prompt = steerPrompt;
+  // handle() already recorded "session/cancel"; flag one that hit a tool
+  if (prompt?.toolRunning) recordMethod("session/cancel:during-tool");
+  if (!prompt || steerMode === "ignore-cancel") return;
+  if (prompt.toolRunning) {
+    prompt.toolRunning = false;
+    toolUpdate("failed");
+  }
+  if (steerMode === "error-on-cancel") prompt.fail("request cancelled");
+  else prompt.finish("cancelled");
+}
+
+function answerSteering(msg: any) {
+  const params = msg.params ?? {};
+  steerLog.steers.push(params);
+  writeSteerLog();
+  const text = Array.isArray(params.prompt) ? params.prompt.map((block: any) => block?.text ?? "").join("") : "";
+  if (typeof params.sessionId !== "string" || !text) {
+    return out({ jsonrpc: "2.0", id: msg.id, error: { code: -32602, message: "steer params require a sessionId and a non-empty prompt array" } });
+  }
+  const prompt = steerPrompt;
+  if (steerMode === "native-idle" || !prompt) {
+    return result(msg.id, { outcome: "promptRequired", reason: "noRunningTurn" });
+  }
+  injected.push(text);
+  result(msg.id, { outcome: "injected" });
+  // the model takes it before its next step, then wraps up
+  setTimeout(() => {
+    chunk(`reply to: ${prompt.first} + steered: ${injected.join(" | ")}`);
+    prompt.finish("end_turn");
+  }, 30);
+}
+
 let buf = "";
 process.stdin.on("data", (c) => {
   buf += c;
@@ -271,6 +436,12 @@ function handle(msg: any) {
   if (!msg.method) return;
   recordMethod(msg.method);
 
+  if (steerMode) {
+    if (msg.method === "session/prompt") return startSteerPrompt(msg);
+    if (msg.method === "session/cancel") return cancelSteerPrompt();
+    if (msg.method === "_session/steering" && steerMode.startsWith("native")) return answerSteering(msg);
+  }
+
   switch (msg.method) {
     case "initialize": {
       if (mode === "exit-early") {
@@ -278,7 +449,14 @@ function handle(msg: any) {
         process.exit(3);
       }
       const authMethods = mode === "no-auth" ? [] : [{ id: "cached_token" }];
-      result(msg.id, { protocolVersion: 1, authMethods, _meta: { modelState: { currentModelId: "fake-acp-model" } } });
+      result(msg.id, {
+        protocolVersion: 1,
+        authMethods,
+        _meta: {
+          modelState: { currentModelId: "fake-acp-model" },
+          ...(steerMode.startsWith("native") ? { steering: { supported: true } } : {}),
+        },
+      });
       break;
     }
     case "authenticate":
@@ -317,7 +495,10 @@ function handle(msg: any) {
       agentsMcp = loaded.find((s: any) => s?.name === "agents") ?? agentsMcp;
       const opts = configOptions();
       const mdls = sessionModels();
-      result(msg.id, { ...(opts ? { configOptions: opts } : {}), ...(mdls ? { models: mdls } : {}) });
+      const loadedResult = { ...(opts ? { configOptions: opts } : {}), ...(mdls ? { models: mdls } : {}) };
+      const loadDelay = Number(process.env.FAKE_ACP_LOAD_MS ?? "0");
+      if (loadDelay > 0) setTimeout(() => result(msg.id, loadedResult), loadDelay);
+      else result(msg.id, loadedResult);
       break;
     }
     // per-session settings (droid sets model/autonomy here, not via argv).

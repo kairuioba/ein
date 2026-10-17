@@ -124,6 +124,9 @@ import { _loadPending, discardDelegations, drainDelegations, findDelegationRecei
 import {
   cancelSteeredMessage,
   drainSteeredMessages,
+  recordLiveSteer,
+  requeueSteeredMessages,
+  settleLiveSteers,
   queuedSteeredMessage,
   queueSteeredMessage,
 } from "./steer-queue.ts";
@@ -2254,8 +2257,34 @@ bus.subscribe((event: RuntimeEvent) => {
 bus.subscribe((event: RuntimeEvent) => {
   if (shouldIgnoreProviderEvent(event)) return;
   if (event.type !== "turn.completed") return;
+  requeueUndeliveredSteers(event.threadId, event.undeliveredSteers);
   drainQueuedSends();
 });
+
+/** A turn that ended before its steered messages reached the model (a Stop,
+ * a failure, a crash) hands them back. They are already in the transcript,
+ * so they run next without being appended again: a 1:1 line through the
+ * steer queue, a room line as the room's next message. */
+function requeueUndeliveredSteers(threadId: string, undelivered: readonly string[] | undefined): void {
+  const handedBack = settleLiveSteers(threadId, undelivered);
+  if (!handedBack.length) return;
+  const groupId = handedBack[0]!.groupId;
+  if (groupId) {
+    const group = store.group(groupId);
+    // a room that moved to another task (or is gone) keeps the lines where
+    // they are; nobody is waiting on that thread any more
+    if (!group || group.threadId !== threadId) return;
+    dispatchGroupResponders(
+      group.id,
+      threadId,
+      handedBack.map((steer) => steer.message.text ?? "").join("\n"),
+    );
+    return;
+  }
+  const owner = store.bot(handedBack[0]!.botId);
+  if (!owner || !store.taskByThread(owner.id, threadId)) return;
+  requeueSteeredMessages(owner.id, threadId, handedBack);
+}
 
 function drainQueuedSends() {
   drainSteeredMessages(store, (botId, threadId, prompt, userMessage, excludeIds) =>
@@ -3767,7 +3796,63 @@ function startGroupTurn(groupId: string, text: string, replyTo?: Message, sendId
     sendId,
   });
   if (!group.dm) store.titleGroupTaskFromFirstMessage(group.id, text, threadId);
+  dispatchGroupResponders(groupId, threadId, text);
+  return message;
+}
 
+/** A room message for the member speaking right now — no @mention of anyone
+ * else, no @everyone — goes into that member's running turn when its engine
+ * can take it (adapter.steer). Returns the transcript line, marked steered,
+ * or null to route it as the room's next message instead. */
+async function steerIntoRoom(
+  group: GroupRecord,
+  threadId: string,
+  text: string,
+  replyTo: Message | undefined,
+  sendId: string | undefined,
+): Promise<Message | null> {
+  const speaker = group.busyBotId ? store.bot(group.busyBotId) : null;
+  if (!speaker) return null;
+  if (/(?:^|\s)@everyone\b/i.test(text)) return null;
+  const members = group.memberIds
+    .map((id) => store.bot(id))
+    .filter((member): member is NonNullable<typeof member> => Boolean(member) && !member!.hidden);
+  if (mentionedBots(text, members).some((member) => member.id !== speaker.id)) return null;
+  const instance = registry.get(speaker.modelSelection.instanceId);
+  if (!instance?.adapter.capabilities.queueing || !instance.adapter.steer) return null;
+  const userName = cfg.profile?.name?.trim() || "User";
+  // the room's model-facing transcript names every speaker; so does this
+  const prompt = promptWithReply(`${userName}: ${text}`, replyTo, userName);
+  const steerId = randomUUID();
+  const accepted = await instance.adapter.steer(threadId, prompt, { steerId }).catch(() => false);
+  if (!accepted) return null;
+  // steer() is awaited adapter work: the speaker's turn can settle, or the
+  // room switch tasks or disappear, before it answers. Never record a line
+  // into a turn that is gone; the client keeps the text to resend.
+  const current = store.group(group.id);
+  if (!current || current.threadId !== threadId || current.busyBotId !== speaker.id) {
+    throw Object.assign(new Error(t("the running turn ended before the steered message could be recorded")), {
+      status: 409,
+    });
+  }
+  const message = store.appendMessage(threadId, {
+    role: "user",
+    kind: "text",
+    text,
+    replyToId: replyTo?.id,
+    sendId,
+    steered: true,
+  });
+  recordLiveSteer(threadId, { steerId, botId: speaker.id, groupId: current.id, prompt, message });
+  return message;
+}
+
+/** Route a room message that is already in the transcript to its responders
+ * (explicit @mentions, else the room's default) and queue their turns behind
+ * whatever the room is doing now. */
+function dispatchGroupResponders(groupId: string, threadId: string, text: string): void {
+  const group = store.group(groupId);
+  if (!group) return;
   const members = group.memberIds
     .map((id) => store.bot(id))
     .filter((b): b is NonNullable<typeof b> => Boolean(b));
@@ -3809,7 +3894,7 @@ function startGroupTurn(groupId: string, text: string, replyTo?: Message, sendId
         tool: { name: unavailableMessage, ok: false },
       });
     }
-    return message;
+    return;
   }
 
   const operation = beginGroupTurnOperation(groupId, threadId, responders.map((responder) => responder.id));
@@ -3848,7 +3933,6 @@ function startGroupTurn(groupId: string, text: string, replyTo?: Message, sendId
   });
   const tracked = next.finally(() => finishGroupTurnOperation(groupId, operation));
   groupQueues.set(groupId, tracked.catch(() => {}));
-  return message;
 }
 
 function sameCalendarRoster(group: GroupRecord, botIds: readonly string[]): boolean {
@@ -6403,15 +6487,29 @@ const server = createServer(async (req, res) => {
               throw Object.assign(new Error("sendId already belongs to another message"), { status: 409 });
             }
             if (accepted.kind === "match") {
-              return { ok: true as const, threadId, message: accepted.message };
+              const canonical = { ok: true as const, threadId, message: accepted.message };
+              return accepted.message.steered ? { ...canonical, steered: true as const } : canonical;
             }
           }
-          const current = store.group(group.id);
+          let current = store.group(group.id);
           if (!current) throw Object.assign(new Error(t("no such group")), { status: 404 });
           if (current.threadId !== threadId) {
             throw Object.assign(new Error(t("the channel switched tasks before it could receive the message")), {
               status: 409,
             });
+          }
+          // a message for the member speaking right now goes into its
+          // running turn; anything else is the room's next message
+          if (current.busyBotId) {
+            const steered = await steerIntoRoom(current, threadId, text, replyTo, sendId);
+            if (steered) return { ok: true as const, steered: true as const, threadId, message: steered };
+            current = store.group(group.id);
+            if (!current) throw Object.assign(new Error(t("no such group")), { status: 404 });
+            if (current.threadId !== threadId) {
+              throw Object.assign(new Error(t("the channel switched tasks before it could receive the message")), {
+                status: 409,
+              });
+            }
           }
           const message = startGroupTurn(current.id, text, replyTo, sendId);
           return { ok: true as const, threadId, message };
@@ -7161,16 +7259,17 @@ const server = createServer(async (req, res) => {
             });
           }
 
-          // Claude can accept the message inside its live turn. If the write
-          // loses a race with turn settlement, or the engine cannot steer, the
-          // existing server-side queue records it atomically for the next turn.
+          // A steering engine takes the message inside its live turn. If the
+          // turn refuses it (stopping, or a race with settlement), or the
+          // engine cannot steer, the server-side queue records it atomically
+          // for the next turn.
           if (currentAtStart.busy) {
             const instance = engineOfThread(currentAtStart, threadId);
+            const prompt = promptWithReply(text, replyTo, cfg.profile?.name?.trim() || "User");
+            const steerId = randomUUID();
             let steered = false;
             if (instance?.adapter.capabilities.queueing && instance.adapter.steer) {
-              steered = await instance.adapter
-                .steer(threadId, promptWithReply(text, replyTo, cfg.profile?.name?.trim() || "User"))
-                .catch(() => false);
+              steered = await instance.adapter.steer(threadId, prompt, { steerId }).catch(() => false);
             }
             // steer() is awaited adapter work. The turn can settle, the task can
             // switch, or the whole bot can be deleted before its acknowledgement
@@ -7204,6 +7303,9 @@ const server = createServer(async (req, res) => {
                 sendId,
                 steered: true,
               });
+              // held until the turn settles: a turn that ends before the
+              // model saw it hands it back, and it runs next
+              recordLiveSteer(threadId, { steerId, botId: current.id, prompt, message });
               return { ok: true as const, steered: true as const, threadId, message };
             }
             if (!current.busy) {

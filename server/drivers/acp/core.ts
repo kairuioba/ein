@@ -50,6 +50,7 @@ import { augmentedPath } from "../../env-path.ts";
 // packaged server dir entirely. See server/proxy-paths.ts.
 const COMPUTER_PROXY_PATH = SPAWNED_PROXIES.computer;
 import { appendNative } from "../native.ts";
+import { steerContinuationPrompt, undeliveredField, withEarlySteers, type PendingSteer } from "../steer.ts";
 import { SPAWNED_PROXIES } from "../../proxy-paths.ts";
 
 export interface AcpConfig {
@@ -153,6 +154,7 @@ const INIT_TIMEOUT = 20_000;
 const SESSION_CONFIG_TIMEOUT = 20_000; // configureSession's per-request default
 const NEW_SESSION_TIMEOUT = 30_000;
 const LOAD_SESSION_TIMEOUT = 120_000; // history replay on a long thread is slow
+const NATIVE_STEER_TIMEOUT = 10_000; // _session/steering answers at once or not at all
 
 function decodeAcpConfig(defaultCli: string) {
   return (raw: unknown): AcpConfig => {
@@ -225,6 +227,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         interrupt: () => void;
         turnId: string;
         asks: Map<string, (behavior: string, source?: "user" | "timeout" | "system") => void>;
+        steer: (text: string, steerId?: string) => boolean;
       }
       const active = new Map<string, Turn>();
 
@@ -331,6 +334,39 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           { resolve: (v: any) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> | null }
         >();
 
+        // ── steer: user messages that arrive while this turn runs ─────────
+        // Accepted at once, never at the cost of the agent's work. An agent
+        // that advertises the `_session/steering` extension (initialize's
+        // `_meta.steering.supported`; @agentclientprotocol/claude-agent-acp
+        // 0.93.0) injects them into its running prompt itself. Any other
+        // agent gets them at the next safe boundary: no tool executing and no
+        // permission card open, we session/cancel the prompt and, when it
+        // resolves, send the messages as a new session/prompt in the same
+        // session — all inside this one turn. A message that lands before the
+        // first prompt went out simply joins it.
+        const steering = {
+          native: false,
+          /** accepted, not yet in front of the model */
+          pending: [] as PendingSteer[],
+          /** handed to _session/steering, no answer yet */
+          inFlight: new Set<PendingSteer>(),
+          /** riding the session/prompt in flight */
+          carried: [] as PendingSteer[],
+          /** a session/prompt is in flight */
+          prompting: false,
+          /** our boundary session/cancel is out; the result continues the turn */
+          cancelSent: false,
+          /** a real Stop: no more prompts, and nothing more is accepted */
+          userStop: false,
+          /** the agent said its prompt is over (promptRequired): hold the
+           * rest for the follow-up prompt instead of asking again */
+          held: false,
+          /** wakes the prompt loop once every native answer is in */
+          onIdle: null as (() => void) | null,
+        };
+        /** tool calls the agent reported and has not finished */
+        const runningTools = new Set<string>();
+
         const send = (obj: unknown) => {
           try {
             child.stdin.write(JSON.stringify(obj) + "\n");
@@ -374,8 +410,75 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           rpcPending.clear();
           active.delete(threadId);
           flushAssistantText();
-          emit({ ...base(threadId, turnId), type: "turn.completed", ok, stopReason, cost: null });
+          // accepted messages the model never got go back to the harness,
+          // which runs them next — the turn ending must not lose them
+          const undelivered = [...steering.carried, ...steering.inFlight, ...steering.pending];
+          steering.carried = [];
+          steering.inFlight.clear();
+          steering.pending = [];
+          steering.onIdle?.();
+          emit({ ...base(threadId, turnId), type: "turn.completed", ok, stopReason, cost: null, ...undeliveredField(undelivered) });
           stop(); // the agent process does not exit on its own
+        };
+
+        /** Hand one message to the agent's own steering. An agent with no
+         * prompt to inject into (`promptRequired`), or one whose extension
+         * fails, gets it at the boundary instead. */
+        const injectNative = async (item: PendingSteer) => {
+          steering.inFlight.add(item);
+          let outcome: unknown = null;
+          try {
+            const answer = await request(
+              "_session/steering",
+              {
+                sessionId,
+                prompt: [{ type: "text", text: item.text }],
+                // never let an idle agent start a turn of its own: we run the
+                // follow-up ourselves, inside this turn
+                _meta: { steering: { idleBehavior: "promptRequired" } },
+              },
+              NATIVE_STEER_TIMEOUT,
+            );
+            outcome = answer?.outcome;
+          } catch {
+            /* treated like a refusal below */
+          }
+          // settle already handed it back to the harness
+          if (!steering.inFlight.delete(item)) return;
+          if (outcome === "promptRequired") {
+            // its prompt is ending: the follow-up prompt carries this one
+            steering.held = true;
+            steering.pending.push(item);
+          } else if (outcome !== "injected" && outcome !== "startedNewTurn") {
+            // a broken extension is not retried for the rest of the turn
+            steering.native = false;
+            steering.pending.push(item);
+            pump();
+          }
+          if (!steering.inFlight.size) steering.onIdle?.();
+        };
+
+        /** Move pending messages toward the model, but only at a safe point. */
+        const pump = () => {
+          if (state.settled || steering.userStop || !steering.prompting || !steering.pending.length) return;
+          if (steering.held) return;
+          // an open permission card means a tool is mid-flight: never cut in
+          if (asks.size > 0) return;
+          if (steering.native) {
+            for (const item of steering.pending.splice(0)) void injectNative(item);
+            return;
+          }
+          // a tool is executing: its completion update calls pump() again
+          if (runningTools.size > 0 || steering.cancelSent || !sessionId) return;
+          steering.cancelSent = true;
+          send({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId } });
+        };
+
+        const steerTurn = (text: string, steerId?: string): boolean => {
+          if (state.settled || steering.userStop) return false;
+          steering.pending.push({ text, steerId });
+          pump();
+          return true;
         };
 
         // server→client permission request → canonical request.opened
@@ -398,6 +501,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             });
 
           const toolCall = params.toolCall ?? {};
+          // the tool asking runs right after the answer: a waiting steer must
+          // let it finish (its completion update clears it)
+          if (typeof toolCall.toolCallId === "string") runningTools.add(toolCall.toolCallId);
           if (config.fullAuto) {
             const allow = optionFor("allow");
             if (!allow) missing("allow");
@@ -414,6 +520,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           const finish = (behavior: string, source: "user" | "timeout" | "system" = "user") => {
             if (!asks.delete(requestId)) return;
             clearTimeout(timer);
+            // a message held back while the card was open may go now
+            queueMicrotask(pump);
             const want = behavior === "allow" ? "allow" : "reject";
             const optionId = behavior === "cancel" ? null : optionFor(want);
             if (behavior !== "cancel" && !optionId) missing(want);
@@ -473,6 +581,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             }
             case "tool_call": {
               flushAssistantText();
+              if (typeof u.toolCallId === "string" && u.status !== "completed" && u.status !== "failed") {
+                runningTools.add(u.toolCallId);
+              }
               emit({
                 ...base(threadId, turnId),
                 type: "item.started",
@@ -491,6 +602,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                   itemId: u.toolCallId,
                   ok: u.status !== "failed",
                 });
+                // a finished tool is a safe boundary for a waiting message
+                if (runningTools.delete(u.toolCallId)) pump();
+              } else if (typeof u.toolCallId === "string" && u.status === "in_progress") {
+                runningTools.add(u.toolCallId);
               }
               break;
             }
@@ -557,13 +672,16 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         });
 
         const interrupt = () => {
+          // a real Stop outranks every steer: no follow-up prompt goes out,
+          // and what never reached the model is handed back on settle
+          steering.userStop = true;
           if (sessionId) send({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId } });
           else stop();
           if (interruptTimer) clearTimeout(interruptTimer);
           interruptTimer = setTimeout(() => settle(true, "cancelled"), 5_000);
           interruptTimer.unref?.();
         };
-        active.set(threadId, { stop, interrupt, turnId, asks });
+        active.set(threadId, { stop, interrupt, turnId, asks, steer: steerTurn });
         emit({ ...base(threadId, turnId), type: "turn.started" });
 
         (async () => {
@@ -573,6 +691,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } } },
               INIT_TIMEOUT,
             );
+            // the steering extension advertises itself beside agentCapabilities
+            steering.native = init?._meta?.steering?.supported === true;
             const methods: Array<{ id?: string }> = Array.isArray(init?.authMethods) ? init.authMethods : [];
             const methodId = support.pickAuthMethod(methods);
             if (!skipSubscriptionAuthForLocalInject(turn.model)) {
@@ -668,42 +788,101 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               throw error;
             }
             emitSessionStarted();
-            state.promptSent = true;
-            const text = support.buildPromptText
-              ? support.buildPromptText(turn)
-              : turn.system
-                ? `${turn.system}\n\n${turn.text}`
-                : turn.text;
-            const result = await request("session/prompt", {
-              sessionId,
-              prompt: [{ type: "text", text }],
-            });
-            // opencode 1.18.18 reports usage at the result root; grok and
-            // gemini put it under _meta. Read both rather than lose the count.
-            const usage = result?.usage ?? result?._meta ?? {};
-            if (typeof usage.inputTokens === "number" || typeof usage.outputTokens === "number") {
-              emit({
-                ...base(threadId, turnId),
-                type: "thread.token-usage.updated",
-                input: usage.inputTokens ?? 0,
-                output: usage.outputTokens ?? 0,
-              });
+            // a Stop during setup: nothing has been asked, so nothing runs
+            if (steering.userStop) {
+              settle(true, "cancelled");
+              return;
             }
-            const reason = result?.stopReason;
-            if (reason === "end_turn") settle(true, null);
-            else if (reason === "cancelled") settle(true, "cancelled");
-            else {
-              const errorMessage = typeof result?.error === "string" && result.error
-                ? result.error
-                : typeof result?.message === "string" && result.message
-                  ? result.message
-                  : t("Model turn failed: {reason}", { reason: reason ?? t("unknown error") });
-              emit({
-                ...base(threadId, turnId),
-                type: "runtime.error",
-                message: errorMessage,
-              });
-              settle(false, reason ?? "failed");
+            state.promptSent = true;
+            // messages sent during setup (session/load included) join the
+            // first prompt — the model has not started, so nothing to continue
+            steering.carried = steering.pending.splice(0);
+            const firstTurn = steering.carried.length
+              ? { ...turn, text: withEarlySteers(turn.text, steering.carried) }
+              : turn;
+            let text = support.buildPromptText
+              ? support.buildPromptText(firstTurn)
+              : firstTurn.system
+                ? `${firstTurn.system}\n\n${firstTurn.text}`
+                : firstTurn.text;
+            const used = { input: 0, output: 0 };
+            for (;;) {
+              steering.prompting = true;
+              steering.held = false;
+              let result: any = null;
+              let failure: unknown = null;
+              try {
+                result = await request("session/prompt", {
+                  sessionId,
+                  prompt: [{ type: "text", text }],
+                });
+              } catch (error) {
+                failure = error ?? new Error("session/prompt failed");
+              }
+              steering.prompting = false;
+              runningTools.clear();
+              // a native steer still in flight decides whether this prompt
+              // was the last one: wait for its answer (bounded by its timeout)
+              if (steering.inFlight.size && !state.settled) {
+                await new Promise<void>((resolve) => {
+                  steering.onIdle = resolve;
+                });
+                steering.onIdle = null;
+              }
+              if (state.settled) return;
+              const ourCancel = steering.cancelSent;
+              steering.cancelSent = false;
+              const reason = result?.stopReason;
+              // continue in this same turn when messages are waiting and the
+              // prompt ended cleanly — on its own, or by our boundary cancel
+              // (an agent may answer that cancel with an error instead)
+              const continueWithSteers =
+                !steering.userStop &&
+                steering.pending.length > 0 &&
+                (failure ? ourCancel : reason === "end_turn" || reason === "cancelled");
+              if (failure && !continueWithSteers) {
+                // the prompt that carried them never ran: hand them back
+                steering.pending.unshift(...steering.carried);
+                steering.carried = [];
+                throw failure;
+              }
+              steering.carried = [];
+              // opencode 1.18.18 reports usage at the result root; grok and
+              // gemini put it under _meta. Read both rather than lose the count.
+              // A steered turn spans several prompts: report the running sum.
+              const usage = result?.usage ?? result?._meta ?? {};
+              if (typeof usage.inputTokens === "number" || typeof usage.outputTokens === "number") {
+                used.input += usage.inputTokens ?? 0;
+                used.output += usage.outputTokens ?? 0;
+                emit({
+                  ...base(threadId, turnId),
+                  type: "thread.token-usage.updated",
+                  input: used.input,
+                  output: used.output,
+                });
+              }
+              if (continueWithSteers) {
+                flushAssistantText();
+                steering.carried = steering.pending.splice(0);
+                text = steerContinuationPrompt(steering.carried);
+                continue;
+              }
+              if (reason === "end_turn") settle(true, null);
+              else if (reason === "cancelled") settle(true, "cancelled");
+              else {
+                const errorMessage = typeof result?.error === "string" && result.error
+                  ? result.error
+                  : typeof result?.message === "string" && result.message
+                    ? result.message
+                    : t("Model turn failed: {reason}", { reason: reason ?? t("unknown error") });
+                emit({
+                  ...base(threadId, turnId),
+                  type: "runtime.error",
+                  message: errorMessage,
+                });
+                settle(false, reason ?? "failed");
+              }
+              return;
             }
           } catch (e) {
             if (!state.settled) {
@@ -760,8 +939,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             images: support.images !== false,
             effortLevels: support.effortLevels,
             localComputerMcp: !config.fullAuto,
+            // natively where the agent advertises _session/steering,
+            // otherwise at the next safe boundary inside the same turn
+            queueing: true,
           },
           sendTurn,
+          steer: async (threadId, text, options) => active.get(threadId)?.steer(text, options?.steerId) ?? false,
           interruptTurn: async (threadId) => active.get(threadId)?.interrupt(),
           respondToRequest: async (threadId, requestId, decision) => {
             const turn = active.get(threadId);

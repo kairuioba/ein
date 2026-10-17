@@ -3,14 +3,16 @@
 // Unit: the steer-queue module against a fake store — queue bookkeeping,
 // the drain-once property, and the joined single-prompt shape.
 //
-// e2e: the real harness server with the grokAgent driver on the fake ACP
-// CLI in echo-gated mode, whose turns stay open until a gate file exists —
-// a deterministic busy window. The echo reply carries the FULL prompt
-// (system + turn text), which pins both what a drained turn was sent (the
-// queued texts joined with newlines, in ONE turn) and what it was not (the
-// webhook untrusted-data paragraph an attended turn must never get).
+// e2e: the real harness server with the codex driver on the fake app-server
+// in echo-gated mode — an app-server that names no turn, so it cannot be
+// steered and busy sends fall back to this queue — whose turns stay open
+// until a gate file exists: a deterministic busy window. The echo reply
+// carries the FULL prompt (system + turn text), which pins both what a
+// drained turn was sent (the queued texts joined with newlines, in ONE turn)
+// and what it was not (the webhook untrusted-data paragraph an attended turn
+// must never get).
 import { spawn, type ChildProcess } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,7 +29,7 @@ import {
 import type { BotRecord, Message } from "./store.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
-const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
+const FAKE_CLI = join(SERVER_DIR, "testing", "fake-codex-app-server.ts");
 const PORT = 18800 + Math.floor(Math.random() * 10_000);
 const BASE = `http://127.0.0.1:${PORT}`;
 
@@ -211,14 +213,13 @@ describe("steer-queue module", () => {
 
 });
 
-// ── e2e: the real server on the gated fake ACP fleet ───────────────────
-describe("steer-queue e2e (fake ACP fleet)", () => {
+// ── e2e: the real server on a gated, unsteerable fake codex ────────────
+describe("steer-queue e2e (fake codex that cannot steer)", () => {
   let child: ChildProcess;
   let home: string;
   let stderr = "";
   let drainGate: string;
   let stopGate: string;
-  let stopRpcDump: string;
 
   /** the flat command payloads these tests POST/PATCH */
   type ApiBody = Record<string, string | boolean | { instanceId: string; model: string }>;
@@ -260,26 +261,18 @@ describe("steer-queue e2e (fake ACP fleet)", () => {
     mkdirSync(join(home, "gates"), { recursive: true });
     drainGate = join(home, "gates", "drain.gate");
     stopGate = join(home, "gates", "stop.gate");
-    stopRpcDump = join(home, "gates", "stop.rpc");
     writeFileSync(
       join(home, ".ein", "config.json"),
       JSON.stringify({
         instances: {
           steer: {
-            driver: "grokAgent",
-            environment: { FAKE_ACP_MODE: "echo-gated", FAKE_ACP_GATE_FILE: drainGate },
+            driver: "codex",
+            environment: { FAKE_CODEX_MODE: "echo-gated", FAKE_CODEX_GATE_FILE: drainGate },
             config: { cli: FAKE_CLI, fullAuto: true },
           },
-          // the RPC dump lets the interrupt test wait for session/prompt to
-          // be in flight — interrupting earlier would be a no-op on a turn
-          // the driver has not registered yet
           steerStop: {
-            driver: "grokAgent",
-            environment: {
-              FAKE_ACP_MODE: "echo-gated",
-              FAKE_ACP_GATE_FILE: stopGate,
-              FAKE_ACP_RPC_DUMP: stopRpcDump,
-            },
+            driver: "codex",
+            environment: { FAKE_CODEX_MODE: "echo-gated", FAKE_CODEX_GATE_FILE: stopGate },
             config: { cli: FAKE_CLI, fullAuto: true },
           },
         },
@@ -336,6 +329,9 @@ describe("steer-queue e2e (fake ACP fleet)", () => {
       expect(first.status).toBe(202);
       expect(first.body.queued).toBeUndefined();
       expect((await botById(bot.id)).busy).toBe(true);
+      // in flight (its tool chip): this app-server named no turn, so it
+      // cannot take a message now — sends fall back to the queue
+      await until(async () => (await botById(bot.id)).messages.some((m: any) => m.kind === "activity"), "the parked turn");
 
       // sends while busy stay off the transcript so they cannot become the leaf
       const second = await api("POST", `/api/bots/${bot.id}/messages`, { text: "steer two" });
@@ -394,23 +390,19 @@ describe("steer-queue e2e (fake ACP fleet)", () => {
       const first = await api("POST", `/api/bots/${bot.id}/messages`, { text: "long job" });
       expect(first.status).toBe(202);
       expect((await botById(bot.id)).busy).toBe(true);
+      // wait for the turn to be genuinely in flight (its tool chip) — before
+      // that a send would ride along with the turn's start, and an
+      // interrupt would be a no-op on a turn the driver has not registered
+      await until(async () => (await botById(bot.id)).messages.some((m: any) => m.kind === "activity"), "the parked turn");
 
       const queued = await api("POST", `/api/bots/${bot.id}/messages`, { text: "after stop please" });
       expect(queued.body.queued).toBe(true);
 
-      // wait for the prompt to be genuinely in flight before stopping it
-      await until(async () => {
-        try {
-          return readFileSync(stopRpcDump, "utf8").includes("session/prompt");
-        } catch {
-          return false;
-        }
-      }, "the hung prompt");
       expect((await api("POST", `/api/bots/${bot.id}/interrupt`)).status).toBe(200);
 
-      // the interrupt settles the hung turn (ACP cancel grace), and the
-      // drain consumes the queue: its message loses the queued flag while
-      // the steered turn waits on the still-missing gate
+      // the interrupt settles the parked turn, and the drain consumes the
+      // queue: its message loses the queued flag while the queued turn
+      // waits on the still-missing gate
       await until(async () => {
         const snapshot = await botById(bot.id);
         const message = snapshot.messages.find((m: any) => m.text === "after stop please");

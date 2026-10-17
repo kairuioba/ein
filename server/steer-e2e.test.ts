@@ -16,6 +16,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLAUDE = join(SERVER_DIR, "testing", "fake-claude-cli.ts");
 const FAKE_ACP = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
+const FAKE_CODEX = join(SERVER_DIR, "testing", "fake-codex-app-server.ts");
 const PORT = 18800 + Math.floor(Math.random() * 10_000);
 const BASE = `http://127.0.0.1:${PORT}`;
 const posixOnly = describe.skipIf(process.platform === "win32");
@@ -46,6 +47,7 @@ posixOnly("mid-turn steering e2e", () => {
   beforeAll(async () => {
     chmodSync(FAKE_CLAUDE, 0o755);
     chmodSync(FAKE_ACP, 0o755);
+    chmodSync(FAKE_CODEX, 0o755);
     home = mkdtempSync(join(tmpdir(), "omb-steer-"));
     mkdirSync(join(home, ".ein"), { recursive: true });
     steerGate = join(home, "delayed-steer.gate");
@@ -59,8 +61,9 @@ posixOnly("mid-turn steering e2e", () => {
             environment: { FAKE_CLAUDE_MODE: "slow", FAKE_CLAUDE_STEER_GATE: steerGate },
             config: { cli: FAKE_CLAUDE, permissionMode: "bypassPermissions" },
           },
-          // no live session: a message while busy uses the server-side queue
-          acp: { driver: "grokAgent", environment: { FAKE_ACP_MODE: "hang" }, config: { cli: FAKE_ACP, fullAuto: true } },
+          // an app-server that names no turn cannot be steered: a message
+          // while busy uses the server-side queue (approval mode parks it)
+          codexOld: { driver: "codex", environment: { FAKE_CODEX_MODE: "approval" }, config: { cli: FAKE_CODEX, fullAuto: false } },
         },
       }),
     );
@@ -163,11 +166,15 @@ posixOnly("mid-turn steering e2e", () => {
     expect(rejected.body.error).toMatch(/no such bot/i);
   }, 40_000);
 
-  it("an engine without a live session preserves the message in the server-side queue", async () => {
+  it("an engine that cannot steer this turn preserves the message in the server-side queue", async () => {
     const created = (await api("POST", "/api/bots")).body.bot;
-    await api("PATCH", `/api/bots/${created.id}`, { modelSelection: { instanceId: "acp", model: "fake-model" } });
+    await api("PATCH", `/api/bots/${created.id}`, { modelSelection: { instanceId: "codexOld", model: "fake-model" } });
     expect((await api("POST", `/api/bots/${created.id}/messages`, { text: "first" })).status).toBe(202);
-    await waitFor(async () => (await getBot(created.id)).busy === true, "the hung turn to start");
+    await waitFor(async () => (await getBot(created.id)).busy === true, "the parked turn to start");
+    await waitFor(
+      async () => (await getBot(created.id)).messages.some((m: any) => m.card?.requestId),
+      "the approval card",
+    );
     const queued = await api("POST", `/api/bots/${created.id}/messages`, { text: "second" });
     expect(queued.status).toBe(202);
     expect(queued.body.queued).toBe(true);

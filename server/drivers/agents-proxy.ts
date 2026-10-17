@@ -294,7 +294,22 @@ const TOOLS = [
               },
               difficulty: { type: "integer", minimum: 1, maximum: 5, description: "1 = trivial … 5 = hardest; used to pick the model." },
               depends_on: { type: "array", items: { type: "string" }, description: "Ids of subtasks whose results this one needs first." },
-              acceptance: { type: "string", description: "Optional: how to tell the subtask is done well." },
+              acceptance: {
+                type: "string",
+                description: "How a reviewer tells the subtask is done well: falsifiable criteria, no 'works well'.",
+              },
+              boundaries: {
+                type: "string",
+                description: "What is explicitly out of scope, or what must not be touched (files, systems, decisions).",
+              },
+              deliverable: {
+                type: "string",
+                description: "The exact output the worker must hand back (format, length, file location, recipients).",
+              },
+              reviewer: {
+                type: "string",
+                description: "Who verifies this result: you by name, a teammate from list_bots, or the user.",
+              },
               assignee: { type: "string", description: "Optional: a teammate's name or id from list_bots, to force who does it." },
             },
             required: ["title", "brief"],

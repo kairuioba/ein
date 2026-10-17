@@ -266,7 +266,10 @@ function ReportCard({ model, report, open, onToggle, actions }: { model: Workben
   const fields: Array<[string, ReactNode]> = [[t("What was done"), subtask.title]];
   if (subtask.result) fields.push([t("Result and evidence"), <span className="line-clamp-4 whitespace-pre-wrap">{subtask.result}</span>]);
   if (subtask.error) fields.push([t("Blocker"), <span className="font-semibold text-warning">{subtask.error}</span>]);
+  if (subtask.deliverable) fields.push([t("Deliverable"), subtask.deliverable]);
+  if (subtask.boundaries) fields.push([t("Out of scope"), subtask.boundaries]);
   if (subtask.acceptance) fields.push([t("Acceptance"), subtask.acceptance]);
+  if (subtask.reviewer) fields.push([t("Reviewer"), subtask.reviewer]);
   if (subtask.dependsOn.length) {
     const titles = subtask.dependsOn.map((id) => report.run.subtasks.find((entry) => entry.id === id)?.title ?? id);
     fields.push([t("Depends on"), titles.join(t(", "))]);

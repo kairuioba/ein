@@ -185,6 +185,9 @@ export interface ValidPlanSubtask {
   difficulty?: number;
   dependsOn: string[];
   acceptance?: string;
+  boundaries?: string;
+  deliverable?: string;
+  reviewer?: string;
   assignee?: string;
 }
 
@@ -230,6 +233,12 @@ export function validatePlan(input: PlanInput, maxSubtasks: number): { goal: str
     if (Number.isFinite(difficulty)) subtask.difficulty = Math.min(5, Math.max(1, Math.round(difficulty)));
     const acceptance = text(item.acceptance, 1_000);
     if (acceptance) subtask.acceptance = acceptance;
+    const boundaries = text(item.boundaries, 1_000);
+    if (boundaries) subtask.boundaries = boundaries;
+    const deliverable = text(item.deliverable, 600);
+    if (deliverable) subtask.deliverable = deliverable;
+    const reviewer = text(item.reviewer, 120);
+    if (reviewer) subtask.reviewer = reviewer;
     const assignee = text(item.assignee ?? item.bot_id ?? item.botId, 80);
     if (assignee) subtask.assignee = assignee;
     subtasks.push(subtask);
@@ -728,6 +737,10 @@ export class Dispatcher {
             }
           : {}),
         ...(item.acceptance ? { acceptance: item.acceptance } : {}),
+        ...(item.boundaries ? { boundaries: item.boundaries } : {}),
+        ...(item.deliverable ? { deliverable: item.deliverable } : {}),
+        // every subtask has someone who verifies it: the plan's chief by default
+        reviewer: item.reviewer ?? chief.name,
         assigneeBotId: assignee.id,
         ...(created.some((bot) => bot.id === assignee!.id) ? { createdBot: true } : {}),
         status: "pending",
@@ -1675,6 +1688,7 @@ export class Dispatcher {
     return [
       `[Ein dispatch finished] Every subtask of your plan "${run.goal}" has settled. Their results follow.`,
       "Write the user one consolidated answer: what was done, the key outputs merged into a single coherent deliverable, and anything that failed or needs the user's decision. Do not dispatch or delegate again in this turn.",
+      "For every subtask, state whether it met its acceptance criteria (quote the criterion) and who reviews it. Cite what the worker actually delivered; never claim work, numbers or files that are not in the results below. If a criterion was not met or needs a decision, say so explicitly.",
       "",
       ...lines,
     ].join("\n");
@@ -1717,7 +1731,11 @@ function workerPrompt(run: DispatchRun, subtask: DispatchSubtask, context: { chi
     `Your subtask: ${subtask.title}`,
     "",
     subtask.brief,
-    subtask.acceptance ? `\nAcceptance criteria: ${subtask.acceptance}` : "",
+    subtask.deliverable ? `\nDeliverable: ${subtask.deliverable}` : "",
+    subtask.boundaries ? `\nOut of scope / do not touch: ${subtask.boundaries}` : "",
+    subtask.acceptance ? `\nAcceptance criteria (checked by ${subtask.reviewer ?? chiefName}): ${subtask.acceptance}` : "",
+    subtask.acceptance ? "" : "",
+    subtask.reviewer ? `\nReviewer: ${subtask.reviewer}` : "",
     deps.length ? "\nResults from earlier subtasks you build on:" : "",
     ...deps.map((dep) => `\n### ${dep.title}\n${clip(dep.result ?? "", RESULT_CONTEXT_CHARS)}`),
     ...(squad

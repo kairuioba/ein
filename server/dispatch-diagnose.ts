@@ -528,7 +528,13 @@ export function diagnoseRun(run: DispatchRun, ctx: DiagnoseContext): DispatchDia
         moved: moves.has(subtask.id),
       }));
 
-  const refuse = (reason: string): DispatchDiagnosis => ({ ...base, verdict: "add-wont-help", reason, remaining: listRemaining(new Map()) });
+  const refuse = (reason: string, extra?: { departmentWork?: boolean }): DispatchDiagnosis => ({
+    ...base,
+    verdict: "add-wont-help",
+    reason,
+    remaining: listRemaining(new Map()),
+    ...extra,
+  });
   if (run.status !== "running" && run.status !== "awaiting-approval") return refuse(t("This run is no longer in progress."));
   if (!pending.length) return refuse(t("Nothing is left to hand out: everything is running or done."));
   if (!rateLimit.ok) return refuse(t("An engine is rate limiting this work; more people would only hit the limit harder. Wait a few minutes or switch engines."));
@@ -538,7 +544,16 @@ export function diagnoseRun(run: DispatchRun, ctx: DiagnoseContext): DispatchDia
 
   // a department lead's share of the 主 Bot's plan is staffed by that lead
   const takeable = ready.filter((subtask) => !ctx.keep?.(subtask));
-  if (!takeable.length) return refuse(t("What is left is departments' own work, which their leads staff: ask a lead to add people to its team."));
+  if (!takeable.length) {
+    // the company plan has nothing of its own left; what remains is a
+    // department's plan. The owner can still add people to it from the
+    // workbench (Dispatcher.amendFromWorkbench), so say that instead of
+    // sending them to the department lead.
+    return refuse(
+      t("What is left belongs to a department's own plan: adding people here joins that plan, and its lead fits them in."),
+      { departmentWork: ready.length > 0 },
+    );
+  }
 
   // how many: never more than the independent work there is to take, one
   // squad (span) at a time, and only as many bots as the workspace holds

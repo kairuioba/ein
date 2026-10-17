@@ -38,7 +38,7 @@ const PACK_LABEL: Record<PackId, { label: string; icon: ReactNode }> = {
 };
 
 /** A diagnosis from an older server may lack the add-people sheet's extras. */
-type Diagnosis = RunDiagnosis & Partial<Pick<DispatchDiagnosis, "at" | "speedPerHour">> & {
+type Diagnosis = RunDiagnosis & Partial<Pick<DispatchDiagnosis, "at" | "speedPerHour" | "departmentWork">> & {
   remaining: Array<RunDiagnosis["remaining"][number] & { assigneeBotId?: string; squad?: string; moved?: boolean }>;
   suggestion?: NonNullable<RunDiagnosis["suggestion"]> & Partial<Pick<NonNullable<DispatchDiagnosis["suggestion"]>, "linesUngrouped" | "people" | "pack" | "concurrency">>;
 };
@@ -173,6 +173,16 @@ export function AddPeopleDialog({
               {t("Add {count} as suggested", { count: suggestion.add })}
             </Button>
           </>
+        ) : phase.kind === "ready" && phase.diagnosis.departmentWork ? (
+          <>
+            <Button size="lg" disabled={busy !== null} onClick={() => void add(1)}>
+              {busy === 1 && <Loader2 size={14} className="animate-spin" />}
+              {t("Add 1 to the department's plan")}
+            </Button>
+            <Button variant="soft" size="lg" onClick={onClose}>
+              {t("Got it")}
+            </Button>
+          </>
         ) : phase.kind === "ready" ? (
           <>
             <Button variant="soft" size="lg" disabled={busy !== null} onClick={() => void add(1)}>
@@ -213,15 +223,25 @@ const CheckIcon = ({ ok }: { ok: boolean }) =>
 
 function DiagnosisView({ diagnosis, packOpen, onTogglePack }: { diagnosis: Diagnosis; packOpen: boolean; onTogglePack: () => void }) {
   const helps = diagnosis.verdict === "add-helps";
+  const department = diagnosis.departmentWork === true;
   const suggestion = diagnosis.suggestion;
   return (
     <>
       <div>
         <div className="mb-1 flex h-6 items-center gap-2 text-[12.5px] font-semibold text-ink-secondary">
           {t("First, where is it slow?")}
-          <span className={cn("ml-auto inline-flex h-[22px] items-center gap-1 rounded-full px-[9px] text-[12px] font-semibold whitespace-nowrap", helps ? "bg-success/12 text-success" : "bg-warning/12 text-warning")}>
-            {helps ? <Check size={12} strokeWidth={2.6} /> : <X size={12} strokeWidth={2.6} />}
-            {helps ? t("Short of hands — adding people helps") : t("Adding people won't help")}
+          <span
+            className={cn(
+              "ml-auto inline-flex h-[22px] items-center gap-1 rounded-full px-[9px] text-[12px] font-semibold whitespace-nowrap",
+              helps ? "bg-success/12 text-success" : department ? "bg-accent-text/12 text-accent-text" : "bg-warning/12 text-warning",
+            )}
+          >
+            {helps ? <Check size={12} strokeWidth={2.6} /> : department ? <Users size={12} strokeWidth={2.6} /> : <X size={12} strokeWidth={2.6} />}
+            {helps
+              ? t("Short of hands — adding people helps")
+              : department
+                ? t("A department's own plan")
+                : t("Adding people won't help")}
           </span>
         </div>
         {diagnosis.checks.map((check) => (
@@ -235,8 +255,16 @@ function DiagnosisView({ diagnosis, packOpen, onTogglePack }: { diagnosis: Diagn
         ))}
       </div>
       {!helps && (
-        <div className="rounded-[14px] bg-warning/[0.08] px-4 py-3 text-[13px] leading-relaxed text-ink shadow-[inset_0_0_0_1px_color-mix(in_srgb,#F59E0B_35%,transparent)]">
-          <b className="text-warning">{t("Why not")}</b> · {diagnosis.reason ?? t("The bottleneck is not the number of people.")}
+        <div
+          className={cn(
+            "rounded-[14px] px-4 py-3 text-[13px] leading-relaxed text-ink",
+            department ? "bg-accent-text/[0.07]" : "bg-warning/[0.08]",
+          )}
+          style={{ boxShadow: `inset 0 0 0 1px color-mix(in srgb, ${department ? "#3B82F6" : "#F59E0B"} 35%, transparent)` }}
+        >
+          <b className={department ? "text-accent-text" : "text-warning"}>{department ? t("Where to add") : t("Why not")}</b>
+          {" · "}
+          {diagnosis.reason ?? t("The bottleneck is not the number of people.")}
         </div>
       )}
       {helps && suggestion && <Suggestion diagnosis={diagnosis} suggestion={suggestion} packOpen={packOpen} onTogglePack={onTogglePack} />}

@@ -63,6 +63,8 @@ export {
 } from "../shared/dispatch-types.ts";
 import type {
   DispatchAmendResult,
+  DispatchCharter,
+  DispatchCheckpoint,
   DispatchDiagnosis,
   DispatchRoute,
   DispatchRun,
@@ -76,6 +78,8 @@ import type {
 /** What the planner sends, before validation. */
 export interface PlanInput {
   goal?: unknown;
+  /** long-horizon constitution: success criteria, non-goals, constraints */
+  charter?: unknown;
   subtasks?: unknown;
 }
 
@@ -193,7 +197,7 @@ export interface ValidPlanSubtask {
 
 /** Normalize and validate a plan. Errors are written for the planning model:
  * each says exactly what to send instead. */
-export function validatePlan(input: PlanInput, maxSubtasks: number): { goal: string; subtasks: ValidPlanSubtask[] } | { error: string } {
+export function validatePlan(input: PlanInput, maxSubtasks: number): { goal: string; subtasks: ValidPlanSubtask[]; charter?: DispatchCharter } | { error: string } {
   const goal = text(input.goal, 2_000);
   if (!goal) return { error: "submit_plan needs `goal`: one sentence describing the overall outcome." };
   let raw = input.subtasks;
@@ -243,6 +247,23 @@ export function validatePlan(input: PlanInput, maxSubtasks: number): { goal: str
     if (assignee) subtask.assignee = assignee;
     subtasks.push(subtask);
   }
+  // The long-horizon charter. All fields are optional: a small plan needs no
+  // constitution, but a week-long one is told to keep these in every prompt.
+  const charter: DispatchCharter = {};
+  const rawCharter = input.charter;
+  if (rawCharter && typeof rawCharter === "object" && !Array.isArray(rawCharter)) {
+    const c = rawCharter as Record<string, unknown>;
+    const successCriteria = text(c.success_criteria ?? c.successCriteria, 1_500);
+    const nonGoals = text(c.non_goals ?? c.nonGoals, 1_500);
+    const constraints = text(c.constraints, 1_500);
+    const deadline = text(c.deadline, 120);
+    const budget = Number(c.budget_cny ?? c.budgetCny);
+    if (successCriteria) charter.successCriteria = successCriteria;
+    if (nonGoals) charter.nonGoals = nonGoals;
+    if (constraints) charter.constraints = constraints;
+    if (deadline) charter.deadline = deadline;
+    if (Number.isFinite(budget) && budget > 0) charter.budgetCny = budget;
+  }
   for (const subtask of subtasks) {
     for (const dep of subtask.dependsOn) {
       if (!ids.has(dep)) return { error: `Subtask "${subtask.id}" depends on unknown id "${dep}".` };
@@ -251,7 +272,7 @@ export function validatePlan(input: PlanInput, maxSubtasks: number): { goal: str
   }
   const cycle = findCycle(subtasks);
   if (cycle) return { error: `The dependencies form a cycle (${cycle.join(" → ")}). Remove one dependency and submit again.` };
-  return { goal, subtasks };
+  return { goal, subtasks, ...(charter ? { charter } : {}) };
 }
 
 /** Return one dependency cycle as a list of ids, or null for a DAG. */
@@ -865,6 +886,7 @@ export class Dispatcher {
       chiefBotId: chiefId,
       sourceThreadId,
       goal: plan.goal,
+      ...(plan.charter ? { charter: plan.charter } : {}),
       policy,
       status: settings.requireApproval ? "awaiting-approval" : "running",
       subtasks,
@@ -1429,6 +1451,27 @@ export class Dispatcher {
 
   /** Close a run: record when, dissolve its squads, and hand a department's
    * outcome back to the subtask it was doing. */
+  /** Owner or supervisor checkpoint: a durable note that every following
+   * planning/synthesis turn sees, so a long run's state survives turns,
+   * restarts and engine switches. */
+  checkpoint(runId: string, input: { note?: unknown; nextStep?: unknown; by?: unknown }): DispatchRun | { error: string } {
+    const run = this.get(runId);
+    if (!run) return { error: t("No such dispatch run") };
+    const note = typeof input.note === "string" ? input.note.trim().slice(0, 2_000) : "";
+    if (!note) return { error: t("a checkpoint needs a note") };
+    const nextStep = typeof input.nextStep === "string" ? input.nextStep.trim().slice(0, 1_000) : "";
+    const by = typeof input.by === "string" ? input.by.trim().slice(0, 80) : "";
+    const entry: DispatchCheckpoint = {
+      at: Date.now(),
+      note,
+      ...(nextStep ? { nextStep } : {}),
+      ...(by ? { by } : {}),
+    };
+    run.checkpoints = [...(run.checkpoints ?? []), entry].slice(-100);
+    this.touch(run);
+    return run;
+  }
+
   private finishRun(run: DispatchRun, status: "done" | "failed" | "canceled"): void {
     const now = Date.now();
     run.status = status;
@@ -1780,10 +1823,19 @@ export class Dispatcher {
         ...lines,
       ].join("\n");
     }
+    const charterLines = [
+      ...(run.charter?.successCriteria ? [`Success criteria: ${run.charter.successCriteria}`] : []),
+      ...(run.charter?.nonGoals ? [`Non-goals (must not have happened): ${run.charter.nonGoals}`] : []),
+      ...(run.charter?.constraints ? [`Constraints: ${run.charter.constraints}`] : []),
+      ...(run.charter?.deadline ? [`Deadline: ${run.charter.deadline}`] : []),
+      ...(run.checkpoints?.length ? [`Latest checkpoint: ${run.checkpoints[run.checkpoints.length - 1]!.note}`] : []),
+    ];
     return [
       `[Ein dispatch finished] Every subtask of your plan "${run.goal}" has settled. Their results follow.`,
+      ...(charterLines.length ? ["The plan's charter:", ...charterLines] : []),
       "Write the user one consolidated answer: what was done, the key outputs merged into a single coherent deliverable, and anything that failed or needs the user's decision. Do not dispatch or delegate again in this turn.",
       "For every subtask, state whether it met its acceptance criteria (quote the criterion) and who reviews it. Cite what the worker actually delivered; never claim work, numbers or files that are not in the results below. If a criterion was not met or needs a decision, say so explicitly.",
+      "Finally, check the whole run against the charter: say whether it stayed inside the non-goals and constraints, and whether the deadline and budget are at risk. If something drifted, say what and what you propose.",
       "",
       ...lines,
     ].join("\n");
@@ -1823,6 +1875,10 @@ function workerPrompt(run: DispatchRun, subtask: DispatchSubtask, context: { chi
     header,
     "",
     `Overall goal: ${run.goal}`,
+    ...(run.charter?.successCriteria ? [`Success criteria: ${run.charter.successCriteria}`] : []),
+    ...(run.charter?.nonGoals ? [`Do NOT do (non-goals): ${run.charter.nonGoals}`] : []),
+    ...(run.charter?.constraints ? [`Constraints: ${run.charter.constraints}`] : []),
+    ...(run.charter?.deadline ? [`Deadline: ${run.charter.deadline}`] : []),
     `Your subtask: ${subtask.title}`,
     "",
     subtask.brief,

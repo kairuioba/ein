@@ -164,6 +164,7 @@ describe("plan validation", () => {
     const plan = validatePlan(
       {
         goal: "Launch kit",
+        charter: { success_criteria: "kit ships", non_goals: "no price change", constraints: "two weeks", deadline: "Friday", budget_cny: 500 },
         subtasks: [
           {
             id: "research",
@@ -196,6 +197,13 @@ describe("plan validation", () => {
       reviewer: "总控",
     });
     expect(plan.subtasks[1]).toMatchObject({ id: "copy", role: "Write copy", dependsOn: ["research"] });
+    expect(plan.charter).toEqual({
+      successCriteria: "kit ships",
+      nonGoals: "no price change",
+      constraints: "two weeks",
+      deadline: "Friday",
+      budgetCny: 500,
+    });
   });
 
   it("explains what to fix", () => {
@@ -344,6 +352,34 @@ describe("Dispatcher", () => {
     expect(prompt).toContain("Out of scope / do not touch: 不改产品名，不承诺价格");
     expect(prompt).toContain("Acceptance criteria (checked by Ops)");
     expect(prompt).toContain("Reviewer: Ops");
+  });
+
+  it("keeps a charter and injects it into every worker, and stores checkpoints", async () => {
+    const result = dispatcher.submitPlan("chief", "chief-thread", {
+      goal: "一周的发布会筹备",
+      charter: {
+        success_criteria: "发布会按期上线",
+        non_goals: "不改产品名、不对外发物料",
+        constraints: "预算 500 元，只做文本",
+        deadline: "下周五",
+        budget_cny: 500,
+      },
+      subtasks: [{ id: "a", title: "文案", brief: "写文案", role: "文案策划" }],
+    });
+    expect("error" in result).toBe(false);
+    if ("error" in result) return;
+    expect(result.run.charter).toMatchObject({ nonGoals: "不改产品名、不对外发物料", budgetCny: 500 });
+    await flush();
+    const prompt = host.turns.find((turn) => turn.text.includes("Your subtask:"))?.text ?? "";
+    expect(prompt).toContain("Success criteria: 发布会按期上线");
+    expect(prompt).toContain("Do NOT do (non-goals): 不改产品名、不对外发物料");
+    expect(prompt).toContain("Constraints: 预算 500 元，只做文本");
+    expect(prompt).toContain("Deadline: 下周五");
+    const checkpoint = dispatcher.checkpoint(result.run.id, { note: "已完成文案初稿", nextStep: "进入验收", by: "owner" });
+    expect("error" in checkpoint).toBe(false);
+    if ("error" in checkpoint) return;
+    expect(checkpoint.checkpoints).toMatchObject([{ note: "已完成文案初稿", nextStep: "进入验收", by: "owner" }]);
+    expect(dispatcher.checkpoint(result.run.id, { note: "  " })).toMatchObject({ error: expect.stringContaining("note") });
   });
 
   it("records a retrospective when a run settles", async () => {

@@ -274,6 +274,17 @@ const TOOLS = [
       type: "object",
       properties: {
         goal: { type: "string", description: "One sentence: the overall outcome the user wants." },
+        charter: {
+          type: "object",
+          description: "The plan's constitution, especially for long or high-stakes jobs. Every worker and the final report see it; non_goals are what keep a week-long run from drifting.",
+          properties: {
+            success_criteria: { type: "string", description: "How the whole job will be judged as done." },
+            non_goals: { type: "string", description: "What must NOT happen or be touched (scope guards, forbidden edits, things to ignore)." },
+            constraints: { type: "string", description: "Time, budget, tools, tone, compliance and other hard limits." },
+            deadline: { type: "string", description: "When it must be finished, if the user gave one." },
+            budget_cny: { type: "number", description: "Maximum spend in CNY, if the user gave one." },
+          },
+        },
         subtasks: {
           type: "array",
           description: `The plan: 1 to ${DISPATCH_MAX_SUBTASKS} subtasks. A specialist sees only its own brief plus the results of the subtasks it depends on — never this conversation.`,
@@ -652,7 +663,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
   if (name === "submit_plan") {
     const r = await api(`/api/internal/dispatch/plan`, {
       method: "POST",
-      body: JSON.stringify({ fromBotId: BOT_ID, fromThreadId: THREAD_ID, goal: args.goal, subtasks: args.subtasks }),
+      body: JSON.stringify({ fromBotId: BOT_ID, fromThreadId: THREAD_ID, goal: args.goal, ...(args.charter ? { charter: args.charter } : {}), subtasks: args.subtasks }),
     });
     if (r.error) return { text: `The plan was not accepted: ${r.error}`, isError: true };
     const assignments = Array.isArray(r.assignments) ? (r.assignments as Array<Json>) : [];

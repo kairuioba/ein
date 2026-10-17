@@ -72,6 +72,26 @@ export function dispatchSettings(raw: Partial<DispatchSettings> | undefined): Di
 export type SubtaskStatus = "pending" | "running" | "done" | "failed" | "skipped" | "canceled";
 export type RunStatus = "awaiting-approval" | "running" | "synthesizing" | "done" | "failed" | "canceled";
 
+/** The long-horizon plan's constitution: what success means and, above all,
+ * what must NOT happen. Injected into every worker and the synthesis turn so a
+ * week-long job never drifts. */
+export interface DispatchCharter {
+  successCriteria?: string;
+  nonGoals?: string;
+  constraints?: string;
+  deadline?: string;
+  budgetCny?: number;
+}
+
+/** A checkpoint note from the owner or the supervisor: where the run stands
+ * and what happens next. Fed into every following planning/synthesis turn. */
+export interface DispatchCheckpoint {
+  at: number;
+  note: string;
+  nextStep?: string;
+  by?: string;
+}
+
 export interface DispatchSubtask {
   id: string;
   title: string;
@@ -167,6 +187,10 @@ export interface DispatchRun {
   chiefBotId: string;
   sourceThreadId: string;
   goal: string;
+  /** the constitution this run must stay inside (long-horizon tasks) */
+  charter?: DispatchCharter;
+  /** owner/supervisor checkpoints, oldest first; max 100 */
+  checkpoints?: DispatchCheckpoint[];
   policy: RecommendationPolicy;
   status: RunStatus;
   subtasks: DispatchSubtask[];

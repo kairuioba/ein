@@ -600,6 +600,16 @@ describe("Dispatcher", () => {
     expect(subtask.gateOverridden).toBe(true);
   });
 
+  it("synthesizes a clearly marked handoff when a weaker model answers without the envelope", async () => {
+    const result = submit([{ id: "a", title: "文案", brief: "写文案", role: "文案策划" }]);
+    expect("error" in result).toBe(false);
+    if ("error" in result) return;
+    await settle();
+    host.finish(dispatcher, host.workerTurns()[0]!.threadId, true, "做完了，三段文案在回复里。");
+    await settle();
+    expect(dispatcher.get(result.run.id)!.subtasks[0]!.handoff).toMatchObject({ status: "done", synthetic: true });
+  });
+
   it("passes the gate when a required deterministic criterion is met", async () => {
     const result = submit([
       {

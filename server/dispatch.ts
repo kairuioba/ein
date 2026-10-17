@@ -1306,7 +1306,13 @@ export class Dispatcher {
       subtask.result = reply.trim().slice(0, RESULT_KEEP_CHARS);
       const handoff = parseHandoff(reply);
       if (handoff) subtask.handoff = handoff;
-      else delete subtask.handoff;
+      else {
+        // weaker models answer without the envelope: keep a minimal, clearly
+        // marked handoff so the chief and the gate have something to read
+        const summary = reply.trim().slice(0, 400);
+        subtask.handoff = summary ? { status: "done", summary, synthetic: true } : undefined;
+        if (!subtask.handoff) delete subtask.handoff;
+      }
       subtask.finishedAt = Date.now();
       delete subtask.error;
       // the code, not the worker's self-report, decides whether this passes

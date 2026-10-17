@@ -107,6 +107,8 @@ export interface DispatchHandoff {
   nextStep?: string;
   /** the worker's own read of its acceptance criteria; the reviewer decides */
   acceptanceMet?: boolean;
+  /** the reply had no envelope; the dispatcher built this from the text */
+  synthetic?: boolean;
 }
 
 /** One falsifiable acceptance criterion. New plans carry these; older plans

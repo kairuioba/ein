@@ -149,6 +149,19 @@ class FakeHost implements DispatchHost {
     dispatcher.onTurnSettled(threadId, ok, reply, reason);
     dispatcher.onBotIdle(turn.botId);
   }
+  claims = new Map<string, string>();
+
+  claimBot(botId: string, taskId: string): boolean {
+    const current = this.claims.get(botId);
+    if (current && current !== taskId) return false;
+    this.claims.set(botId, taskId);
+    return true;
+  }
+
+  releaseBot(botId: string, taskId?: string): void {
+    if (!taskId || this.claims.get(botId) === taskId) this.claims.delete(botId);
+  }
+
   workerTurns() {
     return this.turns.filter((turn) => !turn.continuation);
   }
@@ -391,6 +404,16 @@ describe("Dispatcher", () => {
     if ("error" in checkpoint) return;
     expect(checkpoint.checkpoints).toMatchObject([{ note: "已完成文案初稿", nextStep: "进入验收", by: "owner" }]);
     expect(dispatcher.checkpoint(result.run.id, { note: "  " })).toMatchObject({ error: expect.stringContaining("note") });
+  });
+
+  it("claims every assignee for the task and releases them when the task ends", async () => {
+    const result = submit([{ id: "a", title: "文案", brief: "写文案", role: "文案策划" }]);
+    expect("error" in result).toBe(false);
+    if ("error" in result) return;
+    await settle();
+    expect(host.claims.get("writer")).toBe(result.run.id);
+    await dispatcher.cancel(result.run.id);
+    expect(host.claims.has("writer")).toBe(false);
   });
 
   it("never gives one bot a second task while it still holds one (one bot, one task)", async () => {

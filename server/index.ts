@@ -2244,9 +2244,25 @@ const dispatcher = new Dispatcher({
     // mode still stops for destructive or publishing actions (autoVerdict).
     return store.patchBot(created.id, { composio: false, autoApprove: true, approvePeerComms: false }) ?? created;
   },
-  createTask: (botId, title) => {
-    const task = store.createTask(botId, title, false);
+  createTask: (botId, title, meta) => {
+    // bind the conversation to the task folder + attempt that created it; the
+    // link never moves, so an old task keeps its windows after the bot is reused
+    const folderId = meta?.runId ? taskFolders?.byRun(meta.runId)?.id : undefined;
+    const task = store.createTask(botId, title, false, { ...(folderId ? { folderId } : {}), ...(meta?.attemptId ? { attemptId: meta.attemptId } : {}) });
     return task ? { threadId: task.threadId } : null;
+  },
+  claimBot: (botId, taskId) => {
+    const bot = store.bot(botId);
+    if (!bot) return false;
+    if (bot.currentTaskId && bot.currentTaskId !== taskId) return false;
+    store.patchBot(botId, { currentTaskId: taskId });
+    return true;
+  },
+  releaseBot: (botId, taskId) => {
+    const bot = store.bot(botId);
+    if (!bot) return;
+    if (taskId && bot.currentTaskId && bot.currentTaskId !== taskId) return;
+    store.patchBot(botId, { currentTaskId: undefined });
   },
   startTurn: async (botId, text, opts) => {
     await startTurn(botId, text, {

@@ -240,6 +240,16 @@ export interface TaskRecord {
   /** when this task last received a message; the sidebar uses it to open the
    * conversation that actually has the news instead of an empty newer task */
   lastActivityAt?: number;
+  /** the task folder (window) this conversation belongs to; written once when
+   * the conversation is created and never moved — old task windows stay with
+   * their task even after the bot is reused */
+  folderId?: string;
+  /** a dispatched subtask's conversation, as opposed to the bot's own task */
+  dispatchRole?: "worker";
+  /** the attempt that created this conversation (late results are dropped) */
+  attemptId?: string;
+  /** set when the task ended: the window stays readable but accepts no work */
+  closedAt?: number;
 }
 
 export interface TaskUsage {
@@ -459,6 +469,10 @@ export interface BotRecord {
    * delegate_bot). Off by default: a chief-of-staff-style bot is most
    * useful when it can coordinate without nagging. */
   approvePeerComms?: boolean;
+  /** the one dispatch task this bot currently belongs to (null/absent =
+   * idle in its department). The bottleneck rule: a new task claims a free
+   * bot or creates a new one; an old task's conversations never move. */
+  currentTaskId?: string;
   /** Whether this bot may use the workspace's connected apps (Composio).
    * Unset/true = allowed (the user configured the key deliberately);
    * false = this bot never receives the connection. Imported team members
@@ -1475,7 +1489,12 @@ export class Store {
 
   /** A fresh context on the same bot: new thread, new session, same
    * persona/tools/computer. Becomes the active task. */
-  createTask(botId: string, title?: string, activate = true): TaskRecord | null {
+  createTask(
+    botId: string,
+    title?: string,
+    activate = true,
+    meta: { folderId?: string; attemptId?: string } = {},
+  ): TaskRecord | null {
     const bot = this.bot(botId);
     if (!bot) return null;
     const task: TaskRecord = {
@@ -1483,6 +1502,8 @@ export class Store {
       title: title?.trim() || UNTITLED_TASK,
       createdAt: Date.now(),
       resumeCursors: {},
+      ...(meta.folderId ? { folderId: meta.folderId } : {}),
+      ...(meta.attemptId ? { dispatchRole: "worker" as const, attemptId: meta.attemptId } : {}),
     };
     bot.tasks = [task, ...(bot.tasks ?? [])];
     if (activate) {

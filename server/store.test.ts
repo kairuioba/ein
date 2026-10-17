@@ -1044,6 +1044,23 @@ describe("Store task working folder", () => {
     expect(store.taskByThread(bot.id, bot.threadId)?.cwd).toBeNull();
   });
 
+  it("binds a dispatched conversation to its task folder and attempt, and never moves it", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const first = store.createTask(bot.id, "dispatch s1", false, { folderId: "folder-a", attemptId: "attempt-1" })!;
+    expect(store.taskByThread(bot.id, first.threadId)).toMatchObject({
+      folderId: "folder-a",
+      attemptId: "attempt-1",
+      dispatchRole: "worker",
+    });
+    // a retry opens a NEW conversation attached to the same task; the old one
+    // keeps pointing at the old attempt and is never moved
+    const retry = store.createTask(bot.id, "dispatch s1 retry", false, { folderId: "folder-a", attemptId: "attempt-2" })!;
+    expect(retry.threadId).not.toBe(first.threadId);
+    expect(store.taskByThread(bot.id, retry.threadId)?.attemptId).toBe("attempt-2");
+    expect(store.taskByThread(bot.id, first.threadId)).toMatchObject({ folderId: "folder-a", attemptId: "attempt-1" });
+  });
+
   it("pins a supplied private workspace when the bot has no custom folder", () => {
     const store = new Store(selection);
     const bot = store.createBot();

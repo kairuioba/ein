@@ -97,6 +97,8 @@ export interface DispatchBot {
   activity?: string;
   hidden?: boolean;
   chiefOfStaff?: boolean;
+  /** the one task this bot currently belongs to (absent = idle pool) */
+  currentTaskId?: string;
   modelSelection: ModelSelection;
 }
 
@@ -149,8 +151,14 @@ export interface DispatchHost {
   bot(id: string): DispatchBot | undefined;
   /** Create a specialist with safe defaults (no connected apps, no auto-approval). */
   createBot(input: { name: string; title: string; description: string; section?: string; modelSelection: ModelSelection }): DispatchBot;
-  /** A detached task conversation for one subtask. */
-  createTask(botId: string, title: string): { threadId: string } | null;
+  /** A detached task conversation for one subtask. `meta` binds it to the
+   * task folder and attempt that created it (immutable once written). */
+  createTask(botId: string, title: string, meta?: { runId?: string; subtaskId?: string; attemptId?: string }): { threadId: string } | null;
+  /** Claim a bot for one task (one bot belongs to one task at a time).
+   * Returns false when it already belongs to another task. Optional so the
+   * pure dispatcher tests can stay host-free. */
+  claimBot?(botId: string, taskId: string): boolean;
+  releaseBot?(botId: string, taskId?: string): void;
   /** Start a turn; rejects when the bot cannot start (busy, missing, no engine). */
   startTurn(botId: string, text: string, opts: DispatchTurnOptions): Promise<void>;
   interrupt(botId: string, threadId: string): Promise<void>;
@@ -528,6 +536,12 @@ export class Dispatcher {
           subtask.error = t("Interrupted by a restart");
         }
       }
+    }
+    // a claim whose task is gone or finished must not survive a restart
+    for (const bot of this.host.bots()) {
+      if (!bot.currentTaskId) continue;
+      const owner = this.get(bot.currentTaskId);
+      if (!owner || isFinished(owner.status)) this.host.releaseBot?.(bot.id, bot.currentTaskId);
     }
     this.saveRuns();
   }
@@ -919,6 +933,14 @@ export class Dispatcher {
       ...(parent ? { parentRunId: parent.run.id, parentSubtaskId: parent.subtask.id } : {}),
     };
     this.runs.unshift(run);
+    // One bot belongs to one task: claim every assignee for this run now;
+    // released when the run reaches a terminal state.
+    for (const botId of new Set(subtasks.map((subtask) => subtask.assigneeBotId))) {
+      const claimed = this.host.claimBot?.(botId, run.id);
+      if (claimed === false) {
+        this.host.activity(run.sourceThreadId, t("@{name} is already working on another task — it was not assigned here", { name: this.host.bot(botId)?.name ?? "?" }), false);
+      }
+    }
     this.saveRuns();
     this.host.activity(
       sourceThreadId,
@@ -1373,7 +1395,14 @@ export class Dispatcher {
   }
 
   private startSubtask(run: DispatchRun, subtask: DispatchSubtask, bot: DispatchBot): void {
-    const task = this.host.createTask(bot.id, t("[Dispatch] {title}", { title: subtask.title }));
+    // The attempt id is persisted BEFORE the turn starts: a result that
+    // arrives after a retry/restart carries an older id and is dropped.
+    const attemptId = newId();
+    const task = this.host.createTask(bot.id, t("[Dispatch] {title}", { title: subtask.title }), {
+      runId: run.id,
+      subtaskId: subtask.id,
+      attemptId,
+    });
     if (!task) {
       subtask.status = "failed";
       subtask.error = t("Could not open a conversation for this subtask");
@@ -1387,9 +1416,6 @@ export class Dispatcher {
     subtask.startedAt = Date.now();
     delete subtask.finishedAt;
     delete subtask.childRunId;
-    // The attempt id is persisted BEFORE the turn starts: a result that
-    // arrives after a retry/restart carries an older id and is dropped.
-    const attemptId = newId();
     subtask.currentAttemptId = attemptId;
     subtask.currentAttemptBootId = DISPATCH_BOOT_ID;
     this.watch.set(threadId, { runId: run.id, subtaskId: subtask.id, attemptId });
@@ -1578,6 +1604,11 @@ export class Dispatcher {
     dissolveSquads(run, now);
     this.touch(run);
     this.recordRetro(run);
+    // the task is over: its employees go back to the department pool, but
+    // their conversations (and the task window) stay with this task
+    for (const botId of new Set(run.subtasks.map((subtask) => subtask.assigneeBotId))) {
+      this.host.releaseBot?.(botId, run.id);
+    }
     if (!run.parentRunId) return;
     const parent = this.get(run.parentRunId);
     const subtask = parent?.subtasks.find((entry) => entry.id === run.parentSubtaskId);

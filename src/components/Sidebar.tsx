@@ -386,12 +386,15 @@ function BotRow({
       )}
       {!iconOnly &&
         (compact ? (
-          <span className="flex shrink-0 items-center gap-1.5">
+          // The archive button is absolutely positioned over this column while
+          // the row is hovered; fade the time and unread marker so the two
+          // never draw on top of each other.
+          <span className="flex shrink-0 items-center gap-1.5 transition-opacity group-hover:opacity-0 group-focus-within:opacity-0">
             {flag}
             {time && <span className="text-[11.5px] text-ink-secondary/75 tabular-nums">{time}</span>}
           </span>
         ) : (
-          <span className="flex shrink-0 flex-col items-end gap-px">
+          <span className="flex shrink-0 flex-col items-end gap-px transition-opacity group-hover:opacity-0 group-focus-within:opacity-0">
             <span className="flex h-[17.5px] items-center text-[11.5px] text-ink-secondary/75 tabular-nums">{time}</span>
             <span className="flex h-[15.5px] items-center">{flag}</span>
           </span>

@@ -25,7 +25,7 @@
 // Dispatch routes (派发通道) are the workbench's wires: by default a Chief
 // can dispatch to every visible member of its own section; an explicit route
 // adds a bot from any section, and an unplugged route removes one.
-import { readFileSync, statSync } from "node:fs";
+import { appendFileSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 import { t } from "../shared/i18n.ts";
@@ -63,6 +63,8 @@ export {
 } from "../shared/dispatch-types.ts";
 import type {
   DispatchAmendResult,
+  DispatchCharter,
+  DispatchCheckpoint,
   DispatchDiagnosis,
   DispatchRoute,
   DispatchRun,
@@ -76,6 +78,8 @@ import type {
 /** What the planner sends, before validation. */
 export interface PlanInput {
   goal?: unknown;
+  /** long-horizon constitution: success criteria, non-goals, constraints */
+  charter?: unknown;
   subtasks?: unknown;
 }
 
@@ -185,12 +189,15 @@ export interface ValidPlanSubtask {
   difficulty?: number;
   dependsOn: string[];
   acceptance?: string;
+  boundaries?: string;
+  deliverable?: string;
+  reviewer?: string;
   assignee?: string;
 }
 
 /** Normalize and validate a plan. Errors are written for the planning model:
  * each says exactly what to send instead. */
-export function validatePlan(input: PlanInput, maxSubtasks: number): { goal: string; subtasks: ValidPlanSubtask[] } | { error: string } {
+export function validatePlan(input: PlanInput, maxSubtasks: number): { goal: string; subtasks: ValidPlanSubtask[]; charter?: DispatchCharter } | { error: string } {
   const goal = text(input.goal, 2_000);
   if (!goal) return { error: "submit_plan needs `goal`: one sentence describing the overall outcome." };
   let raw = input.subtasks;
@@ -230,9 +237,32 @@ export function validatePlan(input: PlanInput, maxSubtasks: number): { goal: str
     if (Number.isFinite(difficulty)) subtask.difficulty = Math.min(5, Math.max(1, Math.round(difficulty)));
     const acceptance = text(item.acceptance, 1_000);
     if (acceptance) subtask.acceptance = acceptance;
+    const boundaries = text(item.boundaries, 1_000);
+    if (boundaries) subtask.boundaries = boundaries;
+    const deliverable = text(item.deliverable, 600);
+    if (deliverable) subtask.deliverable = deliverable;
+    const reviewer = text(item.reviewer, 120);
+    if (reviewer) subtask.reviewer = reviewer;
     const assignee = text(item.assignee ?? item.bot_id ?? item.botId, 80);
     if (assignee) subtask.assignee = assignee;
     subtasks.push(subtask);
+  }
+  // The long-horizon charter. All fields are optional: a small plan needs no
+  // constitution, but a week-long one is told to keep these in every prompt.
+  const charter: DispatchCharter = {};
+  const rawCharter = input.charter;
+  if (rawCharter && typeof rawCharter === "object" && !Array.isArray(rawCharter)) {
+    const c = rawCharter as Record<string, unknown>;
+    const successCriteria = text(c.success_criteria ?? c.successCriteria, 1_500);
+    const nonGoals = text(c.non_goals ?? c.nonGoals, 1_500);
+    const constraints = text(c.constraints, 1_500);
+    const deadline = text(c.deadline, 120);
+    const budget = Number(c.budget_cny ?? c.budgetCny);
+    if (successCriteria) charter.successCriteria = successCriteria;
+    if (nonGoals) charter.nonGoals = nonGoals;
+    if (constraints) charter.constraints = constraints;
+    if (deadline) charter.deadline = deadline;
+    if (Number.isFinite(budget) && budget > 0) charter.budgetCny = budget;
   }
   for (const subtask of subtasks) {
     for (const dep of subtask.dependsOn) {
@@ -242,7 +272,7 @@ export function validatePlan(input: PlanInput, maxSubtasks: number): { goal: str
   }
   const cycle = findCycle(subtasks);
   if (cycle) return { error: `The dependencies form a cycle (${cycle.join(" → ")}). Remove one dependency and submit again.` };
-  return { goal, subtasks };
+  return { goal, subtasks, ...(charter ? { charter } : {}) };
 }
 
 /** Return one dependency cycle as a list of ids, or null for a DAG. */
@@ -379,14 +409,45 @@ function isStopReason(reason: string | undefined): boolean {
   return code === "interrupted" || code === "cancelled" || code === "canceled";
 }
 
+/** One dispatch run's retrospective record: hard facts only, written when the
+ * run settles. The self-improvement loop reads these; nothing here is a model
+ * judgment. */
+export interface DispatchRetro {
+  at: number;
+  runId: string;
+  goal: string;
+  status: "done" | "failed" | "canceled";
+  parentRunId?: string;
+  chiefBotId: string;
+  startedAt?: number;
+  finishedAt: number;
+  durationMs?: number;
+  counts: { total: number; done: number; failed: number; canceled: number; skipped: number; retried: number };
+  subtasks: Array<{
+    id: string;
+    title: string;
+    role: string;
+    status: string;
+    attempts: number;
+    assigneeBotId: string;
+    reviewer?: string;
+    acceptanceMet?: boolean;
+    ranWith?: { instanceId: string; model: string; effort?: string };
+    durationMs?: number;
+  }>;
+}
+
 export class Dispatcher {
   private runs: DispatchRun[] = [];
   private routeList: DispatchRoute[] = [];
+  /** runs this boot closed because their report turn did not survive it */
+  private restartFinishes: DispatchRun[] = [];
   /** worker thread → the subtask its turn is doing */
   private readonly watch = new Map<string, { runId: string; subtaskId: string }>();
   /** chief's thread → the run whose consolidated-report turn runs there */
   private readonly synthesisWatch = new Map<string, string>();
   private readonly host: DispatchHost;
+  private readonly retroFile: string;
   private readonly runsFile: string;
   private readonly routesFile: string;
   private readonly orgFile: string;
@@ -394,6 +455,7 @@ export class Dispatcher {
 
   constructor(host: DispatchHost, dataDir = DATA_DIR) {
     this.host = host;
+    this.retroFile = join(dataDir, "dispatch-retros.ndjson");
     this.runsFile = join(dataDir, "dispatch-runs.json");
     this.routesFile = join(dataDir, "dispatch-routes.json");
     this.orgFile = join(dataDir, "org.json");
@@ -416,12 +478,15 @@ export class Dispatcher {
     }
     const now = Date.now();
     // A report turn does not survive a restart: the run is done without it,
-    // and its squads dissolve as at any other end.
+    // and its squads dissolve as at any other end. Remember which ones so the
+    // company timeline can still show 已完成 (the boot seed treats runs on
+    // disk as history, so a run closed here would otherwise vanish silently).
     for (const run of this.runs) {
       if (run.status === "synthesizing" && run.synthesisStarted) {
         run.status = "done";
         run.finishedAt ??= now;
         dissolveSquads(run, now);
+        this.restartFinishes.push(run);
       }
     }
     // No worker turn survives either: running work goes back to pending
@@ -441,6 +506,78 @@ export class Dispatcher {
       }
     }
     this.saveRuns();
+  }
+
+  /** Runs this boot finished on a restart's behalf, once each: the company
+   * layer announces them (run.done) after the dispatcher is wired. */
+  takeRestartFinished(): DispatchRun[] {
+    const runs = this.restartFinishes;
+    this.restartFinishes = [];
+    return runs;
+  }
+
+  /** Append one retrospective record when a run settles. Never throws: a
+   * missing record must not break the run. */
+  private recordRetro(run: DispatchRun): void {
+    try {
+      const counts = { total: run.subtasks.length, done: 0, failed: 0, canceled: 0, skipped: 0, retried: 0 };
+      const subtasks = run.subtasks.map((subtask) => {
+        if (subtask.status === "done") counts.done += 1;
+        else if (subtask.status === "failed") counts.failed += 1;
+        else if (subtask.status === "canceled") counts.canceled += 1;
+        else if (subtask.status === "skipped") counts.skipped += 1;
+        if (subtask.attempts > 1) counts.retried += 1;
+        return {
+          id: subtask.id,
+          title: subtask.title,
+          role: subtask.role,
+          status: subtask.status,
+          attempts: subtask.attempts,
+          assigneeBotId: subtask.assigneeBotId,
+          ...(subtask.reviewer ? { reviewer: subtask.reviewer } : {}),
+          ...(subtask.ranWith
+            ? { ranWith: { instanceId: subtask.ranWith.instanceId, model: subtask.ranWith.model, ...(subtask.ranWith.effort ? { effort: subtask.ranWith.effort } : {}) } }
+            : {}),
+          ...(subtask.startedAt && subtask.finishedAt ? { durationMs: subtask.finishedAt - subtask.startedAt } : {}),
+        };
+      });
+      const retro: DispatchRetro = {
+        at: Date.now(),
+        runId: run.id,
+        goal: run.goal,
+        status: run.status as DispatchRetro["status"],
+        ...(run.parentRunId ? { parentRunId: run.parentRunId } : {}),
+        chiefBotId: run.chiefBotId,
+        ...(run.createdAt ? { startedAt: run.createdAt } : {}),
+        finishedAt: run.finishedAt ?? Date.now(),
+        ...(run.createdAt && run.finishedAt ? { durationMs: run.finishedAt - run.createdAt } : {}),
+        counts,
+        subtasks,
+      };
+      appendFileSync(this.retroFile, `${JSON.stringify(retro)}\n`, { mode: 0o600 });
+    } catch (error) {
+      console.error("dispatch: could not write the retrospective", error);
+    }
+  }
+
+  /** The latest retrospective records, newest first. */
+  retros(limit = 20): DispatchRetro[] {
+    try {
+      const lines = readFileSync(this.retroFile, "utf8").split("\n").filter(Boolean);
+      return lines
+        .slice(-Math.max(1, Math.min(200, limit)))
+        .map((line) => {
+          try {
+            return JSON.parse(line) as DispatchRetro;
+          } catch {
+            return null;
+          }
+        })
+        .filter((entry): entry is DispatchRetro => entry !== null)
+        .reverse();
+    } catch {
+      return [];
+    }
   }
 
   private saveRuns(): void {
@@ -503,6 +640,18 @@ export class Dispatcher {
   /** A department lead: a section's chief of staff (the org chief is not one). */
   private isLead(bot: DispatchBot): boolean {
     return Boolean(bot.chiefOfStaff) && sectionKey(bot.section) !== "" && !this.isOrgChief(bot.id);
+  }
+
+  /** How many more non-hidden people a section may hold before its configured
+   * 编制 (headcount) is full. Infinity when the section has no quota — or no
+   * section at all (the 主 Bot's company pool, where nobody has a quota). */
+  private headcountRoom(section?: string): number {
+    const key = sectionKey(section);
+    if (!key) return Number.POSITIVE_INFINITY;
+    const quota = this.org().departments.find((entry) => sectionKey(entry.section) === key)?.headcount;
+    if (quota === undefined) return Number.POSITIVE_INFINITY;
+    const people = this.host.bots().filter((bot) => !bot.hidden && sectionKey(bot.section) === key).length;
+    return quota - people;
   }
 
   /** Bots this Chief may dispatch to: its section's visible members unless
@@ -642,10 +791,22 @@ export class Dispatcher {
             error: `Nobody on your team fits subtask "${item.id}" (${item.role}), and your company rules do not let you create specialists on your own. Name an assignee from list_bots, or ask the user to add one.`,
           };
         }
-        if (created.length >= settings.maxNewBots || this.host.bots().length + created.length >= this.host.maxBots) {
+        // a department's 编制 is a quota too: never create past it (the same
+        // place the bot-cap fallback lives)
+        const noHeadcountRoom = this.headcountRoom(chief.section) - created.length <= 0;
+        if (noHeadcountRoom || created.length >= settings.maxNewBots || this.host.bots().length + created.length >= this.host.maxBots) {
           // out of room for new bots: share the work among who we have
           assignee = this.leastLoaded(team.concat(created), subtasks, orgChief);
-          if (!assignee) return { error: "No team member is available and no more bots can be created. Ask the user to add a bot." };
+          if (!assignee) {
+            return {
+              error: noHeadcountRoom
+                ? t(
+                    "Nobody on your team fits subtask {id} ({role}), and the {section} department is at its headcount. Raise it in Settings → Organization, or name an assignee from list_bots.",
+                    { id: item.id, role: item.role, section: sectionKey(chief.section) },
+                  )
+                : "No team member is available and no more bots can be created. Ask the user to add a bot.",
+            };
+          }
         } else {
           // Planned, not created: a later subtask can still reject the whole
           // plan, and a rejected plan must not leave specialists behind (the
@@ -691,6 +852,10 @@ export class Dispatcher {
             }
           : {}),
         ...(item.acceptance ? { acceptance: item.acceptance } : {}),
+        ...(item.boundaries ? { boundaries: item.boundaries } : {}),
+        ...(item.deliverable ? { deliverable: item.deliverable } : {}),
+        // every subtask has someone who verifies it: the plan's chief by default
+        reviewer: item.reviewer ?? chief.name,
         assigneeBotId: assignee.id,
         ...(created.some((bot) => bot.id === assignee!.id) ? { createdBot: true } : {}),
         status: "pending",
@@ -721,6 +886,7 @@ export class Dispatcher {
       chiefBotId: chiefId,
       sourceThreadId,
       goal: plan.goal,
+      ...(plan.charter ? { charter: plan.charter } : {}),
       policy,
       status: settings.requireApproval ? "awaiting-approval" : "running",
       subtasks,
@@ -741,6 +907,34 @@ export class Dispatcher {
     }
     if (run.status === "running") queueMicrotask(() => this.pump(run.id));
     return { run, created: created.map((bot) => bot.id) };
+  }
+
+  /** A Chief's direct create_bot (server/index.ts's /api/internal/create-bot):
+   * unlike a plan's automatic specialist it takes no diagnosis, so the same
+   * two limits are checked here — the company's 新增专员 rule for the 主 Bot,
+   * and the department's 编制 for anyone with a section. */
+  createSpecialist(chiefId: string, input: { name: string; title: string; instructions: string }): DispatchBot | { error: string } {
+    const chief = this.host.bot(chiefId);
+    if (!chief) return { error: t("No such bot") };
+    if (this.isOrgChief(chiefId) && !this.org().rules.chiefMay.newSpecialist) {
+      return {
+        error: t("Your company rules do not let you create specialists on your own. Ask the user to add one, or enable new specialists in Settings → Organization."),
+      };
+    }
+    if (this.headcountRoom(chief.section) <= 0) {
+      return {
+        error: t("The {section} department is at its headcount. Raise it in Settings → Organization, or use the people it already has.", {
+          section: sectionKey(chief.section),
+        }),
+      };
+    }
+    return this.host.createBot({
+      name: input.name,
+      title: input.title,
+      description: input.instructions,
+      section: chief.section,
+      modelSelection: { ...chief.modelSelection },
+    });
   }
 
   private findAssignee(nameOrId: string, team: DispatchBot[], orgChief: boolean): DispatchBot | undefined {
@@ -780,6 +974,7 @@ export class Dispatcher {
         score = Math.max(roleSimilarity(item.role, profile), 0.8 * roleSimilarity(`${item.title} ${item.role}`, profile));
       }
       if (score < REUSE_THRESHOLD) continue;
+      if (this.assignedElsewhere(bot.id)) continue;
       if (bot.busy) score -= 0.1;
       score -= 0.05 * assigned.filter((subtask) => subtask.assigneeBotId === bot.id).length;
       if (!best || score > best.score) best = { bot, score };
@@ -790,8 +985,63 @@ export class Dispatcher {
   private leastLoaded(team: DispatchBot[], assigned: DispatchSubtask[], orgChief: boolean): DispatchBot | undefined {
     const workers = team.filter((bot) => !bot.chiefOfStaff || (orgChief && this.isLead(bot)));
     return workers
+      .filter((bot) => !this.assignedElsewhere(bot.id))
       .map((bot) => ({ bot, load: assigned.filter((subtask) => subtask.assigneeBotId === bot.id).length }))
       .sort((a, b) => a.load - b.load)[0]?.bot;
+  }
+
+  /** The hard company rule: one bot belongs to one task at a time. A bot with
+   * unfinished work in another live run cannot be handed a second task; the
+   * dispatcher creates a new specialist instead. */
+  private assignedElsewhere(botId: string): boolean {
+    return this.runs.some(
+      (run) =>
+        !isFinished(run.status) &&
+        run.subtasks.some((subtask) => subtask.assigneeBotId === botId && (subtask.status === "pending" || subtask.status === "running")),
+    );
+  }
+
+  /** A teammate that finished its share early takes more work from the SAME
+   * task: a pending subtask whose owner is busy, same department first, then
+   * one whose role it plausibly fits. Never steals running or started work,
+   * and never borrows a bot that belongs to another task. */
+  private rebalance(run: DispatchRun, reason: "finished" | "helping" = "finished"): void {
+    if (run.status !== "running") return;
+    const pending = run.subtasks.filter((subtask) => subtask.status === "pending" && subtask.attempts === 0 && !subtask.threadId);
+    if (!pending.length) return;
+    const assignees = [...new Set(run.subtasks.map((subtask) => subtask.assigneeBotId))];
+    for (const botId of assignees) {
+      const bot = this.host.bot(botId);
+      if (!bot || bot.busy) continue;
+      if (run.subtasks.some((entry) => entry.assigneeBotId === botId && (entry.status === "running" || entry.status === "pending"))) continue;
+      if (this.assignedElsewhere(botId)) continue;
+      const section = sectionKey(bot.section);
+      const ownerBusy = (subtask: DispatchSubtask) => Boolean(this.host.bot(subtask.assigneeBotId)?.busy);
+      const sameDepartment = pending.find(
+        (subtask) => ownerBusy(subtask) && section && sectionKey(this.host.bot(subtask.assigneeBotId)?.section) === section,
+      );
+      const profile = `${bot.title} ${bot.description} ${bot.name}`;
+      const fits = pending
+        .filter((subtask) => ownerBusy(subtask))
+        .map((subtask) => ({ subtask, score: roleSimilarity(subtask.role, profile) }))
+        .filter((entry) => entry.score >= REUSE_THRESHOLD)
+        .sort((a, b) => b.score - a.score)[0]?.subtask;
+      const pick = sameDepartment ?? fits;
+      if (!pick) continue;
+      const previous = pick.assigneeBotId;
+      if (previous === botId) continue;
+      pick.assigneeBotId = botId;
+      pick.reassignedFrom = previous;
+      pending.splice(pending.indexOf(pick), 1);
+      if (reason === "helping") {
+        this.host.activity(
+          run.sourceThreadId,
+          t("@{name} is free and helps @{owner} finish “{title}”", { name: bot.name, owner: this.host.bot(previous)?.name ?? "?", title: pick.title }),
+        );
+      } else {
+        this.host.activity(run.sourceThreadId, t("@{name} finished early and took over “{title}”", { name: bot.name, title: pick.title }));
+      }
+    }
   }
 
   // ── lifecycle ──
@@ -938,6 +1188,7 @@ export class Dispatcher {
         run.sourceThreadId,
         t("@{name} finished “{title}” ({done}/{total})", { name: bot?.name ?? "?", title: subtask.title, done: finishedCount(), total: run.subtasks.length }),
       );
+      this.rebalance(run);
     } else {
       // an ok turn's reason is just how it ended ("end_turn"), not a failure
       const why = ok ? t("finished without a reply") : reason?.trim() ? reasonLabel(reason) : t("did not finish");
@@ -1026,6 +1277,9 @@ export class Dispatcher {
     }
     for (const run of this.runs) {
       if (run.status !== "running" && run.status !== "synthesizing") continue;
+      // Same department, no separate data boundary: a free teammate may help
+      // a busy colleague's not-started subtasks even without a new order.
+      if (run.status === "running" && run.subtasks.some((subtask) => subtask.assigneeBotId === botId)) this.rebalance(run, "helping");
       if (run.chiefBotId === botId || run.subtasks.some((subtask) => subtask.assigneeBotId === botId && subtask.status === "pending")) {
         this.pump(run.id);
       }
@@ -1257,12 +1511,34 @@ export class Dispatcher {
 
   /** Close a run: record when, dissolve its squads, and hand a department's
    * outcome back to the subtask it was doing. */
+  /** Owner or supervisor checkpoint: a durable note that every following
+   * planning/synthesis turn sees, so a long run's state survives turns,
+   * restarts and engine switches. */
+  checkpoint(runId: string, input: { note?: unknown; nextStep?: unknown; by?: unknown }): DispatchRun | { error: string } {
+    const run = this.get(runId);
+    if (!run) return { error: t("No such dispatch run") };
+    const note = typeof input.note === "string" ? input.note.trim().slice(0, 2_000) : "";
+    if (!note) return { error: t("a checkpoint needs a note") };
+    const nextStep = typeof input.nextStep === "string" ? input.nextStep.trim().slice(0, 1_000) : "";
+    const by = typeof input.by === "string" ? input.by.trim().slice(0, 80) : "";
+    const entry: DispatchCheckpoint = {
+      at: Date.now(),
+      note,
+      ...(nextStep ? { nextStep } : {}),
+      ...(by ? { by } : {}),
+    };
+    run.checkpoints = [...(run.checkpoints ?? []), entry].slice(-100);
+    this.touch(run);
+    return run;
+  }
+
   private finishRun(run: DispatchRun, status: "done" | "failed" | "canceled"): void {
     const now = Date.now();
     run.status = status;
     run.finishedAt = now;
     dissolveSquads(run, now);
     this.touch(run);
+    this.recordRetro(run);
     if (!run.parentRunId) return;
     const parent = this.get(run.parentRunId);
     const subtask = parent?.subtasks.find((entry) => entry.id === run.parentSubtaskId);
@@ -1376,7 +1652,11 @@ export class Dispatcher {
   /** Add people to a running job. The owner's call always goes through (as
    * many people as there are not-started subtasks to hand out); the chief's
    * only when the diagnosis says it helps and the org rules and budget allow. */
-  amend(runId: string, add: number, by: { by: "owner" | "chief"; botId?: string } = { by: "owner" }): DispatchAmendResult | { error: string } {
+  amend(
+    runId: string,
+    add: number,
+    by: { by: "owner" | "chief"; botId?: string } = { by: "owner" },
+  ): DispatchAmendResult | { error: string; code?: "department-work" } {
     const run = this.get(runId);
     if (!run) return { error: t("No such dispatch run") };
     if (run.status !== "running" && run.status !== "awaiting-approval") return { error: t("People can only be added while a run is in progress") };
@@ -1406,17 +1686,44 @@ export class Dispatcher {
         error: leadsWork
           ? t("What is left is departments' own work, which their leads staff: ask a lead to add people to its team.")
           : t("Nothing is left to hand out: every remaining subtask is running or waits on earlier work."),
+        ...(leadsWork ? { code: "department-work" as const } : {}),
       };
     }
 
     // the new people, made like the dispatcher's own specialists
     const chief = this.host.bot(run.chiefBotId);
+    // a department's 编制 is a real quota: a newcomer that would take it past
+    // the line is not made, and the work stays with the team it already has
+    const rooms = new Map<string, number>();
+    const roomFor = (section?: string): number => {
+      const key = sectionKey(section);
+      if (!key) return Number.POSITIVE_INFINITY;
+      let left = rooms.get(key);
+      if (left === undefined) {
+        left = this.headcountRoom(key);
+        rooms.set(key, left);
+      }
+      return left;
+    };
+    const people = plan.people.filter((person) => {
+      const first = run.subtasks.find((subtask) => subtask.id === person.subtaskIds[0])!;
+      const section = this.host.bot(first.assigneeBotId)?.section || chief?.section;
+      const left = roomFor(section);
+      if (left <= 0) return false;
+      if (Number.isFinite(left)) rooms.set(sectionKey(section), left - 1);
+      return true;
+    });
+    if (!people.length) {
+      return {
+        error: t("The departments involved are at their headcount. Raise it in Settings → Organization, or add people to a department's own plan."),
+      };
+    }
     const taken = this.host.bots().map((bot) => bot.name);
     const span = Math.max(2, org.rules.spanOfControl);
     const created: DispatchBot[] = [];
     const squadIndex: number[] = [];
     const firstSquad = (run.squads ?? []).length;
-    plan.people.forEach((person, index) => {
+    people.forEach((person, index) => {
       const first = run.subtasks.find((subtask) => subtask.id === person.subtaskIds[0])!;
       const model = this.newcomerModel(run, first);
       const name = uniqueName(person.roleLabel, taken);
@@ -1439,7 +1746,7 @@ export class Dispatcher {
     const squads: DispatchSquad[] = [];
     const groups = Math.max(...squadIndex) + 1;
     for (let group = 0; group < groups; group += 1) {
-      const members = plan.people.map((person, index) => ({ person, bot: created[index]! })).filter((_, index) => squadIndex[index] === group);
+      const members = people.map((person, index) => ({ person, bot: created[index]! })).filter((_, index) => squadIndex[index] === group);
       squads.push({
         name: squadLetterName(firstSquad + group),
         leadBotId: members[0]!.bot.id,
@@ -1453,7 +1760,7 @@ export class Dispatcher {
       });
     }
     const moved: string[] = [];
-    plan.people.forEach((person, index) => {
+    people.forEach((person, index) => {
       for (const id of person.subtaskIds) {
         const subtask = run.subtasks.find((entry) => entry.id === id);
         if (!subtask || subtask.status !== "pending") continue;
@@ -1484,6 +1791,38 @@ export class Dispatcher {
     const timer = setTimeout(() => this.checkReviews(), REVIEW_AFTER_MS + 1_000);
     timer.unref?.();
     return { ok: true, added: created.map((bot) => bot.id), squad: squads[0]!, moved, run };
+  }
+
+  /** The workbench's 加人 (dispatch-api's owner route). The owner's own call
+   * normally goes straight to amend(); when the company plan has nothing left
+   * to hand out because each department's lead staffs its own share, the
+   * newcomers instead join those departments' running plans (the lead's child
+   * runs), which is where the not-started work actually is. */
+  amendFromWorkbench(runId: string, add: number): DispatchAmendResult | { error: string } {
+    const direct = this.amend(runId, add, { by: "owner" });
+    if (!("error" in direct) || direct.code !== "department-work") return direct;
+    const run = this.get(runId);
+    if (!run) return direct;
+    let left = Math.trunc(Number(add));
+    const added: string[] = [];
+    const moved: string[] = [];
+    let squad: DispatchSquad | undefined;
+    let problem: string | undefined;
+    for (const child of this.runs.filter((entry) => entry.parentRunId === run.id && !isFinished(entry.status))) {
+      if (left < 1) break;
+      if (!child.subtasks.some((subtask) => subtask.status === "pending")) continue;
+      const result = this.amend(child.id, left, { by: "owner" });
+      if ("error" in result) {
+        problem ??= result.error;
+        continue;
+      }
+      added.push(...result.added);
+      moved.push(...result.moved);
+      squad ??= result.squad;
+      left -= result.added.length;
+    }
+    if (!squad) return problem ? { error: problem } : direct;
+    return { ok: true, added, squad, moved, run };
   }
 
   /** Review squads whose 30 minutes are up: did the run speed up? */
@@ -1544,9 +1883,19 @@ export class Dispatcher {
         ...lines,
       ].join("\n");
     }
+    const charterLines = [
+      ...(run.charter?.successCriteria ? [`Success criteria: ${run.charter.successCriteria}`] : []),
+      ...(run.charter?.nonGoals ? [`Non-goals (must not have happened): ${run.charter.nonGoals}`] : []),
+      ...(run.charter?.constraints ? [`Constraints: ${run.charter.constraints}`] : []),
+      ...(run.charter?.deadline ? [`Deadline: ${run.charter.deadline}`] : []),
+      ...(run.checkpoints?.length ? [`Latest checkpoint: ${run.checkpoints[run.checkpoints.length - 1]!.note}`] : []),
+    ];
     return [
       `[Ein dispatch finished] Every subtask of your plan "${run.goal}" has settled. Their results follow.`,
+      ...(charterLines.length ? ["The plan's charter:", ...charterLines] : []),
       "Write the user one consolidated answer: what was done, the key outputs merged into a single coherent deliverable, and anything that failed or needs the user's decision. Do not dispatch or delegate again in this turn.",
+      "For every subtask, state whether it met its acceptance criteria (quote the criterion) and who reviews it. Cite what the worker actually delivered; never claim work, numbers or files that are not in the results below. If a criterion was not met or needs a decision, say so explicitly.",
+      "Finally, check the whole run against the charter: say whether it stayed inside the non-goals and constraints, and whether the deadline and budget are at risk. If something drifted, say what and what you propose.",
       "",
       ...lines,
     ].join("\n");
@@ -1586,10 +1935,18 @@ function workerPrompt(run: DispatchRun, subtask: DispatchSubtask, context: { chi
     header,
     "",
     `Overall goal: ${run.goal}`,
+    ...(run.charter?.successCriteria ? [`Success criteria: ${run.charter.successCriteria}`] : []),
+    ...(run.charter?.nonGoals ? [`Do NOT do (non-goals): ${run.charter.nonGoals}`] : []),
+    ...(run.charter?.constraints ? [`Constraints: ${run.charter.constraints}`] : []),
+    ...(run.charter?.deadline ? [`Deadline: ${run.charter.deadline}`] : []),
     `Your subtask: ${subtask.title}`,
     "",
     subtask.brief,
-    subtask.acceptance ? `\nAcceptance criteria: ${subtask.acceptance}` : "",
+    subtask.deliverable ? `\nDeliverable: ${subtask.deliverable}` : "",
+    subtask.boundaries ? `\nOut of scope / do not touch: ${subtask.boundaries}` : "",
+    subtask.acceptance ? `\nAcceptance criteria (checked by ${subtask.reviewer ?? chiefName}): ${subtask.acceptance}` : "",
+    subtask.acceptance ? "" : "",
+    subtask.reviewer ? `\nReviewer: ${subtask.reviewer}` : "",
     deps.length ? "\nResults from earlier subtasks you build on:" : "",
     ...deps.map((dep) => `\n### ${dep.title}\n${clip(dep.result ?? "", RESULT_CONTEXT_CHARS)}`),
     ...(squad

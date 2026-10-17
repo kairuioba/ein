@@ -2,10 +2,11 @@
 // errors. The command has one inline copy action and one primary next step;
 // unusable model lists stay out of the way until the engine is ready.
 import { useState } from "react";
-import { Check, Copy, Download, ExternalLink, LogIn, TerminalSquare } from "lucide-react";
+import { Check, Copy, Download, ExternalLink, KeyRound, LogIn, TerminalSquare } from "lucide-react";
 import type { EngineInstall, InstanceInfo } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { t, tRich } from "@/lib/i18n";
+import { EngineCredentialRow } from "./EnginesSettings";
 
 type Platform = "darwin" | "win32" | "linux";
 
@@ -27,6 +28,13 @@ export function installCommandFor(install: EngineInstall | undefined): string | 
 /** Installed but missing the cloud account session. */
 export function needsSignIn(instance: InstanceInfo | undefined): boolean {
   return instance?.snapshot.state === "available" && instance.snapshot.authenticated === false;
+}
+
+/** This engine authenticates with a saved, write-only key (the Claude API
+ * engine). Once saved, `snapshot.authenticated` flips true; until then the
+ * setup card asks for the key instead of offering a sign-in. */
+export function needsCredential(instance: InstanceInfo | undefined): boolean {
+  return Boolean(instance?.snapshot.credential) && instance?.snapshot.authenticated !== true;
 }
 
 /** The agent CLI itself is absent. Local-model injection needs the CLI but
@@ -117,6 +125,30 @@ export function EngineSetup({
   intent?: "cloud" | "inject";
 }) {
   const install = instance.install;
+  const credential = instance.snapshot.credential;
+  // API-key engines have no account sign-in to offer: the key the person
+  // saved is the whole setup. Once the CLI is present this card manages it
+  // (save, replace, clear) instead of showing an installer or `claude auth`.
+  if (credential && instance.snapshot.state === "available") {
+    return (
+      <div className={cn("rounded-xl border border-hairline/40 bg-control/30 p-3", className)}>
+        <div className="flex items-start gap-2.5">
+          <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg bg-inset text-ink-secondary">
+            <KeyRound size={14} />
+          </span>
+          <div className="min-w-0">
+            <div className="text-[13px] font-semibold text-ink">{t("Claude API key")}</div>
+            <p className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">
+              {t("This engine is billed per use — it runs on the Anthropic API key you save here, not on a Claude subscription.")}
+            </p>
+          </div>
+        </div>
+        <div className="mt-3">
+          <EngineCredentialRow instance={instance} credential={credential} />
+        </div>
+      </div>
+    );
+  }
   const installCommand = installCommandFor(install);
   const signInCommand = install?.signInCommand;
   const signInOnly = intent === "cloud" && needsSignIn(instance);

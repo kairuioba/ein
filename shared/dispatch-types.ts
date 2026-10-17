@@ -72,6 +72,26 @@ export function dispatchSettings(raw: Partial<DispatchSettings> | undefined): Di
 export type SubtaskStatus = "pending" | "running" | "done" | "failed" | "skipped" | "canceled";
 export type RunStatus = "awaiting-approval" | "running" | "synthesizing" | "done" | "failed" | "canceled";
 
+/** The long-horizon plan's constitution: what success means and, above all,
+ * what must NOT happen. Injected into every worker and the synthesis turn so a
+ * week-long job never drifts. */
+export interface DispatchCharter {
+  successCriteria?: string;
+  nonGoals?: string;
+  constraints?: string;
+  deadline?: string;
+  budgetCny?: number;
+}
+
+/** A checkpoint note from the owner or the supervisor: where the run stands
+ * and what happens next. Fed into every following planning/synthesis turn. */
+export interface DispatchCheckpoint {
+  at: number;
+  note: string;
+  nextStep?: string;
+  by?: string;
+}
+
 export interface DispatchSubtask {
   id: string;
   title: string;
@@ -81,6 +101,12 @@ export interface DispatchSubtask {
   difficulty: Level;
   dependsOn: string[];
   acceptance?: string;
+  /** what is explicitly out of scope / must not be touched */
+  boundaries?: string;
+  /** the exact output the subtask must hand back */
+  deliverable?: string;
+  /** who verifies the result (a role, a teammate's name, or the chief) */
+  reviewer?: string;
   assigneeBotId: string;
   /** The dispatcher created this bot for the run. */
   createdBot?: boolean;
@@ -98,6 +124,9 @@ export interface DispatchSubtask {
   childRunId?: string;
   /** The squad it was moved to when people were added mid-run. */
   squad?: string;
+  /** the bot that originally held this subtask before a faster teammate took
+   * it over mid-run (same task only) */
+  reassignedFrom?: string;
   /** When an engine throttled this subtask (rate limited), newest last, at most 20. */
   rateLimitedAt?: number[];
   /** Attempts that ended because the engine was rate limited (not the worker's fault). */
@@ -161,6 +190,10 @@ export interface DispatchRun {
   chiefBotId: string;
   sourceThreadId: string;
   goal: string;
+  /** the constitution this run must stay inside (long-horizon tasks) */
+  charter?: DispatchCharter;
+  /** owner/supervisor checkpoints, oldest first; max 100 */
+  checkpoints?: DispatchCheckpoint[];
   policy: RecommendationPolicy;
   status: RunStatus;
   subtasks: DispatchSubtask[];
@@ -223,6 +256,9 @@ export interface DispatchDiagnosis extends RunDiagnosis {
   };
   /** finished subtasks per hour so far; absent before anything finished */
   speedPerHour?: number;
+  /** what is left belongs to a department's own plan: the owner adds people
+   * to that plan from the workbench instead of the company plan */
+  departmentWork?: boolean;
 }
 
 /** POST /api/dispatch/runs/:id/amend → this. */

@@ -53,6 +53,8 @@ export function engineStateLabel(row: Pick<EngineRow, "state" | "instance">): st
     const count = row.instance.models.options.filter((option) => option.custom).length;
     return tn(count, "Found {count} model", "Found {count} models");
   }
+  // an API-key engine is never "signed in": its setup is a saved key
+  if (row.state === "ready" && row.instance.snapshot.credential) return t("API key saved");
   return t(ENGINE_STATE_LABEL[row.state]);
 }
 
@@ -67,7 +69,7 @@ function EngineListRow({ row, onOpen }: { row: EngineRow<Bot>; onOpen: () => voi
   const tone = engineTone(row.state);
   const { labels, mono } = modelChips(row.instance);
   const action = engineAction(row.state);
-  const blocked = row.state === "signin" || row.state === "missing";
+  const blocked = row.state === "signin" || row.state === "key" || row.state === "missing";
   return (
     <div className={cn(ROW_GRID, "h-[50px] border-t border-hairline/30")}>
       <BotTile kind={row.kind} size={40} title={row.instance.displayName} />
@@ -119,7 +121,11 @@ function EngineListRow({ row, onOpen }: { row: EngineRow<Bot>; onOpen: () => voi
               <span className={cn("truncate", blocked && "opacity-55")}>{namesLine(row.bots)}</span>
               {blocked && (
                 <small className="truncate text-[11px] text-warning">
-                  {row.state === "signin" ? t("Can't run until you sign in") : t("Can't run until it's installed")}
+                  {row.state === "signin"
+                    ? t("Can't run until you sign in")
+                    : row.state === "key"
+                      ? t("Can't run until you add an API key")
+                      : t("Can't run until it's installed")}
                 </small>
               )}
             </span>
@@ -135,7 +141,7 @@ function EngineListRow({ row, onOpen }: { row: EngineRow<Bot>; onOpen: () => voi
           </Button>
         ) : (
           <Button size="sm" onClick={onOpen}>
-            {action === "signin" ? t("Sign in") : t("Install")}
+            {action === "signin" ? t("Sign in") : action === "key" ? t("Add key") : t("Install")}
           </Button>
         )}
       </span>
@@ -169,7 +175,9 @@ function FoldedRow({ rows, expanded, onToggle }: { rows: EngineRow<Bot>[]; expan
                       ? t("{count} not installed", { count: part.count })
                       : part.state === "signin"
                         ? t("{count} not signed in", { count: part.count })
-                        : null,
+                        : part.state === "key"
+                          ? t("{count} need an API key", { count: part.count })
+                          : null,
                   )
                   .filter(Boolean)
                   .join(t(", "))}
@@ -293,7 +301,7 @@ function ReviewSummaryCard() {
 function EngineDetail({ row, onClose }: { row: EngineRow<Bot>; onClose: () => void }) {
   const instance = row.instance as InstanceInfo;
   const tone = engineTone(row.state);
-  const blocked = row.state === "signin" || row.state === "missing";
+  const blocked = row.state === "signin" || row.state === "key" || row.state === "missing";
   const official = instance.models.options.filter((option) => !option.custom);
   const custom = instance.models.options.filter((option) => option.custom);
   return (
@@ -303,6 +311,9 @@ function EngineDetail({ row, onClose }: { row: EngineRow<Bot>; onClose: () => vo
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-2">
             <b className="text-[16px] font-bold text-ink">{instance.displayName}</b>
+            {instance.snapshot.billing === "metered" && (
+              <span className="rounded bg-control px-1.5 py-0.5 text-[10.5px] font-medium text-ink-secondary">{t("Pay as you go")}</span>
+            )}
             {instance.snapshot.version && <span className="truncate text-[12px] text-ink-secondary">{instance.snapshot.version}</span>}
           </div>
           <div className={cn("mt-0.5 flex items-center gap-[5px] text-[12.5px]", TONE_TEXT[tone])}>
@@ -315,7 +326,9 @@ function EngineDetail({ row, onClose }: { row: EngineRow<Bot>; onClose: () => vo
         </button>
       </div>
       <div className="flex min-h-0 flex-col gap-4 overflow-y-auto px-5 pb-5">
-        {blocked && <EngineSetup instance={instance} intent={instance.access === "custom" ? "inject" : "cloud"} />}
+        {(blocked || instance.snapshot.credential) && (
+          <EngineSetup instance={instance} intent={instance.access === "custom" ? "inject" : "cloud"} />
+        )}
         {instance.driverKind === "workbuddyAgent" && <WorkBuddySettings />}
         <section>
           <div className="mb-1.5 text-[12px] font-semibold text-ink-secondary">{t("Models")}</div>

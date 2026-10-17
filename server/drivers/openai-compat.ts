@@ -1,6 +1,7 @@
 // Transcript-replay driver for OpenRouter, Groq, Together, llama.cpp, and
 // other endpoints that speak the OpenAI chat-completions contract.
 import type { ModelCatalog, ProviderDriver } from "../contracts.ts";
+import { createLiveCatalog, reviveCatalog, secretId, type CatalogOption } from "./live-catalog.ts";
 import { createOpenAIChatRuntime } from "./openai-chat.ts";
 import { t } from "../../shared/i18n.ts";
 
@@ -12,6 +13,59 @@ const DEFAULT_MODELS: ModelCatalog = {
     { id: "llama-3.3-70b-versatile", label: "Llama 3.3 70B (Groq)", custom: true },
   ],
 };
+
+/** Picker rows from an OpenAI-style `GET /models` answer. Every row is
+ * `custom`: this engine advertises `access: "custom"`, and the picker renders
+ * only custom-flagged options for such engines. Exported for the test. */
+export function parseOpenAICompatModels(payload: unknown): CatalogOption[] {
+  const rows = Array.isArray(payload)
+    ? payload
+    : payload && typeof payload === "object" && Array.isArray((payload as { data?: unknown }).data)
+      ? (payload as { data: unknown[] }).data
+      : [];
+  const seen = new Set<string>();
+  const options: CatalogOption[] = [];
+  for (const row of rows) {
+    const record = row && typeof row === "object" ? (row as { id?: unknown; name?: unknown }) : null;
+    const id = typeof record?.id === "string" ? record.id.trim() : "";
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const label = typeof record?.name === "string" && record.name.trim() ? record.name : id;
+    options.push({ id, label, custom: true });
+  }
+  return options;
+}
+
+/** The models this endpoint's key can call, from its documented `GET /models`
+ * (no tokens spent). Null on any failure. */
+export async function probeOpenAICompatModels(
+  apiUrl: string,
+  apiKey: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<CatalogOption[] | null> {
+  if (!apiKey) return null;
+  try {
+    const response = await fetchImpl(`${apiUrl}/models`, {
+      headers: { authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!response.ok) return null;
+    const options = parseOpenAICompatModels(await response.json());
+    return options.length ? options : null;
+  } catch {
+    return null;
+  }
+}
+
+// The endpoint's own list, cached on disk and refreshed in the background:
+// opening the model picker must never fire a `/models` request, and a failed
+// ask is retried after a pause — the same contract every other engine's live
+// catalog follows (live-catalog.ts).
+const compatCatalogs = createLiveCatalog<ModelCatalog>({ file: "openai-compat.json", revive: reviveCatalog });
+
+export function settleOpenAICompatModels(apiUrl: string, apiKey: string): Promise<void> {
+  return compatCatalogs.settle([apiUrl, secretId(apiKey)].join("|"));
+}
 
 export interface OpenAICompatConfig {
   url: string;
@@ -86,47 +140,32 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
       process.env[config.apiKeyEnv] ??
       process.env.OPENAI_COMPAT_API_KEY ??
       "";
-    let catalog: ModelCatalog = config.model
-      ? {
-          default: config.model,
-          options: DEFAULT_MODELS.options.some((model) => model.id === config.model)
-            ? DEFAULT_MODELS.options
-            : [{ id: config.model, label: config.model, custom: true }, ...DEFAULT_MODELS.options],
-        }
-      : DEFAULT_MODELS;
-
-    const fetchModels = async () => {
-      if (!apiKey) return;
-      try {
-        const response = await fetch(`${config.url}/models`, {
-          headers: { authorization: `Bearer ${apiKey}` },
-          signal: AbortSignal.timeout(8_000),
-        });
-        if (!response.ok) return;
-        const json = await response.json() as { data?: Array<{ id?: unknown; name?: unknown }> } | Array<{ id?: unknown; name?: unknown }>;
-        const rows = Array.isArray(json) ? json : Array.isArray(json.data) ? json.data : [];
-        const seen = new Set<string>();
-        const options: ModelCatalog["options"] = [];
-        for (const row of rows) {
-          const id = typeof row.id === "string" ? row.id : "";
-          if (!id || seen.has(id)) continue;
-          seen.add(id);
-          options.push({
-            id,
-            label: typeof row.name === "string" && row.name.trim() ? row.name : id,
-            custom: true,
-          });
-        }
-        if (!options.length) return;
-        if (config.model && !options.some((model) => model.id === config.model)) {
-          options.unshift({ id: config.model, label: config.model, custom: true });
-        }
-        catalog = { default: config.model ?? options[0].id, options };
-      } catch {
-        // Catalog refresh is opportunistic; keep the seeded options.
+    // The configured model pins the default even when the live list omits it
+    // (an endpoint's list can lag a model the user already selected).
+    const buildCatalog = (options: readonly CatalogOption[]): ModelCatalog => {
+      const rows = [...options];
+      if (config.model && !rows.some((row) => row.id === config.model)) {
+        rows.unshift({ id: config.model, label: config.model, custom: true });
       }
+      return { default: config.model ?? rows[0]?.id ?? "", options: rows };
     };
-    if (apiKey) void fetchModels();
+    const fingerprint = [config.url, secretId(apiKey)].join("|");
+    // A list this endpoint reported before (disk) is used at once; nothing is
+    // requested until the picker first asks (refreshModels).
+    const cached = apiKey ? compatCatalogs.peek(fingerprint) : null;
+    let catalog = buildCatalog(cached?.options ?? DEFAULT_MODELS.options);
+    const refreshModels = async () => {
+      if (!apiKey) return;
+      const live = compatCatalogs.read(
+        fingerprint,
+        async () => {
+          const options = await probeOpenAICompatModels(config.url, apiKey);
+          return options ? { default: options[0]!.id, options } : null;
+        },
+        { ...process.env, ...input.environment },
+      );
+      if (live) catalog = buildCatalog(live.options);
+    };
 
     return createOpenAIChatRuntime({
       input,
@@ -134,7 +173,7 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
       apiKey,
       apiUrl: config.url,
       models: () => catalog,
-      refreshModels: fetchModels,
+      refreshModels,
       requestBody: (model, messages, stream) => ({
         model,
         messages,

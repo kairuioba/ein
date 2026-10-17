@@ -24,6 +24,7 @@ export interface DispatchApiDeps {
 }
 
 const RUN_ACTION = /^\/api\/dispatch\/runs\/([\w-]+)\/(approve|cancel|diagnose|amend)$/;
+const CHECKPOINT = /^\/api\/dispatch\/runs\/([\w-]+)\/checkpoint$/;
 const RETRY = /^\/api\/dispatch\/runs\/([\w-]+)\/subtasks\/([\w-]+)\/retry$/;
 /** PATCH: your pick of model and effort for a subtask that has not started. */
 const SUBTASK = /^\/api\/dispatch\/runs\/([\w-]+)\/subtasks\/([\w-]+)$/;
@@ -58,6 +59,13 @@ export async function handleDispatchApi(
     return true;
   }
 
+  if (method === "GET" && path === "/api/dispatch/retros") {
+    // the self-improvement loop reads these: hard facts about finished runs
+    const limit = Number(url.searchParams.get("limit")) || 20;
+    json(res, 200, { retros: dispatcher.retros(limit) });
+    return true;
+  }
+
   if (path === "/api/dispatch/routes") {
     if (method === "PUT") {
       const body = await deps.readBody(req);
@@ -84,6 +92,14 @@ export async function handleDispatchApi(
     }
   }
 
+  const checkpoint = method === "POST" ? CHECKPOINT.exec(path) : null;
+  if (checkpoint) {
+    const body = (await deps.readBody(req)) ?? {};
+    const result = dispatcher.checkpoint(checkpoint[1]!, { note: body.note, nextStep: body.nextStep, by: body.by });
+    json(res, "error" in result ? 400 : 200, "error" in result ? result : { run: result });
+    return true;
+  }
+
   const action = method === "POST" ? RUN_ACTION.exec(path) : null;
   if (action) {
     const [, runId, verb] = action;
@@ -95,10 +111,12 @@ export async function handleDispatchApi(
       return true;
     }
     if (verb === "amend") {
-      // the owner's call from the workbench always goes through
+      // the owner's call from the workbench always goes through; when the
+      // company plan's remaining work sits in departments' own plans, the
+      // newcomers join those plans instead of being turned away
       const body = (await deps.readBody(req)) ?? {};
       await deps.refreshEngines?.();
-      const result = dispatcher.amend(runId!, Number(body.add), { by: "owner" });
+      const result = dispatcher.amendFromWorkbench(runId!, Number(body.add));
       json(res, "error" in result ? 400 : 200, result);
       return true;
     }
@@ -145,7 +163,7 @@ export async function handleDispatchApi(
       return true;
     }
     await deps.refreshEngines?.();
-    const result = dispatcher.submitPlan(fromBotId, fromThreadId, { goal: body.goal, subtasks: body.subtasks });
+    const result = dispatcher.submitPlan(fromBotId, fromThreadId, { goal: body.goal, charter: body.charter, subtasks: body.subtasks });
     // 200 with an error body: the agent reads the message and fixes its plan
     if ("error" in result) {
       json(res, 200, { error: result.error });

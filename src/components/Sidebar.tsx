@@ -47,6 +47,7 @@ import { skillRecorderEnabled } from "@/lib/feature-flags";
 import { nextRename } from "@/lib/rename";
 import { downloadAllBots } from "@/lib/team-files";
 import { buildDepartments, chiefBot, unassignedBots } from "@/lib/org";
+import { activityTask } from "@/lib/bot-tasks";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { TeamLibraryPanel, type TeamImportResult } from "./TeamLibraryPanel";
 import { RenameTitle } from "./RenameTitle";
@@ -348,7 +349,13 @@ function BotRow({
       : cn("gap-2 rounded-[11px] px-1.5", chief ? (compact ? "h-10" : "h-12") : compact ? "h-8" : "h-10"),
     selected ? SELECTED_FILL : ROW_HOVER,
   );
-  const select = () => dispatch({ type: "select", id: bot.id });
+  const select = () => {
+    dispatch({ type: "select", id: bot.id });
+    // the badge may be about a different task than the active one: open the
+    // conversation that actually has the news instead of a blank new task
+    const target = activityTask(bot);
+    if (target) dispatch({ type: "switchTask", botId: bot.id, threadId: target.threadId });
+  };
   const openMenuAt = (x: number, y: number) => onMenu({ botId: bot.id, x, y });
   const flag = needsYou ? (
     <Diamond size={13} label={t("Needs you")} />
@@ -386,12 +393,15 @@ function BotRow({
       )}
       {!iconOnly &&
         (compact ? (
-          <span className="flex shrink-0 items-center gap-1.5">
+          // The archive button is absolutely positioned over this column while
+          // the row is hovered; fade the time and unread marker so the two
+          // never draw on top of each other.
+          <span className="flex shrink-0 items-center gap-1.5 transition-opacity group-hover:opacity-0 group-focus-within:opacity-0">
             {flag}
             {time && <span className="text-[11.5px] text-ink-secondary/75 tabular-nums">{time}</span>}
           </span>
         ) : (
-          <span className="flex shrink-0 flex-col items-end gap-px">
+          <span className="flex shrink-0 flex-col items-end gap-px transition-opacity group-hover:opacity-0 group-focus-within:opacity-0">
             <span className="flex h-[17.5px] items-center text-[11.5px] text-ink-secondary/75 tabular-nums">{time}</span>
             <span className="flex h-[15.5px] items-center">{flag}</span>
           </span>
@@ -1602,7 +1612,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     views.set(id, {
       id,
       // with departments around, the bots outside them are "not in a department"
-      label: id === BOTS_SECTION_ID && departments.length ? t("No department") : sidebarSectionLabel(id),
+      label: id === BOTS_SECTION_ID && departments.length ? t("Not in any department") : sidebarSectionLabel(id),
       color: BUILTIN_COLORS[id],
       count: bots.length + groups.length,
       rows: [

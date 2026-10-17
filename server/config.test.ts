@@ -359,6 +359,17 @@ describe("default fleet", () => {
     expect(map.hermes).toEqual({ driver: "hermesAgent", environment: {} });
   });
 
+  it("ships the Claude API engine as a second Claude instance, paid per use", () => {
+    const map = instanceConfigs({});
+    expect(map.claude).toEqual({ driver: "claudeAgent", environment: {} });
+    expect(map.claudeApi).toEqual({
+      driver: "claudeAgent",
+      displayName: "Claude API",
+      config: { auth: "apiKey" },
+      environment: {},
+    });
+  });
+
   it("ships Cursor as a default-fleet subscription engine", () => {
     const map = instanceConfigs({});
     expect(map.cursor).toEqual({ driver: "cursorAgent", environment: {} });
@@ -416,6 +427,12 @@ describe("default fleet", () => {
     expect(map.hermes?.driver).toBe("hermesAgent");
     expect(map.cursor?.driver).toBe("cursorAgent");
     expect(map.openaiCompat?.driver).toBe("openai-compat");
+    expect(map.claudeApi).toEqual({
+      driver: "claudeAgent",
+      displayName: "Claude API",
+      config: { auth: "apiKey" },
+      environment: {},
+    });
   });
 
   it("does not expand a one-off shadow fleet", () => {
@@ -462,10 +479,12 @@ describe("Instance CLI override", () => {
     // instances section of config.json.
     const cfg: AppConfig = {
       xai: { key: "SECRET-XAI" },
+      claudeApi: { key: "SECRET-ANTHROPIC" },
       box: { token: "SECRET-BOX" },
       opencodeGo: { apiKey: "SECRET-OCG" },
       instances: {
         claude: { driver: "claudeAgent" },
+        claudeApi: { driver: "claudeAgent", config: { auth: "apiKey" } },
         grokApi: { driver: "grok" },
         computer: { driver: "boxAgent" },
         opencode: { driver: "opencodeGo" },
@@ -522,6 +541,22 @@ describe("credential env narrowing", () => {
     expect(instances.codex.environment).toEqual({});
   });
 
+  it("injects the Anthropic key only into the Claude instance that bills per use", () => {
+    const cfg: AppConfig = {
+      claudeApi: { key: "SECRET-ANTHROPIC" },
+      instances: {
+        claude: { driver: "claudeAgent" },
+        claudeApi: { driver: "claudeAgent", config: { auth: "apiKey" } },
+        claudeSub: { driver: "claudeAgent", config: { auth: "subscription" } },
+      },
+    };
+    const instances = instanceConfigs(cfg);
+    expect(instances.claudeApi.environment).toEqual({ EIN_CLAUDE_API_KEY: "SECRET-ANTHROPIC" });
+    // the subscription engines (default and explicitly configured) get none
+    expect(instances.claude.environment).toEqual({});
+    expect(instances.claudeSub.environment).toEqual({});
+  });
+
   it("hands no credential to any default-fleet CLI engine except the Computer", () => {
     // the default `grok` instance is the CLI-login grokAgent, not the
     // API-key driver, so a configured xai key reaches nobody by default
@@ -545,6 +580,7 @@ describe("credential env narrowing", () => {
 describe("credential env preference", () => {
   const VARS = [
     "XAI_API_KEY",
+    "EIN_CLAUDE_API_KEY",
     "OPENAI_COMPAT_API_KEY",
     "OPENAI_COMPAT_URL",
     "OPENAI_COMPAT_MODEL",
@@ -579,6 +615,7 @@ describe("credential env preference", () => {
       join(DATA_DIR, "config.json"),
       JSON.stringify({
         xai: { key: "file-xai", url: "https://api.example.test/v1" },
+        claudeApi: { key: "file-anthropic" },
         box: { token: "file-box" },
         opencodeGo: { apiKey: "file-ocg" },
         tts: { key: "file-tts", voice: "narrator" },
@@ -586,12 +623,14 @@ describe("credential env preference", () => {
       }),
     );
     process.env.XAI_API_KEY = "env-xai";
+    process.env.EIN_CLAUDE_API_KEY = "env-anthropic";
     process.env.BOX_TOKEN = "env-box";
     process.env.OPENCODE_API_KEY = "env-ocg";
     process.env.OMB_TTS_KEY = "env-tts";
     process.env.OMB_OPENAI_IMAGE_KEY = "env-image";
     const cfg = loadConfig();
     expect(cfg.xai).toEqual({ key: "env-xai", url: "https://api.example.test/v1" });
+    expect(cfg.claudeApi).toEqual({ key: "env-anthropic" });
     expect(cfg.box).toEqual({ token: "env-box" });
     expect(cfg.opencodeGo).toEqual({ apiKey: "env-ocg" });
     expect(cfg.tts).toEqual({ key: "env-tts", voice: "narrator" });
@@ -601,10 +640,16 @@ describe("credential env preference", () => {
   it("falls back to the config file when the env var is unset (dev mode)", () => {
     writeFileSync(
       join(DATA_DIR, "config.json"),
-      JSON.stringify({ xai: { key: "file-xai" }, tts: { key: "file-tts" }, imageGen: { key: "file-image" } }),
+      JSON.stringify({
+        xai: { key: "file-xai" },
+        claudeApi: { key: "file-anthropic" },
+        tts: { key: "file-tts" },
+        imageGen: { key: "file-image" },
+      }),
     );
     const cfg = loadConfig();
     expect(cfg.xai?.key).toBe("file-xai");
+    expect(cfg.claudeApi?.key).toBe("file-anthropic");
     expect(cfg.tts?.key).toBe("file-tts");
     expect(cfg.imageGen?.key).toBe("file-image");
   });
@@ -684,6 +729,14 @@ describe("credential env preference", () => {
     expect(process.env.OMB_TTS_KEY).toBeUndefined();
   });
 
+  it("syncCredentialEnv keeps the Claude API key in step with a save", () => {
+    process.env.EIN_CLAUDE_API_KEY = "boot-injected";
+    syncCredentialEnv({ claudeApi: { key: "just-saved" } });
+    expect(process.env.EIN_CLAUDE_API_KEY).toBe("just-saved");
+    syncCredentialEnv({ claudeApi: { key: "" } });
+    expect(process.env.EIN_CLAUDE_API_KEY).toBeUndefined();
+  });
+
   it("syncCredentialEnv keeps model and provider env in step with a save", () => {
     // loadConfig() prefers OPENAI_COMPAT_MODEL/PROVIDER over the file, so a
     // mid-session save must update them like key/url or the boot-injected
@@ -728,10 +781,40 @@ describe("workspace credential env strip", () => {
   it("covers in-process secrets and private app-state paths", () => {
     // These secrets have no per-driver ACP allowlist entry anywhere — they are
     // consumed in-process (Computer driver / voice module), never by a CLI
+    expect(WORKSPACE_CREDENTIAL_ENV).toContain("EIN_CLAUDE_API_KEY");
     expect(WORKSPACE_CREDENTIAL_ENV).toContain("BOX_TOKEN");
     expect(WORKSPACE_CREDENTIAL_ENV).toContain("OMB_TTS_KEY");
     expect(WORKSPACE_CREDENTIAL_ENV).toContain("OMB_OPENAI_IMAGE_KEY");
     expect(WORKSPACE_CREDENTIAL_ENV).toContain("OMB_BROWSER_CONNECTION");
     expect(WORKSPACE_CREDENTIAL_ENV).toContain("OMB_USER_DATA");
+  });
+});
+
+describe("developer edition maintenance config", () => {
+  const path = join(DATA_DIR, "config.json");
+  beforeEach(() => {
+    mkdirSync(DATA_DIR, { recursive: true });
+    rmSync(path, { force: true });
+  });
+  afterEach(() => {
+    rmSync(path, { force: true });
+  });
+
+  it("persists the maintenance section across saveConfig and loadConfig", () => {
+    saveConfig({ maintenance: { repoPath: "/Users/owner/Ein-src", botId: "bot-1", channel: "dev" } });
+    expect(JSON.parse(readFileSync(path, "utf8")).maintenance).toEqual({
+      repoPath: "/Users/owner/Ein-src",
+      botId: "bot-1",
+      channel: "dev",
+    });
+    expect(loadConfig().maintenance).toEqual({ repoPath: "/Users/owner/Ein-src", botId: "bot-1", channel: "dev" });
+
+    // an unrelated save must not drop the desk's fields
+    saveConfig({ profile: { name: "Ada" } });
+    expect(loadConfig().maintenance).toEqual({ repoPath: "/Users/owner/Ein-src", botId: "bot-1", channel: "dev" });
+
+    // switching channels is a partial update, not a replace
+    saveConfig({ maintenance: { channel: "stable" } });
+    expect(loadConfig().maintenance).toEqual({ repoPath: "/Users/owner/Ein-src", botId: "bot-1", channel: "stable" });
   });
 });

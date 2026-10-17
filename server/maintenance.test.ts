@@ -10,6 +10,7 @@ import {
   developerStatus,
   maintenanceHandbook,
   releaseArgs,
+  releasePreflight,
   repoState,
   resetDeveloperStatus,
   type ToolRunner,
@@ -81,11 +82,49 @@ describe("builds", () => {
     for (const bad of ["--help", "-f", "a..b", "x y", "$(rm)", ""]) expect(validRef(bad)).toBe(false);
   });
 
-  it("always takes the workflow from main and builds the chosen ref on the chosen channel", () => {
+  it("takes a dev build's workflow from the branch it builds, and the stable one from main", () => {
     expect(releaseArgs("dev", "fix/chat")).toEqual([
-      "workflow", "run", "release-ein.yml", "-R", "kairuioba/ein", "--ref", "main",
+      "workflow", "run", "release-ein.yml", "-R", "kairuioba/ein", "--ref", "fix/chat",
       "-f", "ref=fix/chat", "-f", "channel=dev", "-f", "windows=true",
     ]);
+    expect(releaseArgs("stable", "main")).toEqual([
+      "workflow", "run", "release-ein.yml", "-R", "kairuioba/ein", "--ref", "main",
+      "-f", "ref=main", "-f", "channel=stable", "-f", "windows=true",
+    ]);
+  });
+
+  it("preflights the branch, its workflow, its version and the latest stable tag", async () => {
+    const pkg = Buffer.from(JSON.stringify({ version: "1.1.2" })).toString("base64");
+    const run = runner({
+      "gh api repos/kairuioba/ein/branches/fix%2Fchat": { ok: true, out: "fix/chat" },
+      "gh api repos/kairuioba/ein/contents": { ok: true, out: "release-ein.yml" },
+      "gh api": { ok: true, out: "" },
+    });
+    // `gh api` answers by its repo/path prefix; map the content call explicitly.
+    const preflightRunner: ToolRunner = async (file, args) => {
+      const path = args[1] ?? "";
+      if (path.includes("/branches/")) return { ok: true, out: "fix/chat" };
+      if (path.includes("/contents/.github/workflows/")) return { ok: true, out: "release-ein.yml" };
+      if (path.includes("/contents/package.json")) return { ok: true, out: pkg };
+      if (args[0] === "release") return { ok: true, out: JSON.stringify([{ tagName: "v1.1.2", isPrerelease: false }, { tagName: "v1.1.3-dev.11", isPrerelease: true }]) };
+      return run(file, args);
+    };
+    const info = await releasePreflight("fix/chat", preflightRunner);
+    expect(info).toMatchObject({
+      ref: "fix/chat",
+      branch: true,
+      workflow: true,
+      version: "1.1.2",
+      nextDevVersion: "1.1.3-dev.N",
+      latestStable: "v1.1.2",
+      stableAlreadyReleased: true,
+    });
+  });
+
+  it("reports a ref that is not on GitHub instead of pretending", async () => {
+    const missing: ToolRunner = async () => ({ ok: false, out: "HTTP 404: Not Found" });
+    expect(await releasePreflight("fix/nope", missing)).toMatchObject({ branch: false, workflow: false });
+    expect(await releasePreflight("--bad", missing)).toMatchObject({ branch: false });
   });
 
   it("fits the maintenance handbook into a bot's description", () => {

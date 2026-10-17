@@ -40,6 +40,12 @@ import {
 } from "./local-inject.ts";
 import { appendNative } from "./native.ts";
 import { CLAUDE_MODEL_ID, claudeLiveModels, type ClaudeModelProbe } from "./claude-models.ts";
+import {
+  CLAUDE_API_CREDENTIAL_TARGET,
+  claudeApiKeyFrom,
+  decodeClaudeAuth,
+  type ClaudeAuthMode,
+} from "./claude-api.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
 import { t } from "../../shared/i18n.ts";
 
@@ -162,10 +168,16 @@ export function claudeLoginProblem(login: ClaudeLogin): string | undefined {
  * leaks through, and a nested CLI must not inherit this session's identity.
  * Keeping the probe and turn environments identical prevents setup from
  * claiming an API-key login that the turn itself would deliberately remove.
- */
+ *
+ * `apiKey` is set ONLY by the `auth: "apiKey"` engine, from the key the user
+ * explicitly saved (never from the ambient environment): it becomes the
+ * child's ANTHROPIC_API_KEY, the one credential that engine is allowed to
+ * spend. A subscription turn passes none and reaches the CLI with no
+ * per-use credential at all, exactly as before. */
 function claudeEnvironment(
   model?: string | null,
   source: NodeJS.ProcessEnv = process.env,
+  apiKey?: string,
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...source, PATH: augmentedPath(), NPM_CONFIG_LOGLEVEL: "error" };
   // Ein started from inside a Claude Code session must not hand that
@@ -182,6 +194,8 @@ function claudeEnvironment(
     // key, or a gateway token that would also receive the sign-in
     delete env.ANTHROPIC_API_KEY;
     delete env.ANTHROPIC_AUTH_TOKEN;
+    // the API-key engine's whole reason to exist: the key the user saved
+    if (apiKey) env.ANTHROPIC_API_KEY = apiKey;
   }
   return env;
 }
@@ -191,6 +205,10 @@ const DRIVER_KIND = "claudeAgent";
 export interface ClaudeConfig {
   cli: string;
   permissionMode: "acceptEdits" | "auto" | "bypassPermissions";
+  /** Who pays: the CLI's own claude.ai subscription sign-in (default), or
+   * the user's saved Anthropic API key (the separate "Claude API" engine,
+   * billed per use). See claude-api.ts. */
+  auth?: ClaudeAuthMode;
   /** Available Claude built-ins. An empty list passes `--tools ""`. */
   tools?: string[];
   /** Claude tool patterns to deny after the available set is selected. */
@@ -553,9 +571,11 @@ function decodeConfig(raw: unknown): ClaudeConfig {
   }
   const tools = decodeToolList(o.tools, "tools");
   const disallowedTools = decodeToolList(o.disallowedTools, "disallowedTools");
+  const auth = decodeClaudeAuth(o.auth);
   return {
     cli: typeof o.cli === "string" ? o.cli : "claude",
     permissionMode: (mode as ClaudeConfig["permissionMode"]) ?? "acceptEdits",
+    ...(auth !== undefined ? { auth } : {}),
     ...(tools !== undefined ? { tools } : {}),
     ...(disallowedTools !== undefined ? { disallowedTools } : {}),
   };
@@ -594,12 +614,26 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
 
   async create(input: DriverCreateInput<ClaudeConfig>): Promise<ProviderInstance> {
     const { instanceId, config } = input;
-    const catalogEnv: Record<string, string | undefined> = { ...process.env, ...input.environment };
+    // `auth` picks who pays. The subscription engine (the default, and every
+    // saved config that predates this field) keeps its historical behavior;
+    // the API-key engine runs on the key the user explicitly saved for it
+    // (claude-api.ts) and never on a key found on the machine.
+    const auth: ClaudeAuthMode = config.auth ?? "subscription";
+    const apiKey = auth === "apiKey" ? claudeApiKeyFrom(input.environment) : "";
+    const instanceEnvironment = (): NodeJS.ProcessEnv => ({ ...process.env, ...input.environment });
+    /** One env builder for probes and turns, so setup can never report a
+     * login the turn itself would strip. */
+    const cliEnvironment = (model?: string | null): NodeJS.ProcessEnv =>
+      claudeEnvironment(model, instanceEnvironment(), apiKey || undefined);
+    const catalogEnv: Record<string, string | undefined> = instanceEnvironment();
     let models = STATIC_CLAUDE_MODELS;
     // The CLI is asked in the background (never while the picker waits); its
     // answer lands on the next refresh, or right away through onUpdate.
     // Test runs ask only when they opt in, so no suite spawns a real CLI.
-    const probeEnv = claudeEnvironment(undefined, catalogEnv);
+    // The API-key engine asks the same installed Claude Code CLI (with the
+    // saved key in the probe env, so it can answer); its menu is the same
+    // per-account list, with STATIC_CLAUDE_MODELS as the fallback.
+    const probeEnv = cliEnvironment(undefined);
     const askCli = !process.env.VITEST || process.env.EIN_CLAUDE_MODEL_PROBE === "1";
     const refreshModels = async (): Promise<void> => {
       try {
@@ -614,11 +648,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     // The last answer to "is this the user's subscription?" — snapshot() and
     // the turn gate share it so a turn does not pay for an `auth status` run
     // every time; a refusal always re-asks first (the user may just have
-    // signed in).
+    // signed in). The API-key engine never calls this: its paid-for key, not
+    // the CLI's login, is its whole identity.
     let loginCache: { at: number; login: ClaudeLogin } | null = null;
     const currentLogin = async (fresh = false): Promise<ClaudeLogin> => {
       if (!fresh && loginCache && Date.now() - loginCache.at < 60_000) return loginCache.login;
-      const login = await claudeLogin(config.cli, claudeEnvironment(undefined, { ...process.env, ...input.environment }));
+      const login = await claudeLogin(config.cli, cliEnvironment(undefined));
       loginCache = { at: Date.now(), login };
       return login;
     };
@@ -748,26 +783,45 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       const turnEnvironment: NodeJS.ProcessEnv = { ...process.env, ...input.environment };
       const turnModel = await resolveClaudeTurnModel(turn.model, turnEnvironment);
       const injected = applyClaudeInject({ ...turnEnvironment }, turnModel);
-      // A cloud turn runs on the user's own Claude subscription or not at all:
-      // a CLI signed in with an API key, a Console account or a gateway token
-      // would bill per use without the user ever having chosen that. Local
-      // models (injected) need no cloud sign-in.
       if (!injected.injected) {
-        let login = await currentLogin();
-        if (!login.subscription) login = await currentLogin(true);
-        // a CLI that could not answer at all goes on to spawn, which reports why
-        if (login.checked && !login.subscription) {
-          emit({ ...base(threadId, turnId), type: "turn.started" });
-          emit({
-            ...base(threadId, turnId),
-            type: "runtime.error",
-            message:
-              claudeLoginProblem(login) ??
-              t("Claude Code is not signed in — run `claude auth login` in a terminal and sign in with your Claude account"),
-            setup: true,
-          });
-          emit({ ...base(threadId, turnId), type: "turn.completed", ok: false, stopReason: "auth_required", cost: null });
-          return { turnId };
+        if (auth === "apiKey") {
+          // The API-key engine has no sign-in to check and no fallback
+          // credential: only the key the user saved for it counts, and
+          // without one the turn must stop before spawning (never borrow the
+          // machine's ANTHROPIC_API_KEY — that would spend a key the person
+          // never pointed at this engine).
+          if (!apiKey) {
+            emit({ ...base(threadId, turnId), type: "turn.started" });
+            emit({
+              ...base(threadId, turnId),
+              type: "runtime.error",
+              message: t("Claude API needs an API key — add one in Settings › Engines › Claude API. Anthropic bills every call on it to you."),
+              setup: true,
+            });
+            emit({ ...base(threadId, turnId), type: "turn.completed", ok: false, stopReason: "auth_required", cost: null });
+            return { turnId };
+          }
+        } else {
+          // A subscription turn runs on the user's own Claude subscription or
+          // not at all: a CLI signed in with an API key, a Console account or
+          // a gateway token would bill per use without the user ever having
+          // chosen that. Local models (injected) need no cloud sign-in.
+          let login = await currentLogin();
+          if (!login.subscription) login = await currentLogin(true);
+          // a CLI that could not answer at all goes on to spawn, which reports why
+          if (login.checked && !login.subscription) {
+            emit({ ...base(threadId, turnId), type: "turn.started" });
+            emit({
+              ...base(threadId, turnId),
+              type: "runtime.error",
+              message:
+                claudeLoginProblem(login) ??
+                t("Claude Code is not signed in — run `claude auth login` in a terminal and sign in with your Claude account"),
+              setup: true,
+            });
+            emit({ ...base(threadId, turnId), type: "turn.completed", ok: false, stopReason: "auth_required", cost: null });
+            return { turnId };
+          }
         }
       }
       if (injected.model) args.push("--model", injected.model);
@@ -854,7 +908,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         args.push("--allowedTools", allowed.join(","));
       }
 
-      const env = claudeEnvironment(turnModel, turnEnvironment);
+      const env = cliEnvironment(turnModel);
       const cwd = turn.cwd ?? homedir();
       // everything that shapes the process, minus session/turn specifics
       // (the --mcp-config file is a fresh temp path each time; its CONTENT
@@ -1227,13 +1281,30 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     };
 
     const snapshot = async (): Promise<ProviderSnapshot> => {
-      const env = claudeEnvironment(undefined, { ...process.env, ...input.environment });
+      const env = cliEnvironment(undefined);
       const version = await new Promise<string | null>((resolve) => {
         execCli(config.cli, ["--version"], { timeout: 8000, env }, (err, stdout) =>
           resolve(err ? null : stdout.trim()),
         );
       });
       if (!version) return { state: "unavailable", reason: t("`{cli}` CLI not found", { cli: config.cli }) };
+      if (auth === "apiKey") {
+        // Pay-as-you-go by construction: every call is charged to the key the
+        // user saved, so there is no notional subscription cost to explain.
+        // `credential` is how the setup card knows to ask for a key (and how
+        // it saves one) instead of offering a `claude auth login` sign-in.
+        const configured = Boolean(apiKey);
+        return {
+          state: "available",
+          version,
+          authenticated: configured,
+          billing: "metered",
+          credential: { target: CLAUDE_API_CREDENTIAL_TARGET, configured },
+          ...(configured
+            ? {}
+            : { reason: t("Add an Anthropic API key to run the Claude API engine. Anthropic bills every call on it to you, per use.") }),
+        };
+      }
       const login = await claudeLogin(config.cli, env);
       loginCache = { at: Date.now(), login };
       const problem = claudeLoginProblem(login);
@@ -1260,7 +1331,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           ["-p", "--model", "haiku", "--output-format", "text"],
           {
             stdio: ["pipe", "pipe", "pipe"],
-            env: claudeEnvironment("haiku", { ...process.env, ...input.environment }),
+            env: cliEnvironment("haiku"),
           },
         );
         let stdout = "";

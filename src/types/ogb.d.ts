@@ -267,6 +267,7 @@ type SkillRecordingPayload = {
         name:
           | "composioApiKey"
           | "xaiApiKey"
+          | "claudeApiKey"
           | "boxToken"
           | "opencodeGoApiKey"
           | "ttsKey"

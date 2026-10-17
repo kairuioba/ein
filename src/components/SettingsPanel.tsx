@@ -510,8 +510,11 @@ function MemoryCard({ bot, open, onToggle, onSaved }: { bot: Bot; open: boolean;
 
       {open && !loading && !topic && (
         <div className="mt-3">
+          {/* field-sizing: content grows the editor with the note instead of
+              nesting a second scrollbar inside the panel: scrolling the memory
+              card used to get caught in the textarea and clip lines. */}
           <textarea
-            className={cn(inputClass, "min-h-[160px] resize-y font-mono text-[12px] leading-relaxed")}
+            className={cn(inputClass, "min-h-[160px] resize-none font-mono text-[12px] leading-relaxed [field-sizing:content]")}
             value={text}
             placeholder={t("Nothing remembered yet. The bot writes durable notes here — or add your own.")}
             aria-label={t("Bot memory")}

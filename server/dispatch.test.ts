@@ -164,8 +164,20 @@ describe("plan validation", () => {
     const plan = validatePlan(
       {
         goal: "Launch kit",
+        charter: { success_criteria: "kit ships", non_goals: "no price change", constraints: "two weeks", deadline: "Friday", budget_cny: 500 },
         subtasks: [
-          { id: "research", title: "Market research", brief: "Collect competitor pricing", role: "Analyst", needs: ["reasoning", "bogus"], difficulty: 9 },
+          {
+            id: "research",
+            title: "Market research",
+            brief: "Collect competitor pricing",
+            role: "Analyst",
+            needs: ["reasoning", "bogus"],
+            difficulty: 9,
+            acceptance: "5 competitors with a price",
+            boundaries: "public pages only",
+            deliverable: "a table in the reply",
+            reviewer: "总控",
+          },
           { id: "copy", title: "Write copy", brief: "Write the landing page copy", depends_on: ["research"] },
         ],
       },
@@ -173,8 +185,25 @@ describe("plan validation", () => {
     );
     expect("error" in plan).toBe(false);
     if ("error" in plan) return;
-    expect(plan.subtasks[0]).toMatchObject({ id: "research", role: "Analyst", needs: ["reasoning"], difficulty: 5, dependsOn: [] });
+    expect(plan.subtasks[0]).toMatchObject({
+      id: "research",
+      role: "Analyst",
+      needs: ["reasoning"],
+      difficulty: 5,
+      dependsOn: [],
+      acceptance: "5 competitors with a price",
+      boundaries: "public pages only",
+      deliverable: "a table in the reply",
+      reviewer: "总控",
+    });
     expect(plan.subtasks[1]).toMatchObject({ id: "copy", role: "Write copy", dependsOn: ["research"] });
+    expect(plan.charter).toEqual({
+      successCriteria: "kit ships",
+      nonGoals: "no price change",
+      constraints: "two weeks",
+      deadline: "Friday",
+      budgetCny: 500,
+    });
   });
 
   it("explains what to fix", () => {
@@ -293,11 +322,147 @@ describe("Dispatcher", () => {
     expect(host.chips[0]?.label).toContain("2");
   });
 
+  it("keeps the plan's boundaries, deliverable, acceptance and reviewer; reviewer defaults to the chief", async () => {
+    const result = submit([
+      {
+        id: "copy",
+        title: "发布会文案",
+        brief: "写发布会主持稿",
+        role: "文案策划",
+        acceptance: "三分钟内能念完，含开场、产品、结尾",
+        boundaries: "不改产品名，不承诺价格",
+        deliverable: "Markdown，三段",
+        reviewer: "Ops",
+      },
+      { id: "data", title: "价格表", brief: "整理价格", role: "数据分析师" },
+    ]);
+    expect("error" in result).toBe(false);
+    if ("error" in result) return;
+    expect(result.run.subtasks[0]).toMatchObject({
+      acceptance: "三分钟内能念完，含开场、产品、结尾",
+      boundaries: "不改产品名，不承诺价格",
+      deliverable: "Markdown，三段",
+      reviewer: "Ops",
+    });
+    // no reviewer sent: the plan's chief verifies it
+    expect(result.run.subtasks[1]!.reviewer).toBe("总控");
+    await flush();
+    const prompt = host.turns.find((turn) => turn.text.includes("Deliverable:"))?.text ?? "";
+    expect(prompt).toContain("Deliverable: Markdown，三段");
+    expect(prompt).toContain("Out of scope / do not touch: 不改产品名，不承诺价格");
+    expect(prompt).toContain("Acceptance criteria (checked by Ops)");
+    expect(prompt).toContain("Reviewer: Ops");
+  });
+
+  it("keeps a charter and injects it into every worker, and stores checkpoints", async () => {
+    const result = dispatcher.submitPlan("chief", "chief-thread", {
+      goal: "一周的发布会筹备",
+      charter: {
+        success_criteria: "发布会按期上线",
+        non_goals: "不改产品名、不对外发物料",
+        constraints: "预算 500 元，只做文本",
+        deadline: "下周五",
+        budget_cny: 500,
+      },
+      subtasks: [{ id: "a", title: "文案", brief: "写文案", role: "文案策划" }],
+    });
+    expect("error" in result).toBe(false);
+    if ("error" in result) return;
+    expect(result.run.charter).toMatchObject({ nonGoals: "不改产品名、不对外发物料", budgetCny: 500 });
+    await flush();
+    const prompt = host.turns.find((turn) => turn.text.includes("Your subtask:"))?.text ?? "";
+    expect(prompt).toContain("Success criteria: 发布会按期上线");
+    expect(prompt).toContain("Do NOT do (non-goals): 不改产品名、不对外发物料");
+    expect(prompt).toContain("Constraints: 预算 500 元，只做文本");
+    expect(prompt).toContain("Deadline: 下周五");
+    const checkpoint = dispatcher.checkpoint(result.run.id, { note: "已完成文案初稿", nextStep: "进入验收", by: "owner" });
+    expect("error" in checkpoint).toBe(false);
+    if ("error" in checkpoint) return;
+    expect(checkpoint.checkpoints).toMatchObject([{ note: "已完成文案初稿", nextStep: "进入验收", by: "owner" }]);
+    expect(dispatcher.checkpoint(result.run.id, { note: "  " })).toMatchObject({ error: expect.stringContaining("note") });
+  });
+
+  it("never gives one bot a second task while it still holds one (one bot, one task)", async () => {
+    const first = submit([{ id: "a", title: "发布会文案", brief: "写文案", role: "文案策划" }]);
+    expect("error" in first).toBe(false);
+    if ("error" in first) return;
+    await settle();
+    expect(first.run.subtasks[0]!.assigneeBotId).toBe("writer");
+    expect(host.bot("writer")!.busy).toBe(true);
+    // the writer still holds the first task: the second task gets a new bot
+    const second = submit([{ id: "b", title: "产品文案", brief: "写产品文案", role: "文案策划" }]);
+    expect("error" in second).toBe(false);
+    if ("error" in second) return;
+    expect(second.run.subtasks[0]!.assigneeBotId).not.toBe("writer");
+    expect(second.run.subtasks[0]!.createdBot).toBe(true);
+  });
+
+  it("lets a fast teammate take a busy teammate's not-started subtask in the same task", async () => {
+    host.add({ id: "editor", name: "小笔", title: "文案策划", description: "负责文案与校对", section: "市场部" });
+    host.settingsValue = dispatchSettings({ maxConcurrent: 2 });
+    const result = submit([
+      { id: "s1", title: "主文案", brief: "写主文案", role: "文案策划", assignee: "小文" },
+      { id: "s2", title: "副文案", brief: "写副文案", role: "文案策划", assignee: "小笔" },
+      { id: "s3", title: "收尾文案", brief: "写收尾文案", role: "文案策划", assignee: "小笔" },
+    ]);
+    expect("error" in result).toBe(false);
+    if ("error" in result) return;
+    await settle();
+    const s1Turn = host.workerTurns().find((turn) => turn.botId === "writer");
+    expect(s1Turn).toBeTruthy();
+    host.finish(dispatcher, s1Turn!.threadId, true, "主文案好了");
+    await settle();
+    const run = dispatcher.get(result.run.id)!;
+    const s3 = run.subtasks.find((subtask) => subtask.id === "s3")!;
+    // the writer finished early; 小笔 is still busy, so the unwritten s3 moves
+    expect(s3.assigneeBotId).toBe("writer");
+    expect(s3.reassignedFrom).toBe("editor");
+    expect(s3.status).toBe("running");
+    expect(host.chips.some((chip) => chip.label.includes("took over"))).toBe(true);
+  });
+
+  it("records a retrospective when a run settles", async () => {
+    const result = submit([
+      { id: "a", title: "文案", brief: "写文案", role: "文案策划", acceptance: "三段以内" },
+      { id: "b", title: "数据", brief: "整理数据", role: "数据分析师", depends_on: ["a"] },
+    ]);
+    expect("error" in result).toBe(false);
+    if ("error" in result) return;
+    await dispatcher.cancel(result.run.id);
+    const retros = dispatcher.retros();
+    expect(retros[0]).toMatchObject({
+      runId: result.run.id,
+      status: "canceled",
+      goal: result.run.goal,
+      counts: { total: 2, canceled: 2, retried: 0 },
+    });
+    expect(retros[0]!.subtasks).toHaveLength(2);
+    expect(retros[0]!.subtasks[0]).toMatchObject({ title: "文案", role: "文案策划", reviewer: "总控" });
+    expect(typeof retros[0]!.finishedAt).toBe("number");
+  });
+
   it("falls back to the Chief's model when nothing can be recommended", () => {
     host.recommendation = null;
     const result = submit([{ id: "x", title: "视频剪辑", brief: "剪一条 30 秒预告片", role: "视频剪辑师" }]);
     expect("error" in result).toBe(false);
     expect(host.created[0]?.modelSelection).toEqual({ instanceId: "codex", model: "gpt-5.5" });
+  });
+
+  it("stops hiring at a department's headcount and shares the work with the people it has", () => {
+    const org = (headcount: number) => writeFileSync(join(dir, "org.json"), JSON.stringify({ departments: [{ section: "市场部", headcount }] }));
+    // 市场部 is the Chief plus one writer: a quota of 2 leaves no seat for a specialist
+    org(2);
+    const shared = submit([{ id: "data", title: "竞品数据分析", brief: "整理竞品对比表", role: "数据分析师" }]);
+    if ("error" in shared) throw new Error(shared.error);
+    expect(host.created).toHaveLength(0);
+    expect(shared.run.subtasks[0]!.assigneeBotId).toBe("writer");
+    // nobody left to share it with: the plan is refused, and says it is the quota
+    host.bot("writer")!.hidden = true;
+    org(1);
+    expect(submit([{ id: "data2", title: "竞品数据分析", brief: "整理竞品对比表", role: "数据分析师" }])).toMatchObject({
+      error: expect.stringContaining("headcount"),
+    });
+    expect(host.created).toHaveLength(0);
   });
 
   it("recommends a model and an effort for every subtask, and runs at the effort its difficulty calls for", async () => {
@@ -946,6 +1111,24 @@ describe("Dispatcher", () => {
       expect("error" in orgPlan([{ id: "video", title: "发布会视频", brief: "剪一条 30 秒视频", role: "视频剪辑师" }])).toBe(false);
     });
 
+    it("binds a chief's own create_bot to the hiring rule and the department headcount", () => {
+      writeOrg({ chiefBotId: "boss", rules: { chiefMay: { newSpecialist: false } } });
+      expect(dispatcher.createSpecialist("boss", { name: "视频", title: "视频剪辑师", instructions: "剪视频" })).toMatchObject({
+        error: expect.stringContaining("company rules"),
+      });
+      expect(host.created).toHaveLength(0);
+      // the rule is on: 技术部 holds three people, and its quota allows one more
+      writeOrg({ chiefBotId: "boss", rules: { chiefMay: { newSpecialist: true } }, departments: [{ section: "技术部", headcount: 4 }] });
+      expect(dispatcher.createSpecialist("tech", { name: "前端 2", title: "前端", instructions: "写页面" })).toMatchObject({ section: "技术部" });
+      expect(host.created).toHaveLength(1);
+      expect(dispatcher.createSpecialist("tech", { name: "前端 3", title: "前端", instructions: "写页面" })).toMatchObject({
+        error: expect.stringContaining("headcount"),
+      });
+      expect(host.created).toHaveLength(1);
+      // the 主 Bot has no section, so no department quota applies to it
+      expect("error" in dispatcher.createSpecialist("boss", { name: "翻译 2", title: "翻译", instructions: "翻译" })).toBe(false);
+    });
+
     it("lets a lead plan its part with its own team; the subtask finishes with the lead's report", async () => {
       writeOrg({ chiefBotId: "boss" });
       const top = orgPlan([{ id: "page", title: "落地页", brief: "做发布会落地页", role: "前端工程师" }]);
@@ -1183,11 +1366,74 @@ describe("Dispatcher", () => {
       // what is left now is 技术部's own: its lead staffs it, so the check says so
       const diagnosis = dispatcher.diagnose(top.run.id);
       if ("error" in diagnosis) throw new Error(diagnosis.error);
-      expect(diagnosis).toMatchObject({ verdict: "add-wont-help", reason: expect.stringContaining("leads staff") });
+      expect(diagnosis).toMatchObject({
+        verdict: "add-wont-help",
+        departmentWork: true,
+        reason: expect.stringContaining("department's own plan"),
+      });
       expect(diagnosis.remaining.find((entry) => entry.subtaskId === "qa")?.moved).toBe(false);
       expect(dispatcher.amend(top.run.id, 1, { by: "owner" })).toMatchObject({ error: expect.stringContaining("leads staff") });
       expect(dispatcher.amend(top.run.id, 1, { by: "chief", botId: "boss" })).toMatchObject({ error: expect.stringContaining("would not help") });
       expect(sub("qa").assigneeBotId).toBe("tech");
+    });
+
+    it("lets the workbench's 加人 reach the department's plan when the company plan has nothing left to hand out", async () => {
+      writeOrg({ chiefBotId: "boss" });
+      const top = orgPlan([
+        { id: "page", title: "落地页", brief: "做发布会落地页", role: "前端工程师" },
+        { id: "qa", title: "上线检查", brief: "检查落地页", assignee: "技术部" },
+      ]);
+      if ("error" in top) throw new Error(top.error);
+      await flush();
+      const leadTurn = host.workerTurns().find((turn) => turn.botId === "tech")!;
+      // the department's plan has not-started work of its own: a page under
+      // construction and a review waiting on it
+      const child = dispatcher.submitPlan("tech", leadTurn.threadId, {
+        goal: "落地页",
+        subtasks: [
+          { id: "build", title: "页面开发", brief: "写页面", role: "前端" },
+          { id: "review", title: "自查", brief: "检查页面", role: "前端", depends_on: ["build"] },
+        ],
+      });
+      if ("error" in child) throw new Error(child.error);
+      // the company plan itself has only department work: the direct call says so
+      expect(dispatcher.amend(top.run.id, 1, { by: "owner" })).toMatchObject({ error: expect.stringContaining("leads staff") });
+      // what the workbench calls does not stop there: the newcomers join the
+      // department's plan, where the not-started work is
+      const amend = async (runId: string, add: unknown) => {
+        let status = 0;
+        let payload: any;
+        await handleDispatchApi(
+          "POST",
+          `/api/dispatch/runs/${runId}/amend`,
+          new URL(`http://localhost/api/dispatch/runs/${runId}/amend`),
+          {} as IncomingMessage,
+          {} as ServerResponse,
+          {
+            dispatcher,
+            readBody: async () => ({ add }),
+            json: (_res, code, value) => {
+              status = code;
+              payload = value;
+            },
+            teamMapSnapshot: () => null,
+            ownsThread: () => true,
+            botName: (id) => host.bot(id)?.name,
+            modelLabel: () => "Claude · Sonnet",
+          },
+          () => host.settings(),
+        );
+        return { status, payload };
+      };
+      const added = await amend(top.run.id, 1);
+      expect(added).toMatchObject({ status: 200, payload: { ok: true, added: expect.any(Array), moved: ["review"] } });
+      expect(added.payload.added).toHaveLength(1);
+      const newcomer = added.payload.added[0] as string;
+      // the newcomer joins the department, not the company plan
+      expect(host.bot(newcomer)).toMatchObject({ section: "技术部" });
+      expect(dispatcher.get(child.run.id)!.subtasks.find((entry) => entry.id === "review")!.assigneeBotId).toBe(newcomer);
+      expect(dispatcher.get(child.run.id)!.squads?.[0]?.botIds).toEqual([newcomer]);
+      expect(dispatcher.get(top.run.id)!.subtasks.find((entry) => entry.id === "qa")!.assigneeBotId).toBe("tech");
     });
 
     it("keeps a lead's subtask waiting on its team across a restart", async () => {
@@ -1282,6 +1528,22 @@ describe("Dispatcher", () => {
       expect(moved).toBeGreaterThan(0);
       expect(pricier.suggestion!.costCny).toBeCloseTo(moved * 3.6 * 0.35, 1);
       expect(pricier.suggestion!.withinBudget).toBe(true);
+    });
+
+    it("stops newcomers at the department's headcount", async () => {
+      const run = await busyRun();
+      // 市场部 holds its Chief and both writers: a quota of 3 leaves no seat
+      const org = (headcount: number) =>
+        writeFileSync(join(dir, "org.json"), JSON.stringify({ departments: [{ section: "市场部", headcount }] }));
+      org(3);
+      expect(dispatcher.amend(run.id, 2, { by: "owner" })).toMatchObject({ error: expect.stringContaining("headcount") });
+      expect(run.squads).toBeUndefined();
+      // one seat left: one newcomer joins, the rest of the work stays with the team
+      org(4);
+      const result = dispatcher.amend(run.id, 2, { by: "owner" });
+      if ("error" in result) throw new Error(result.error);
+      expect(result.added).toHaveLength(1);
+      expect(host.bot(result.added[0]!)!.section).toBe("市场部");
     });
 
     it("hands only not-started subtasks to a new squad in the same run", async () => {
@@ -1439,6 +1701,9 @@ describe("Dispatcher", () => {
       const after = reloaded.get(run.id)!;
       expect(after.status).toBe("done");
       expect(after.squads![0]!.endedAt).toEqual(expect.any(Number));
+      // the restart finished this run: its 已完成 still has to reach the timeline
+      expect(reloaded.takeRestartFinished().map((entry) => entry.id)).toEqual([run.id]);
+      expect(reloaded.takeRestartFinished()).toEqual([]);
       // a dissolved squad gets no speed review afterwards
       const chips = host.chips.length;
       reloaded.checkReviews(after.squads![0]!.reviewAt + 1);

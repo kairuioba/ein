@@ -5,10 +5,13 @@
 // / set_model, and streams a scripted turn in response to `prompt`. Failure
 // modes mirror how the real CLI misbehaves:
 //
-//   FAKE_PI_MODE   happy (default) | tooluse | permission | interleave | turn-error | no-models | exit-early
+//   FAKE_PI_MODE   happy (default) | tooluse | permission | interleave | steer | turn-error | no-models | exit-early
 //   FAKE_PI_MODELS comma-separated provider/model pairs (default "ollama-cloud/glm-5.2,openai/gpt-4o")
 //   FAKE_PI_DUMP   path to append {argv, env} JSON, so a test can assert argv shape
 //                  and env hygiene (no leaked secrets into the pi child).
+//   FAKE_PI_STEER_DUMP path to append {prompt} / {steer} lines, so a test can
+//                  assert where an early steer was folded and that a live steer
+//                  reached pi's own `steer` command.
 
 import { appendFileSync, readFileSync } from "node:fs";
 
@@ -65,6 +68,14 @@ if (mode === "exit-early") {
 }
 
 const send = (obj: any) => process.stdout.write(JSON.stringify(obj) + "\n");
+const steerDump = (row: Record<string, unknown>) => {
+  if (!process.env.FAKE_PI_STEER_DUMP) return;
+  try {
+    appendFileSync(process.env.FAKE_PI_STEER_DUMP, JSON.stringify(row) + "\n");
+  } catch {
+    /* never let dumping break a run */
+  }
+};
 let sessionCounter = 0;
 let currentSessionFile: string | null = null;
 
@@ -130,6 +141,25 @@ const streamInterleaveTurn = () => {
   send({ type: "tool_execution_start", toolCallId: "call_2", toolName: "bash", args: { command: "echo two" } });
   send({ type: "tool_execution_end", toolCallId: "call_2", toolName: "bash", isError: false });
   send({ type: "message_update", usage: { input: 0, output: 0 }, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "after" } });
+  send({ type: "turn_end", message: { stopReason: "end_turn", usage: { input: 12, output: 3 } }, usage: { input: 12, output: 3 } });
+  send({ type: "agent_end" });
+};
+
+// steer: a tool turn runs, then the turn HOLDS after the tool batch — exactly
+// where pi delivers a steer — until the driver sends pi's `steer` command. The
+// continuation is part of the SAME turn: the next model call produces the
+// reply, so no new prompt is sent.
+const streamSteerTurn = () => {
+  send({ type: "agent_start" });
+  send({ type: "turn_start" });
+  send({ type: "tool_execution_start", toolCallId: "call_1", toolName: "bash", args: { command: "echo hi" } });
+  send({ type: "tool_execution_end", toolCallId: "call_1", toolName: "bash", isError: false });
+  // pi auto-continues after a tool batch; the turn stays open for a steer
+  send({ type: "turn_end", message: { stopReason: "toolUse", usage: { input: 5, output: 1 } }, usage: { input: 5, output: 1 } });
+};
+
+const finishSteerTurn = (steered: string) => {
+  send({ type: "message_update", usage: { input: 0, output: 0 }, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: `working + steered: ${steered}` } });
   send({ type: "turn_end", message: { stopReason: "end_turn", usage: { input: 12, output: 3 } }, usage: { input: 12, output: 3 } });
   send({ type: "agent_end" });
 };
@@ -204,13 +234,29 @@ function handle(cmd: any) {
       send({ type: "response", command: "set_thinking_level", success: true });
       return;
     case "prompt":
+      steerDump({ prompt: cmd.message });
       // acknowledge acceptance; the completion comes via events
       send({ type: "response", command: "prompt", success: true });
-      if (mode === "tooluse") streamToolTurn();
+      if (mode === "steer") streamSteerTurn();
+      else if (mode === "tooluse") streamToolTurn();
       else if (mode === "permission") streamPermissionTurn();
       else if (mode === "interleave") streamInterleaveTurn();
       else if (mode === "turn-error") streamErrorTurn();
       else streamTurn();
+      return;
+    case "steer":
+      steerDump({ steer: cmd.message });
+      // pi answers the command; then the message reaches the model inside the
+      // still-running turn
+      send({ type: "response", command: "steer", success: true });
+      if (mode === "steer" && typeof cmd.message === "string") {
+        // A real pi does not end the turn in the same tick as the ack: it
+        // still has a model call to run. Leaving a little room here lets the
+        // harness record the accepted steer while the turn is still open
+        // (ending it synchronously made the server-side ownership re-check
+        // race on slower CI hosts and answer 409).
+        setTimeout(() => finishSteerTurn(cmd.message as string), 120);
+      }
       return;
     case "extension_ui_response":
       if (cmd.id === "ask-1") finishPermissionTurn();

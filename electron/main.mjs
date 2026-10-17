@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { startCua, stopCua, registerCuaIpc, setCuaStateListener } from "./cua.mjs";
+import { cuaStartupDecision } from "./cua-startup.mjs";
 import { createAndroidDeviceController } from "./android-device.mjs";
 import { assemblyAICredential, mintAssemblyAIStreamingToken } from "./assemblyai.mjs";
 import { finishSpeech, startSpeech, stopSpeech } from "./speech.mjs";
@@ -942,6 +943,26 @@ function buildErrorPage({ allPortsOccupied }) {
 const SERVER_BOOT_TIMEOUT_MS = 60_000;
 
 let cuaReady = Promise.resolve({ mode: "unavailable", reason: "not-started" });
+
+/** Accessibility is readable without prompting (prompt=false). */
+function macAccessibilityTrusted() {
+  if (process.platform !== "darwin") return false;
+  try {
+    return systemPreferences.isTrustedAccessibilityClient(false);
+  } catch {
+    return false;
+  }
+}
+
+/** Screen Recording status is readable without prompting. */
+function macScreenRecordingStatus() {
+  if (process.platform !== "darwin") return "unknown";
+  try {
+    return systemPreferences.getMediaAccessStatus?.("screen") ?? "unknown";
+  } catch {
+    return "unknown";
+  }
+}
 const androidDevice = createAndroidDeviceController({ resourcesPath: process.resourcesPath });
 const displayMediaGuard = createDisplayMediaGuard();
 let displayMediaRequestCount = 0;
@@ -1868,6 +1889,7 @@ ipcMain.handle("assemblyai:streaming-token", () =>
 const CREDENTIAL_PATCH = {
   composioApiKey: (value) => ({ composio: { apiKey: value } }),
   xaiApiKey: (value) => ({ xai: { key: value } }),
+  claudeApiKey: (value) => ({ claudeApi: { key: value } }),
   boxToken: (value) => ({ box: { token: value } }),
   opencodeGoApiKey: (value) => ({ opencodeGo: { apiKey: value } }),
   workbuddyApiKey: (value) => ({ workbuddy: { apiKey: value } }),
@@ -2007,13 +2029,24 @@ app.whenReady().then(async () => {
   // Start the CUA daemon before the window so the harness can pick up the
   // connection descriptor on first render. Never blocks window creation on
   // failure — computer use degrades to "unavailable", the rest still works.
-  cuaReady =
-    process.platform === "darwin" || process.platform === "linux"
-      ? startCua().catch((e) => {
-          console.error("[cua] start failed:", e);
-          return { mode: "unavailable", reason: String(e) };
-        })
-      : Promise.resolve({ mode: "unavailable", reason: "unsupported-platform" });
+  //
+  // Do not ask macOS for Accessibility / Screen Recording on every launch:
+  // startCua() -> startEmbedded() prompts through the CUA SDK, and the
+  // ad-hoc-signed build would show that prompt at startup every time. Read
+  // the two TCC statuses without prompting, start the daemon only when both
+  // are already granted, and otherwise leave computer control to the
+  // settings card's user-initiated Retry (which may prompt).
+  const cuaAtLaunch = cuaStartupDecision({
+    platform: process.platform,
+    accessibilityTrusted: macAccessibilityTrusted(),
+    screenRecordingStatus: macScreenRecordingStatus(),
+  });
+  cuaReady = cuaAtLaunch.start
+    ? startCua().catch((e) => {
+        console.error("[cua] start failed:", e);
+        return { mode: "unavailable", reason: String(e) };
+      })
+    : Promise.resolve(cuaAtLaunch.connection ?? { mode: "unavailable", reason: "not-started" });
   if (app.isPackaged) {
     // The embedded harness receives this descriptor only over its private
     // utility-process port. Never leave the master token in userData where a

@@ -17,6 +17,7 @@ const MAPPINGS: Array<[CredentialTargetId, CredentialConfig]> = [
   ["opencodeGoApiKey", { opencodeGo: { apiKey: "secret" } }],
   ["ttsKey", { tts: { key: "secret" } }],
   ["openaiImageApiKey", { imageGen: { key: "secret" } }],
+  ["claudeApiKey", { claudeApi: { key: "secret" } }],
 ];
 
 describe("credential request allowlist", () => {
@@ -39,7 +40,7 @@ describe("credential request allowlist", () => {
   it("checks configured state without exposing values", () => {
     expect(credentialIsConfigured({ tts: { key: "secret" } }, "ttsKey")).toBe(true);
     expect(credentialIsConfigured({ tts: { key: "" } }, "ttsKey")).toBe(false);
-    expect(Object.keys(CREDENTIAL_TARGETS)).toHaveLength(5);
+    expect(Object.keys(CREDENTIAL_TARGETS)).toHaveLength(6);
   });
 
   it("reuses open room cards only for the bot that requested them", () => {

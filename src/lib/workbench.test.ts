@@ -25,6 +25,7 @@ import {
   peopleStates,
   placeLabels,
   projectTitle,
+  runMemberIds,
   splitRemaining,
   zoomAround,
   type TreeInput,
@@ -71,6 +72,19 @@ const run = (subtasks: DispatchSubtask[], extra: Partial<DispatchRun> = {}): Dis
 });
 
 const inbox = (item: Partial<InboxItem> & Pick<InboxItem, "kind" | "botId">): InboxItem => ({ id: item.botId + item.kind, title: "主视觉 4 选 1", since: NOW - 5 * MIN, ...item });
+
+describe("task scoping", () => {
+  it("collects every bot in a task, including its department child runs and squads", () => {
+    const parent = run([subtask("a", "lead", "running", { childRunId: "child" })], {
+      id: "parent",
+      squads: [{ name: "组 B", leadBotId: "b", botIds: ["b"], subtaskIds: [], addedAt: 1, by: "owner", reviewAt: 2 }],
+    });
+    const child = run([subtask("c", "a", "pending")], { id: "child", parentRunId: "parent" });
+    const other = run([subtask("d", "c", "done")], { id: "other" });
+    expect([...runMemberIds([parent, child, other], "parent")].sort()).toEqual(["a", "b", "lead"]);
+    expect([...runMemberIds([parent, child, other], "missing")]).toEqual([]);
+  });
+});
 
 describe("people states", () => {
   const states = (runs: DispatchRun[], items: InboxItem[] = [], lastSeen = 0) =>
@@ -138,6 +152,35 @@ describe("people states", () => {
       { section: "内容部", color: "#65A30D", done: 3, total: 7, health: "yellow", status: "三段卖点 17:20 交" },
     ]);
     expect(briefed.get("内容部")).toMatchObject({ done: 3, total: 7, health: "yellow", status: "三段卖点 17:20 交" });
+  });
+
+  it("counts the fallback numbers the way the brief counts its own", () => {
+    const dayStart = new Date(NOW).setHours(0, 0, 0, 0);
+    // a run that settled yesterday is history; today's failed/blocked work stays in view
+    const yesterday = run([subtask("old", "a", "done", { finishedAt: dayStart - MIN })], {
+      id: "r-old",
+      status: "done",
+      createdAt: dayStart - 3 * 60 * MIN,
+      updatedAt: dayStart - MIN,
+    });
+    const today = run(
+      [
+        subtask("done", "a", "done", { finishedAt: NOW - MIN }),
+        subtask("failed", "b", "failed", { finishedAt: NOW }),
+        subtask("skipped", "lead", "skipped"),
+        subtask("canceled", "a", "canceled"),
+        // a department's plan is a container: its team's subtasks are the work
+        subtask("container", "lead", "running", { childRunId: "r-child" }),
+      ],
+      { id: "r-today", updatedAt: NOW },
+    );
+    const child = run([subtask("build", "a", "running")], { id: "r-child", parentRunId: "r-today", updatedAt: NOW });
+    const runs = [yesterday, today, child];
+    const map = states(runs);
+    const stats = departmentStats([{ section: "内容部", botIds: ["lead", "a", "b"] }], runs, map, undefined, NOW);
+    // yesterday isn't in today's picture, blocked and failed work counts, the
+    // container isn't counted next to the team's own subtasks
+    expect(stats.get("内容部")).toMatchObject({ done: 1, total: 4 });
   });
 });
 

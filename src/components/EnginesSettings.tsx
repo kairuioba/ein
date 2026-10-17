@@ -1,13 +1,16 @@
-// Engines settings — per-instance CLI path override. One "Set CLI…" button
+// Engines settings — per-instance CLI path override plus the write-only key
+// form for engines that authenticate with a saved credential (the Claude API
+// engine, rendered by EngineSetup). One "Set CLI…" button
 // per engine reveals a picker: a "detected" dropdown of every binary the
 // server found on PATH, plus a manual path input. Saving first probes the
 // binary (`<cli> --version`, same PATH a real turn uses); a failed probe
 // asks before registering — the classic miss is a path the terminal sees
 // but this GUI app can't.
 import { useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, Loader2, TriangleAlert } from "lucide-react";
+import { Check, ChevronDown, ExternalLink, Loader2, TriangleAlert } from "lucide-react";
 
-import { api, useStore, type InstanceInfo } from "@/state/store";
+import { api, useStore, type ConfigStatus, type InstanceInfo } from "@/state/store";
+import { CREDENTIAL_TARGETS, credentialConfigPatch } from "../../shared/credential-request";
 import { EngineGroupLabel } from "./EngineGroupLabel";
 import { ProviderMark } from "./ProviderIcons";
 import { splitEngineRail } from "@/lib/engine-rail";
@@ -18,6 +21,99 @@ interface ProbeResult {
   ok: boolean;
   version?: string;
   message?: string;
+}
+
+type EngineCredential = NonNullable<InstanceInfo["snapshot"]["credential"]>;
+
+/** Write-only key form for an engine that authenticates with a saved
+ * credential (the Claude API engine). The value is never read back — the
+ * server reports configured-or-not — and the desktop shell keeps it
+ * OS-encrypted; browser development falls back to PUT /api/config. */
+export function EngineCredentialRow({
+  instance,
+  credential,
+}: {
+  instance: InstanceInfo;
+  credential: EngineCredential;
+}) {
+  const { dispatch, refreshInstances } = useStore();
+  const target = CREDENTIAL_TARGETS[credential.target];
+  const [value, setValue] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const configured = credential.configured || instance.snapshot.authenticated === true;
+  const clearing = !value.trim() && configured;
+
+  const save = () => {
+    if (saving || (!value.trim() && !configured)) return;
+    setSaving(true);
+    setError(null);
+    const next = value.trim();
+    const request: Promise<ConfigStatus> = window.ogb?.setCredential
+      ? window.ogb.setCredential(credential.target, next)
+      : api("/api/config", {
+          method: "PUT",
+          body: JSON.stringify(credentialConfigPatch(credential.target, next)),
+        });
+    request
+      .then((status) => {
+        dispatch({ type: "configStatus", config: status });
+        setValue("");
+        // Saving rebuilds the engine server-side; refresh the fleet so its
+        // snapshot flips to "key saved" without closing settings.
+        return Promise.resolve(refreshInstances()).catch(() => {});
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setSaving(false));
+  };
+
+  return (
+    <div>
+      <div className="mb-1.5 flex items-center gap-2 text-[13px] text-ink-secondary">
+        <span className={cn("size-1.5 rounded-full", configured ? "bg-success" : "bg-raised-hover")} />
+        <span>{t(target.label)}</span>
+        {configured && <span className="text-[11px] text-success">{t("Saved")}</span>}
+        <a
+          href={target.helpUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="ml-auto inline-flex items-center gap-1 text-[12px] font-medium text-accent hover:underline"
+        >
+          {t("Get an API key")}
+          <ExternalLink size={12} aria-hidden="true" />
+        </a>
+      </div>
+      <div className="mb-2 text-[12px] leading-relaxed text-ink-secondary">
+        {t("Anthropic bills every call on this key to you, per use — separate from a Claude subscription. Ein encrypts it and never shows it again.")}
+      </div>
+      <div className="flex gap-2">
+        <input
+          type="password"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && save()}
+          placeholder={configured ? t("••••••••  (paste to replace)") : t(target.placeholder)}
+          aria-label={t(target.label)}
+          autoComplete="off"
+          spellCheck={false}
+          className="w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 font-mono text-[12.5px] text-ink placeholder:font-sans placeholder:text-ink-secondary focus:border-hairline focus:outline-none"
+        />
+        <button
+          onClick={save}
+          disabled={saving || (!value.trim() && !configured)}
+          title={clearing ? t("Remove the saved key") : t("Save")}
+          className={cn(
+            "flex w-[72px] shrink-0 items-center justify-center gap-1.5 rounded-lg py-2 text-[13px]",
+            clearing ? "bg-control text-danger hover:bg-raised-hover" : "bg-control text-ink hover:bg-raised-hover",
+            "disabled:cursor-not-allowed disabled:opacity-50",
+          )}
+        >
+          {saving ? <Loader2 size={13} className="animate-spin" /> : clearing ? t("Clear") : <><Check size={13} />{t("Save")}</>}
+        </button>
+      </div>
+      {error && <div role="alert" className="mt-1 text-[12px] text-danger">{error}</div>}
+    </div>
+  );
 }
 
 function CustomPicker({ instance, cliDefault, onClose, onSaved }: {

@@ -96,6 +96,9 @@ export interface WorkbenchModel {
   now: number;
   lastSeen: number;
   bots: BotWithMeta[];
+  /** bots that belong to no department: listed in a drawer, never drawn as a
+   * room — they used to clutter the workbench next to real departments */
+  looseBots: BotWithMeta[];
   botById: Map<string, BotWithMeta>;
   groups: Group[];
   org: OrgConfig;
@@ -174,21 +177,11 @@ export function useWorkbenchModel(): WorkbenchModel {
       lead: dept.lead,
       ...group(dept.members, dept.lead, span),
     }));
-    const loose = unassignedBots(bots, org);
-    if (loose.length) {
-      out.push({
-        key: UNASSIGNED,
-        section: "",
-        label: "",
-        color: "#9AA0AC",
-        isolated: false,
-        ...group(loose, undefined, Math.max(span, 6)),
-        unassigned: true,
-      });
-    }
     // isolated rooms close the first row, so the glass room sits at the edge
-    return [...out.filter((room) => !room.isolated && !room.unassigned), ...out.filter((room) => room.isolated), ...out.filter((room) => room.unassigned)];
+    return [...out.filter((room) => !room.isolated), ...out.filter((room) => room.isolated)];
   }, [bots, org, span, runSquads]);
+
+  const looseBots = useMemo(() => unassignedBots(bots, org), [bots, org]);
 
   const roomOf = useMemo(() => {
     const map = new Map<string, Room>();
@@ -228,8 +221,8 @@ export function useWorkbenchModel(): WorkbenchModel {
   }, [bots, runs, needsYou, brief.risks, chief?.id, rooms, botById, dispatch.settings.maxAttempts, lastSeen, now]);
 
   const stats = useMemo(
-    () => departmentStats(rooms.filter((room) => !room.unassigned).map((room) => ({ section: room.section, botIds: room.everyone.map((bot) => bot.id) })), runs, states, brief.departments),
-    [rooms, runs, states, brief.departments],
+    () => departmentStats(rooms.filter((room) => !room.unassigned).map((room) => ({ section: room.section, botIds: room.everyone.map((bot) => bot.id) })), runs, states, brief.departments, now),
+    [rooms, runs, states, brief.departments, now],
   );
 
   const library = useMemo(() => libraryData?.docs ?? [], [libraryData]);
@@ -243,6 +236,7 @@ export function useWorkbenchModel(): WorkbenchModel {
 
   return {
     now,
+    looseBots,
     lastSeen,
     bots,
     botById,

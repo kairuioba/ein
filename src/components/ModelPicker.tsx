@@ -7,7 +7,7 @@ import { useStore, type Bot, type InstanceInfo, type ModelSelection } from "@/st
 import { filterCustomModels, partitionCustomModels, suggestedModels } from "@/lib/custom-models";
 import { isCustomOnly, splitEngineRail } from "@/lib/engine-rail";
 import { ProviderMark } from "./ProviderIcons";
-import { EngineSetup, needsCli, needsSignIn } from "./EngineSetup";
+import { EngineSetup, needsCli, needsCredential, needsSignIn } from "./EngineSetup";
 import { engineReady } from "@/lib/subtask-model";
 import { EngineGroupLabel } from "./EngineGroupLabel";
 import { cn } from "@/lib/cn";
@@ -23,6 +23,7 @@ function modelLabel(instance: InstanceInfo | undefined, model: string): string {
 
 function engineStatus(instance: InstanceInfo): string {
   if (needsCli(instance)) return t("Not installed");
+  if (needsCredential(instance)) return t("API key required");
   if (needsSignIn(instance)) return t("Sign-in required");
   return instance.snapshot.version ?? t("Ready");
 }

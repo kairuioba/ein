@@ -111,7 +111,7 @@ function Counter({ value, max }: { value: string; max: number }) {
   return <span className="font-mono text-[11.5px] whitespace-nowrap text-ink-secondary/70">{`${[...value].length} / ${max}`}</span>;
 }
 
-const STATE_DOT: Record<EngineState, string> = { ready: "bg-success", installed: "bg-success", found: "bg-success", signin: "", missing: "" };
+const STATE_DOT: Record<EngineState, string> = { ready: "bg-success", installed: "bg-success", found: "bg-success", signin: "", key: "", missing: "" };
 
 function engineTileStatus(instance: InstanceInfo, state: EngineState): { text: string; action?: string } {
   if (state === "ready") return { text: t("Connected") };
@@ -121,6 +121,7 @@ function engineTileStatus(instance: InstanceInfo, state: EngineState): { text: s
     return { text: tn(count, "Local · {count} model", "Local · {count} models") };
   }
   if (state === "signin") return { text: t("Not connected"), action: t("Connect") };
+  if (state === "key") return { text: t("API key required"), action: t("Add key") };
   return { text: t("Not installed"), action: t("Install") };
 }
 

@@ -31,6 +31,7 @@ import {
   type PasteAttachment,
 } from "@/lib/composer-attachments";
 import { groupComposerHint, roomRespondersForComposer } from "@/lib/group-routing";
+import { canSteerBusyTarget } from "@/lib/composer-steering";
 import { pendingApprovals } from "./PendingApproval";
 import { PendingApprovalStrip } from "./chat/ApprovalStrip";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
@@ -135,10 +136,11 @@ export function Composer({
   // offers members plus @everyone; explicit mentions override the room's
   // configured default responder.
   const busy = group ? Boolean(group.busyBotId) : Boolean(bot?.busy);
-  // an engine with a live session takes a message INTO the running turn;
-  // for those the composer never locks — the server steers instead of 409
-  const canSteer =
-    !group && Boolean(bot) && state.instances.find((i) => i.instanceId === bot!.modelSelection.instanceId)?.capabilities?.queueing === true;
+  // the engine that owns the running turn takes a message INTO it (steer);
+  // for those the composer never locks — the server steers instead of 409.
+  // In a room that is the busy speaker's engine: a room message with no
+  // @mention of another bot is steered into that member's running turn.
+  const canSteer = canSteerBusyTarget(group, members, bot, state.instances);
   // a pending approval blocks the prompt until it is answered
   const threadId = group?.threadId ?? bot?.threadId ?? "";
   // the VISIBLE branch only — an approval left on a branch you edited away
@@ -330,10 +332,12 @@ export function Composer({
     placeCaret(at + glue.length + 1);
   };
 
-  // Rooms hold one message client-side while a member speaks; it auto-sends
-  // the moment the room settles. 1:1 mid-turn sends still POST (the harness
-  // queue), but stay off the transcript until drain — the chip here is the
-  // pending row so they cannot become the active leaf mid-turn.
+  // Rooms hold one message client-side while a member speaks, so it cannot
+  // become the transcript's active leaf mid-turn. That hold only applies when
+  // the speaker's engine cannot steer: a steerable engine's room sends POST
+  // at once and the server puts them into the running turn. 1:1 mid-turn
+  // sends always POST (the harness queue or steer), and stay off the
+  // transcript until drain — the chip here is the pending row.
   const [queued, setQueued] = useState<QueuedGroupSend | null>(null);
   const queuedRef = useRef(queued);
   const clearQueued = useCallback(() => {
@@ -444,7 +448,7 @@ export function Composer({
       replyToId: replyTo?.id,
       threadId,
     };
-    if (busy && group) {
+    if (busy && group && !canSteer) {
       const pending = { text: composed, replyToId: replyTo?.id, draft: sentDraft };
       queuedRef.current = pending;
       setQueued(pending);
@@ -463,7 +467,8 @@ export function Composer({
         threadId,
         onError: () => restoreDraft(sentDraft),
       });
-      track("message_sent", { room: true });
+      // a busy room whose speaker can steer takes this inside the running turn
+      track("message_sent", { room: true, steered: busy && canSteer });
     } else if (bot) {
       dispatch({
         type: "send",

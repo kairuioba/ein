@@ -40,8 +40,10 @@ import {
   MAINTENANCE_SECTION,
   maintenanceHandbook,
   recentReleases,
+  releasePreflight,
   repoState,
   runTool,
+  validRef,
 } from "./maintenance.ts";
 import {
   attachmentExists,
@@ -70,6 +72,7 @@ import * as composio from "./composio.ts";
 import { chiefOfStaffSystemPrompt } from "./chief-of-staff.ts";
 import { reasonLabel } from "./reason-labels.ts";
 import { Dispatcher, dispatchSettings } from "./dispatch.ts";
+import { UnattendedBots } from "./unattended-state.ts";
 import { handleDispatchApi } from "./dispatch-api.ts";
 import { handleOrgApi, isOrgApiPath, type OrgApiDeps } from "./org/api.ts";
 import { OrgEventLog } from "./org/events.ts";
@@ -148,6 +151,7 @@ import {
 } from "./send-idempotency.ts";
 import { EventBus } from "./harness/bus.ts";
 import { ProviderRegistry } from "./harness/registry.ts";
+import { migrateWorkbuddyDefaults } from "./workbuddy-defaults.ts";
 import { cancelPeerApprovalsFor, cancelPeerApprovalsForThread, dismissStalePeerCards, requestPeerApproval, resolvePeerComms, type ApprovalBus } from "./peer-approval.ts";
 import {
   mentionedBots,
@@ -690,7 +694,7 @@ function askBotAndWait(targetBotId: string, message: string, depth: number, from
     const timer = setTimeout(() => finish({ status: "timeout", text }), ASK_BOT_TIMEOUT_MS);
     startTurn(targetBotId, message, {
       commsDepth: depth + 1,
-      unattended: isUnattended(fromBotId),
+      unattended: unattended.is(fromBotId),
       onDispatchError: (reason) => finish({ status: "error", text: `(couldn't start that bot: ${reason})` }),
     }).catch((err) =>
       finish({ status: "error", text: `(couldn't start that bot: ${err instanceof Error ? err.message : String(err)})` }),
@@ -701,7 +705,14 @@ function askBotAndWait(targetBotId: string, message: string, depth: number, from
 // default selection for new bots: first available instance, claude preferred
 async function defaultSelection() {
   const described = await registry.describe();
-  const available = described.filter((d) => d.snapshot.state === "available");
+  // "available" is not enough when the engine itself says a credential is
+  // still missing (the Claude API engine before the user saves a key): that
+  // engine would become the default for every new bot and fail on the first
+  // send. Engines that merely do not report a login (CLI-probed drivers) stay
+  // eligible — "authenticated: false" is not the same as "cannot answer".
+  const available = described.filter(
+    (d) => d.snapshot.state === "available" && d.snapshot.credential?.configured !== false,
+  );
   // Deliberately NO fallback to described[0]. Handing a bot an engine whose
   // CLI isn't installed makes it look ready and then fail on send with a raw
   // spawn ENOENT — the single worst first-run experience, and the one every
@@ -736,6 +747,11 @@ function checkedModelSelection(
     }
     selection.effort = value.effort;
   }
+  const target = registry.get(selection.instanceId);
+  // Old onboarding/picker clients may still submit the removed placeholder.
+  if (target?.driverKind === "workbuddyAgent" && selection.model === "default") {
+    selection.model = target.models.default;
+  }
   const changed = current && (
     selection.instanceId !== current.selection.instanceId ||
     selection.model !== current.selection.model ||
@@ -744,7 +760,6 @@ function checkedModelSelection(
   if (current?.busy && changed) {
     return { ok: false, status: 409, error: t("the bot is working — stop it before changing models") };
   }
-  const target = registry.get(selection.instanceId);
   // Model IDs remain free-form at the app's general API boundary. Custom
   // engines can accept IDs that are not in their discovery catalog, and
   // several drivers only learn the final catalog when a turn starts. The
@@ -812,6 +827,7 @@ const store = new Store(() => bootSelection);
 const sendSequencer = new SendSequencer();
 bootSelection = await defaultSelection();
 store.seedIfEmpty();
+migrateWorkbuddyDefaults(store, registry.instances());
 // A committed profile cleanup means both its config deletion and bot-reference
 // cleanup were intended to be durable. Reconcile stale secondary references
 // before Electron can ACK and remove the journal: a crash between those writes
@@ -1387,41 +1403,9 @@ bus.subscribe((event: RuntimeEvent) => {
 });
 
 // Bots currently working with nobody at the keyboard — a webhook turn, or a
-// turn a webhook-driven bot handed to a teammate. Auto mode is a decision
-// someone made for turns they were present for, so these don't inherit it:
-// the guard behind auto mode is a pattern list, not a security boundary, and
-// it must not stand in for a human at 3am.
-//
-// Keyed by BOT rather than thread because a bot runs one turn at a time, so
-// the identity is exact, and because the peer-comms paths know who is asking
-// but not always from which thread. Idle marks expire rather than clearing on
-// turn.completed: bus subscribers fire in registration order, and the
-// delegation drain runs AFTER the main fold — clearing there would blank the
-// flag before the hop that needs to read it. A busy bot never ages out, and a
-// stale mark only ever means "ask a human", so this fails closed.
-const unattendedBots = new Map<string, number>();
-const UNATTENDED_TTL_MS = 30 * 60_000;
-
-function markUnattended(botId: string) {
-  unattendedBots.set(botId, Date.now());
-}
-function clearUnattended(botId: string) {
-  unattendedBots.delete(botId);
-}
-function isUnattended(botId?: string | null): boolean {
-  if (!botId) return false;
-  const at = unattendedBots.get(botId);
-  if (at === undefined) return false;
-  // A long-running turn is still unattended even if its next approval comes
-  // more than 30 minutes after the previous one. Only an idle bot may age
-  // out; every positive read refreshes the inactivity window.
-  if (Date.now() - at > UNATTENDED_TTL_MS && !store.bot(botId)?.busy) {
-    unattendedBots.delete(botId);
-    return false;
-  }
-  unattendedBots.set(botId, Date.now());
-  return true;
-}
+// turn such a bot handed on (see server/unattended-state.ts for the marks and
+// why an idle one ages out).
+const unattended = new UnattendedBots((botId) => store.bot(botId)?.busy === true);
 let routines: RoutineManager | null = null;
 let calendarCalls: CalendarCallManager | null = null;
 const localVmOwnerBusy = (botId: string) => store.bot(botId)?.busy === true;
@@ -1573,9 +1557,9 @@ bus.subscribe((event: RuntimeEvent) => {
       // whole point of asking is that a person decides — and anything that
       // looks destructive stops even in auto mode.
       const asker = bot ?? (speaker ? store.bot(speaker.botId) : undefined);
-      const unattended = permission && asker && event.requestId ? isUnattended(asker.id) : false;
+      const unattendedApproval = permission && asker && event.requestId ? unattended.is(asker.id) : false;
       const verdict = permission && asker && event.requestId
-        ? autoVerdict(asker, event.tool, event.summary, { unattended, scope: event.approvalScope })
+        ? autoVerdict(asker, event.tool, event.summary, { unattended: unattendedApproval, scope: event.approvalScope })
         : null;
       if (verdict?.approve && asker && event.requestId) {
         const settled = verdict.approve;
@@ -1657,7 +1641,12 @@ bus.subscribe((event: RuntimeEvent) => {
               : permission
                 ? t("Approval needed")
                 : t("Your bot has a question"),
-          subtitle: event.summary,
+          // an ACP server that sends neither title nor command would otherwise
+          // put the literal string "tool" under the title
+          subtitle:
+            permission && (!event.summary || event.summary === event.tool || event.summary === "tool")
+              ? t("An engine action needs your approval")
+              : event.summary,
           options: event.choices?.length ? event.choices : permission ? ["Allow", "Deny"] : [],
           requestId: event.requestId,
           tool: permission ? event.tool : undefined,
@@ -1702,7 +1691,7 @@ bus.subscribe((event: RuntimeEvent) => {
         shouldReview({
           source: verdict?.source,
           mode: reviewMode,
-          unattended: Boolean(unattended),
+          unattended: Boolean(unattendedApproval),
           approvalScope: event.approvalScope,
         })
       ) {
@@ -1737,7 +1726,7 @@ bus.subscribe((event: RuntimeEvent) => {
         decision: "card-shown",
         source: !permission ? "question" : verdict ? verdict.source : "no-grant",
         rule: verdict?.rule,
-        unattended: unattended || undefined,
+        unattended: unattendedApproval || undefined,
       });
       // Notify from HERE, not from a separate subscriber on request.opened:
       // this is the branch where a card actually reached a human. Anything
@@ -2083,7 +2072,7 @@ const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, text,
     };
     return startTurn(toBotId, text, {
       commsDepth,
-      unattended: isUnattended(store.botByThread(sourceThreadId)?.id),
+      unattended: unattended.is(store.botByThread(sourceThreadId)?.id),
       // startTurn schedules provider/integration setup after marking the bot
       // busy. Those asynchronous setup failures do not emit turn.completed,
       // so clear the watch and report them through this callback too.
@@ -2148,8 +2137,11 @@ const dispatcher = new Dispatcher({
       { name: input.name, title: input.title, description: input.description, section: input.section, modelSelection: input.modelSelection },
       { seedMessages: false },
     );
-    // same safe defaults as create_bot: no connected apps, no auto-approval
-    return store.patchBot(created.id, { composio: false, autoApprove: false, approvePeerComms: false }) ?? created;
+    // no connected apps and no peer-comms approval, but dispatched workers DO
+    // run in auto mode: they work unattended (overnight, long tasks) and a
+    // read-only tool shouldn't park the whole plan on an approval card. Auto
+    // mode still stops for destructive or publishing actions (autoVerdict).
+    return store.patchBot(created.id, { composio: false, autoApprove: true, approvePeerComms: false }) ?? created;
   },
   createTask: (botId, title) => {
     const task = store.createTask(botId, title, false);
@@ -2165,7 +2157,7 @@ const dispatcher = new Dispatcher({
       ...(opts.mayPlan ? { dispatchOnly: true } : {}),
       ...(opts.continuation ? { cardContinuation: true } : {}),
       // dispatched work inherits the planner's unattended window, like delegations
-      unattended: isUnattended(store.botByThread(opts.sourceThreadId ?? opts.threadId)?.id),
+      unattended: unattended.is(store.botByThread(opts.sourceThreadId ?? opts.threadId)?.id),
       // setup runs after startTurn resolves and never emits turn.completed on
       // failure: report it so the subtask settles instead of running forever
       onDispatchError: (message, info) => opts.onError?.(info?.cancelled ? "interrupted" : message),
@@ -2483,10 +2475,10 @@ async function startTurn(
   }
   if (bot.busy) throw Object.assign(new Error("the bot is already working — interrupt it first"), { status: 409 });
   const threadId = opts?.threadId ?? bot.threadId;
-  // a webhook turn, or one inherited from a bot already running unattended
-  if (opts?.automationSource === "webhook" || opts?.unattended) markUnattended(bot.id);
-  // a person typing into this bot ends the unattended window immediately
-  else if (opts?.automationSource === undefined && !opts?.commsDepth && !opts?.cardContinuation) clearUnattended(bot.id);
+  // a person typing into this bot ends the unattended window immediately;
+  // the mark for an unattended turn is set only once the turn passes every
+  // start check (below), so a rejected start leaves no state behind
+  if (opts?.automationSource === undefined && !opts?.commsDepth && !opts?.cardContinuation) unattended.clear(bot.id);
   const task = store.taskByThread(bot.id, threadId);
   if (!task) throw Object.assign(new Error(t("no such task")), { status: 404 });
   const commsDepth = opts?.commsDepth ?? 0;
@@ -2608,6 +2600,9 @@ async function startTurn(
     .filter(Boolean)
     .join(" ");
 
+  // the turn is accepted: a webhook turn, or one inherited from a bot
+  // already running unattended, is now unattended for real
+  if (opts?.automationSource === "webhook" || opts?.unattended) unattended.mark(bot.id);
   // busy flips immediately so the composer locks; the dispatch itself runs
   // in the background — box provisioning can take ~90s and must never
   // hang the HTTP request
@@ -3034,6 +3029,7 @@ async function startTurn(
         opts?.onDispatchError?.(e.message, { cancelled: true });
         if (ownsLatestGeneration && store.bot(bot.id)?.busy) {
           store.setActivity(bot.id, "idle");
+          unattended.settle(bot.id);
           retryDelegationsWaitingOn(bot.id);
         }
         if (ownsLatestGeneration) {
@@ -3051,6 +3047,8 @@ async function startTurn(
         tool: { name: `error: ${message.slice(0, 160)}`, ok: false },
       });
       store.setActivity(bot.id, "idle");
+      // the turn never dispatched: no unattended window survives it
+      unattended.settle(bot.id);
       retryDelegationsWaitingOn(bot.id);
       opts?.onDispatchError?.(message);
       // a dispatch failure never emits turn.completed, so the settle-driven
@@ -4641,6 +4639,9 @@ const orgLayer = new OrgLayer(
   { expiryMs: Number(process.env.OMB_UNATTENDED_EXPIRY_MS) || undefined },
 );
 const orgApiDeps: OrgApiDeps = { json, readBody, events: orgEvents, org: orgLayer };
+// dispatch's boot closed runs whose report turn did not survive the restart:
+// now that the company layer exists, its timeline says they finished
+orgLayer.onRestartFinished(dispatcher.takeRestartFinished());
 // the report cadence: the daily brief at its time, progress every N hours while work runs
 if (!process.env.VITEST) orgLayer.startCadence();
 
@@ -4672,6 +4673,9 @@ const dispatchApiDeps = {
 function configStatus() {
   return {
     xai: { configured: Boolean(cfg.xai?.key) },
+    // the Claude API engine's Anthropic key — write-only like every other
+    // credential: the status says configured or not, never the value
+    claudeApi: { configured: Boolean(cfg.claudeApi?.key) },
     composio: {
       configured: composio.configured(cfg),
       mode: composio.connectionMode(cfg),
@@ -5265,7 +5269,7 @@ const server = createServer(async (req, res) => {
         if (!connectorThread(chief.id, fromThreadId)) {
           return json(res, 403, { error: "source conversation does not belong to sender" });
         }
-        if (!chief.chiefOfStaff) {
+        if (!chief.chiefOfStaff && !dispatcher.isOrgChief(chief.id)) {
           return json(res, 403, { error: "only a section's Chief of Staff can create operator bots" });
         }
         if (store.bots.length >= MAX_WORKSPACE_BOTS) {
@@ -5291,16 +5295,10 @@ const server = createServer(async (req, res) => {
         if (duplicate) {
           return json(res, 409, { error: `@${duplicate.name} already exists in this section; use list_bots` });
         }
-        const created = store.createBot(
-          {
-            name,
-            title: role,
-            description: instructions,
-            modelSelection: { ...chief.modelSelection },
-            section: chief.section,
-          },
-          { seedMessages: false },
-        );
+        // the same hiring limits as the dispatcher's own specialists: the
+        // company's 新增专员 rule and the department's 编制 (server/dispatch.ts)
+        const created = dispatcher.createSpecialist(chief.id, { name, title: role, instructions });
+        if ("error" in created) return json(res, 409, { error: created.error });
         const safeBot = store.patchBot(created.id, {
           composio: false,
           autoApprove: false,
@@ -7322,7 +7320,7 @@ const server = createServer(async (req, res) => {
                   { status: 409 },
                 );
               }
-              clearUnattended(current.id);
+              unattended.clear(current.id);
               const message = store.appendMessage(threadId, {
                 role: "user",
                 kind: "text",
@@ -7941,6 +7939,13 @@ const server = createServer(async (req, res) => {
         broadcast({ kind: "bot", bot: wireBot(bot) });
         return json(res, 200, { repoPath, repo, bot: { id: bot.id, name: bot.name }, channel: cfg.maintenance?.channel ?? "stable" });
       }
+      if (path === "/api/maintenance/preflight" && method === "POST") {
+        // Read-only hints for the build card: is the branch on GitHub, does it
+        // carry the workflow, which version would the build have.
+        const ref = typeof body?.ref === "string" && body.ref.trim() ? body.ref.trim() : "main";
+        if (!validRef(ref)) return json(res, 400, { error: "invalid ref" });
+        return json(res, 200, await releasePreflight(ref));
+      }
       if (path === "/api/maintenance/channel" && method === "PUT") {
         const channel = body?.channel === "dev" ? "dev" : body?.channel === "stable" ? "stable" : null;
         if (!channel) return json(res, 400, { error: "channel must be stable or dev" });
@@ -7956,7 +7961,11 @@ const server = createServer(async (req, res) => {
         const ref = channel === "stable" ? "main" : typeof body?.ref === "string" && body.ref.trim() ? body.ref.trim() : "main";
         const started = await dispatchRelease(channel, ref);
         if (!started.ok) return json(res, 502, { error: started.out || t("Could not start the build") });
-        return json(res, 202, { ok: true, channel, ref });
+        // GitHub registers the run a moment after the dispatch; wait briefly so
+        // the card can link the run instead of showing only a dry "started".
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+        const run = (await recentReleases())[0] ?? null;
+        return json(res, 202, { ok: true, channel, ref, run });
       }
       return json(res, 404, { error: "not found" });
     }
@@ -8108,6 +8117,7 @@ const server = createServer(async (req, res) => {
           // never survive the merge in config.json.
           const persisted = structuredClone(patch);
           if (persisted.xai?.key !== undefined) persisted.xai.key = "";
+          if (persisted.claudeApi?.key !== undefined) persisted.claudeApi.key = "";
           if (persisted.composio?.apiKey !== undefined) persisted.composio.apiKey = "";
           if (persisted.box?.token !== undefined) persisted.box.token = "";
           if (persisted.opencodeGo?.apiKey !== undefined) persisted.opencodeGo.apiKey = "";

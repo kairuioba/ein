@@ -192,6 +192,84 @@ describe("OrgLayer", () => {
       expect(layer.decisionList()[0]!.actionItems[0]!.status).toBe("done");
       expect(layer.eventsSince(0).find((event) => event.kind === "report")?.decisionId).toBe(decision.id);
     });
+
+    it("links a plan started by someone who was in the meeting room to the room's decision", () => {
+      host.threads.set("t-room", [question("q4", Date.now() - 60_000, {}, "chief")]);
+      const decision = layer.onOptionsAnswered("t-room", "q4", "按 799 改")!;
+      // the owner takes the outcome to the chief's own chat, not the room — the
+      // chief sat in the room, so the plan it starts right after is the follow-up
+      const run: DispatchRun = {
+        id: "run-room",
+        chiefBotId: "chief",
+        sourceThreadId: "t-chief",
+        goal: "按会议决定改价",
+        policy: "balanced",
+        status: "running",
+        subtasks: [subtask("price", "writer")],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      layer.onDispatchRun(run);
+      expect(layer.decisionList()[0]!.actionItems.map((item) => item.subtaskId)).toEqual(["price"]);
+      const started = layer.eventsSince(0).find((event) => event.kind === "run.started");
+      expect(started?.decisionId).toBe(decision.id);
+      // someone who was NOT in the room starts unrelated work: no link
+      const outsider: DispatchRun = {
+        id: "run-out",
+        chiefBotId: "writer",
+        sourceThreadId: "t-writer",
+        goal: "写周报",
+        policy: "balanced",
+        status: "running",
+        subtasks: [subtask("note", "writer")],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      layer.onDispatchRun(outsider);
+      expect(layer.decisionList().find((entry) => entry.id === decision.id)!.actionItems).toHaveLength(1);
+    });
+
+    it("says a run finished when a restart closed it", () => {
+      const run: DispatchRun = {
+        id: "run-restart",
+        chiefBotId: "chief",
+        sourceThreadId: "t-chief",
+        goal: "重启前的计划",
+        policy: "balanced",
+        status: "done",
+        subtasks: [subtask("a", "writer", "done"), subtask("b", "designer")],
+        createdAt: 1,
+        updatedAt: 2,
+        finishedAt: 2,
+        synthesisStarted: true,
+      };
+      layer.onRestartFinished([run]);
+      expect(layer.eventsSince(0)).toEqual([
+        expect.objectContaining({ kind: "run.done", runId: "run-restart", botId: "chief", threadId: "t-chief", title: "Finished “重启前的计划”: 1/2 done" }),
+      ]);
+      // announced once: a repeat is not news
+      layer.onRestartFinished([run]);
+      expect(layer.eventsSince(0)).toHaveLength(1);
+    });
+
+    it("keeps isolated departments' documents out of a cross-department decision's basis", () => {
+      layer.patchOrg({ departments: [{ section: "财务法务", isolated: true }] });
+      layer.publishDoc({ title: "预算明细", section: "财务法务", text: "明细" });
+      // a mixed-department room cites it: the title must not reach the shared
+      // decision record (决议 basis is shown to everyone in the room)
+      host.threads.set("t-room", [
+        { id: "m1", role: "bot", kind: "text", at: 90, text: "按预算明细 v1 砍到 10 万", from: { botId: "designer" } },
+        question("q5", 100, {}, "chief"),
+      ]);
+      expect(layer.onOptionsAnswered("t-room", "q5", "同意")?.basis).toBeUndefined();
+      // inside the finance department, its own people may quote it
+      host.groupList.push({ id: "g2", name: "预算会", threadId: "t-fin", memberIds: ["auditor"] });
+      host.threads.set("t-fin", [
+        { id: "m2", role: "bot", kind: "text", at: 90, text: "按预算明细 v1", from: { botId: "auditor" } },
+        question("q6", 100, {}, "auditor"),
+      ]);
+      expect(layer.onOptionsAnswered("t-fin", "q6", "同意")?.basis).toEqual(["预算明细 v1"]);
+    });
   });
 
   describe("approvals", () => {

@@ -9,6 +9,7 @@ import type {
 import { newEventId, newId } from "../contracts.ts";
 import { appendNative } from "./native.ts";
 import { classifyError, computeBackoff, interruptibleDelay, RETRY_MAX_ATTEMPTS } from "./retry.ts";
+import { steerContinuationPrompt, undeliveredField, type PendingSteer } from "./steer.ts";
 import { t } from "../../shared/i18n.ts";
 
 export interface OpenAIChatMessage {
@@ -70,11 +71,19 @@ const usageFrom = (usage: CompletionJson["usage"]): Usage | null =>
 const asError = (value: unknown): Error =>
   value instanceof Error ? value : new Error(String(value));
 
+/** A turn this runtime is running: the abort handle plus the steering
+ * inbox. A message the user sends mid-turn is accepted synchronously and
+ * put in front of the model at the next boundary (see sendTurn). */
+interface ActiveTurn {
+  abort: AbortController;
+  steer(text: string, steerId?: string): boolean;
+}
+
 /** Shared runtime for the three providers that speak OpenAI chat completions. */
 export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>): ProviderInstance {
   const { input } = options;
   const listeners = new Set<RuntimeEventListener>();
-  const active = new Map<string, AbortController>();
+  const active = new Map<string, ActiveTurn>();
 
   const emit = (event: RuntimeEvent) => {
     for (const listener of Array.from(listeners)) listener(event);
@@ -184,19 +193,57 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     const abort = new AbortController();
     const messages = messagesFor(turn);
     const model = turn.model || options.models().default;
-    active.set(turn.threadId, abort);
-    appendNative(turn.threadId, {
-      dir: "out",
-      source: options.nativeLog.source,
-      msg: options.nativeLog.outgoing(turn, messages, model),
+    // ── steer: messages sent while this turn runs ────────────────────────
+    // A chat-completions request cannot be fed mid-flight and these engines
+    // run no tools, so the safe boundary is the reply itself: accept the
+    // message at once, let the current reply finish, then put it in front of
+    // the model with ONE more request in the SAME turn — what the docs
+    // prescribe for the API engines. A message that arrives while a request
+    // is in flight therefore rides the next request of this turn; one that
+    // arrives before the first request goes out simply joins it.
+    let pending: PendingSteer[] = [];
+    let ended = false;
+    const finish = () => {
+      ended = true;
+      active.delete(turn.threadId);
+    };
+    active.set(turn.threadId, {
+      abort,
+      steer: (text, steerId) => {
+        if (ended || abort.signal.aborted) return false;
+        pending.push({ text, steerId });
+        return true;
+      },
     });
+    // Move accepted steers in front of the model as one framed continuation
+    // message. Framed so the model reads them as more input for the task it
+    // is already doing, never as a request to stop or start over (steer.ts).
+    const drainPending = () => {
+      const items = pending;
+      pending = [];
+      if (items.length) messages.push({ role: "user", content: steerContinuationPrompt(items) });
+    };
     emit({ ...base(turn.threadId, turnId), type: "turn.started" });
     emit({ ...base(turn.threadId, turnId), type: "session.started", sessionId: null, model });
 
     void (async () => {
       let attempt = 0;
-      let streamedText = false;
+      // This turn may span several requests now; report ONE total.
+      let usage: Usage | null = null;
+      const bank = (next: Usage | null) => {
+        if (!next) return;
+        usage = usage
+          ? { input: usage.input + next.input, output: usage.output + next.output }
+          : { input: next.input, output: next.output };
+      };
       for (;;) {
+        drainPending();
+        let streamedText = false;
+        appendNative(turn.threadId, {
+          dir: "out",
+          source: options.nativeLog.source,
+          msg: options.nativeLog.outgoing(turn, messages, model),
+        });
         try {
           const completion = await complete(messages, model, true, abort.signal, (delta, streamKind) => {
             if (streamKind === "assistant_text") streamedText = true;
@@ -212,9 +259,17 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             emit({ ...base(turn.threadId, turnId), type: "item.completed", itemType: "assistant_text", text: reply });
           }
           if (completion.usage) {
+            bank(completion.usage);
             emit({ ...base(turn.threadId, turnId), type: "thread.token-usage.updated", ...completion.usage });
           }
-          active.delete(turn.threadId);
+          attempt = 0;
+          // steering arrived while that reply streamed: answer it inside this
+          // turn instead of settling and making the user wait for a new turn
+          if (pending.length) {
+            messages.push({ role: "assistant", content: reply });
+            continue;
+          }
+          finish();
           const completed: RuntimeEvent = {
             ...base(turn.threadId, turnId),
             type: "turn.completed",
@@ -222,9 +277,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             stopReason: null,
             cost: null,
           };
-          emit(options.includeUsageInCompleted && completion.usage
-            ? { ...completed, usage: completion.usage }
-            : completed);
+          emit(options.includeUsageInCompleted && usage ? { ...completed, usage } : completed);
           return;
         } catch (value) {
           const error = asError(value);
@@ -247,18 +300,28 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
             });
             const outcome = await interruptibleDelay(delayMs * options.retryScale, abort.signal).promise;
             if (outcome === "elapsed" && !abort.signal.aborted) continue;
-            active.delete(turn.threadId);
-            emit({ ...base(turn.threadId, turnId), type: "turn.completed", ok: false, stopReason: "interrupted", cost: null });
+            finish();
+            emit({
+              ...base(turn.threadId, turnId),
+              type: "turn.completed",
+              ok: false,
+              stopReason: "interrupted",
+              cost: null,
+              ...undeliveredField(pending),
+            });
             return;
           }
-          active.delete(turn.threadId);
+          finish();
           if (!aborted) emit({ ...base(turn.threadId, turnId), type: "runtime.error", message: error.message });
+          // accepted steers the model never saw go back to the harness, which
+          // runs them next — the ending turn must not lose the user's words
           emit({
             ...base(turn.threadId, turnId),
             type: "turn.completed",
             ok: false,
             stopReason: aborted ? "interrupted" : "error",
             cost: null,
+            ...undeliveredField(pending),
           });
           return;
         }
@@ -281,13 +344,15 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       : { state: "unavailable", reason: options.unavailableReason },
     adapter: {
       provider: options.driverKind,
-      capabilities: { sessionModelSwitch: "in-session" },
+      capabilities: { sessionModelSwitch: "in-session", queueing: true },
       sendTurn,
-      interruptTurn: async (threadId) => active.get(threadId)?.abort(),
+      steer: async (threadId, text, steerOptions) =>
+        active.get(threadId)?.steer(text, steerOptions?.steerId) ?? false,
+      interruptTurn: async (threadId) => active.get(threadId)?.abort.abort(),
       respondToRequest: async () => "unavailable" as const,
       hasSession: (threadId) => active.has(threadId),
       stopAll: async () => {
-        for (const abort of active.values()) abort.abort();
+        for (const turn of active.values()) turn.abort.abort();
       },
       onEvent: (listener) => {
         listeners.add(listener);
@@ -300,7 +365,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       return text.trim() ? text : reasoning;
     },
     dispose: async () => {
-      for (const abort of active.values()) abort.abort();
+      for (const turn of active.values()) turn.abort.abort();
       listeners.clear();
     },
   };

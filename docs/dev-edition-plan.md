@@ -21,14 +21,14 @@
 
 | # | 事项 | 现状 | 怎么改 |
 |---|---|---|---|
-| 1 | 开发版 / 维护岗 | **已实现**（`server/maintenance.ts`、设置 → 维护岗、`release-ein.yml` 的 channel、`electron/update-channel.mjs`）；用法见 `docs/使用手册-1.1.2.md`，规则见 `docs/GitHub-版本与备份规则.md` | 第一次开发版构建后核对三个平台只在开发渠道收到 |
-| 2 | 插话：pi、Antigravity、API 类引擎（Grok API、OpenAI 兼容、MiniMax）、群聊输入框 | 仍会排队到本回合结束 | pi 的 RPC 模式有 `steer` 命令，接到 `pi.ts` 的 `steer`；API 类引擎在当前回复结束后、同一回合内立刻续一次带新消息的请求（`openai-chat.ts`）；群聊：服务端已能插话，把 `Composer.tsx` 里 `busy && group` 的本地排队分支改成：忙碌的机器人引擎 `capabilities.queueing` 为真时直接发服务端 |
-| 3 | OpenAI 兼容引擎的模型清单 | 每次打开选择器都请求一次 `/models` | 改用 `live-catalog.ts` 的后台缓存 |
+| 1 | 开发版 / 维护岗 | **已实现**（`server/maintenance.ts`、设置 → 维护岗、`release-ein.yml` 的 channel、`electron/update-channel.mjs`）；用法见 `docs/使用手册-1.1.2.md`，规则见 `docs/GitHub-版本与备份规则.md`。**已实测**：`1.1.3-dev.6`（macOS 产物）与 `1.1.3-dev.7`（macOS 正式发布到滚动 `dev` 预发布）构建成功，本机安装 dev.7、渠道切到 dev 并验证了 `~/.ein/config.json` 的 `maintenance.channel` | Windows dev 构建此前会因 workflow 传了 electron-builder 不存在的 `-c.detectUpdateChannel=false` 而失败（已修，见 §四）；下次三平台 dev 构建核对 |
+| 2 | 插话：pi、Antigravity、API 类引擎（Grok API、OpenAI 兼容、MiniMax）、群聊输入框 | **已实现**（pi RPC `steer`；API 类引擎同回合续发；群聊 Composer 直接发服务端；Antigravity 评估后不支持，已注释说明并回退排队） | pi 的 RPC 模式有 `steer` 命令，接到 `pi.ts` 的 `steer`；API 类引擎在当前回复结束后、同一回合内立刻续一次带新消息的请求（`openai-chat.ts`）；群聊：服务端已能插话，把 `Composer.tsx` 里 `busy && group` 的本地排队分支改成：忙碌的机器人引擎 `capabilities.queueing` 为真时直接发服务端 |
+| 3 | OpenAI 兼容引擎的模型清单 | **已实现**：`live-catalog.ts` 磁盘缓存 + 后台刷新（15 分钟 TTL / 失败 2 分钟退避），打开选择器不再等 `/models` | 保持 |
 | 4 | 全部交互逐步走查 | 为省额度中途停了 | 按清单在真实客户端里走：首次启动、引擎登录卡、选模型、单聊/群聊/总控、插话、新对话与切任务、侧栏、⌘K、各设置页（尤其运行中改设置）、资料库、日历、应用、错误态；每一步截图记录 |
 | 5 | 用便宜模型扮演员工的真实派单模拟 | 跑到一半停了。已观察到一处要核实：总控说「各项数字和上架资料都已按你的选择更新」，但它自己只写了三处 | 复跑模拟，核对总控的汇报是否只陈述员工实际交付的内容；必要时在汇总提示里要求逐项引用交付物 |
-| 6 | 派单审计留下的 8 个设计缺口 | 未改 | `create_bot` 不受「新增专员」规则约束；部门编制从不校验；部门隔离只到资料库；工作台「加人」进不了部门计划；会议室决议不关联计划；重启时收尾的单没有「已完成」事件；无人值守状态可能残留；兜底计数与简报口径不同 |
-| 7 | Claude API 单独做一个引擎 | 未做（你提的方向） | 新增实例：同一个 Claude 驱动，配置 `auth: "apiKey"`，Key 由用户在设置里填写（像 xAI Key 一样加密保存），计费标为按量；不自动检测本机任何 Key |
-| 8 | 在你的 Mac 上实测 | 沙盒里无法验证 | 装 1.1.2 后看：Claude 选择器有 Opus 5.5；用 API Key 登录的 Claude Code 显示需要登录并说明原因；跑一次 Grok 后选择器出现 4.7；回复不卡、最后一句不被挡；Codex/Grok 插话立即生效 |
+| 6 | 派单审计留下的 8 个设计缺口 | **已修 6/8**：create_bot 规则、部门编制、会议室决议关联计划、重启完成事件、无人值守过期、兜底计数口径；部门隔离（最小修复，脱敏/申请访问未做）与工作台加人（最小修复，预检文案/诊断未做）为部分 | `create_bot` 不受「新增专员」规则约束；部门编制从不校验；部门隔离只到资料库；工作台「加人」进不了部门计划；会议室决议不关联计划；重启时收尾的单没有「已完成」事件；无人值守状态可能残留；兜底计数与简报口径不同 |
+| 7 | Claude API 单独做一个引擎 | **已实现**：默认舰队新增 `claudeApi` 实例（`driver: claudeAgent`, `config.auth: "apiKey"`），Key 走 safeStorage 加密、只回 configured 布尔值，计费标为按量，不自动检测本机 Key | 新增实例：同一个 Claude 驱动，配置 `auth: "apiKey"`，Key 由用户在设置里填写（像 xAI Key 一样加密保存），计费标为按量；不自动检测本机任何 Key |
+| 8 | 在你的 Mac 上实测 | **部分完成**：1.1.2 与 1.1.3-dev.7 已在本机安装运行，维护岗/开发渠道/派单数据均在真实客户端验证；其余引擎/交互项见 §四 | 装 1.1.2 后看：Claude 选择器有 Opus 5.5；用 API Key 登录的 Claude Code 显示需要登录并说明原因；跑一次 Grok 后选择器出现 4.7；回复不卡、最后一句不被挡；Codex/Grok 插话立即生效 |
 
 ## 三、开发版设计（已确认的方案）
 
@@ -86,3 +86,26 @@
 - 推送、发版各需一次批准。
 - 测试是硬门槛。
 - 只动你自己的仓库。
+
+## 四、1.1.3 准备轮（2026-10-17）
+
+本轮把 `docs/dev-edition-plan.md` 剩余项做成分支并已推送（`fix/*` + 集成分支 `fix/1.1.3-prep`），修复了多个真实缺陷；dev 构建已发布到滚动 `dev` 渠道（dev.7 / dev.11 / dev.12，dev.13 构建中）。
+
+| 分支 | commit | 内容 |
+|---|---|---|
+| `fix/release-gate` | `ee96565` | release 工作流新增 verify（typecheck/i18n/lint/vitest/vite build），publish 依赖它；CI 加 i18n/lint、push `fix/**`；删除导致 Windows dev 构建失败的无效 `-c.detectUpdateChannel=false` |
+| `fix/steering-catalog` | `85626b3` | pi / Grok API / OpenAI 兼容 / MiniMax 插话，群聊 Composer 直接插话，Antigravity 回退排队，OpenAI 兼容模型清单走 live-catalog |
+| `fix/claude-api-engine` | `fb83029` | Claude API 独立引擎（按量计费、Key 加密、不自动检测本机 Key） |
+| `fix/dispatch-gaps` | `a2efbf9` | 派单审计 8 缺口（6 项修复 + 2 项最小修复/方案） |
+| `fix/maintenance-config-persist` | `635d3f5` | **缺陷**：`saveConfig()` 的合并白名单漏了 `maintenance`，维护岗的源码路径/bot id/更新渠道重启后全丢（开发渠道永远切不过去）。已补白名单 + save/load 回归测试 |
+| `fix/cua-startup-permissions` | `555c390` | **缺陷**：启动时 `startCua()` 就调用 CUA SDK 申请辅助功能/屏幕录制权限；ad-hoc 签名下 macOS 每次启动都弹「一念想控制此 Mac」。改为只读检查 TCC 状态，两项都已授权才启动守护进程，权限提示留给设置页卡片里用户主动点「重试」 |
+| `fix/sidebar-row-hover-overlap` | `bd8381a` | 侧栏行悬停时归档按钮绝对定位压住时间/未读点，悬停时淡出右列 |
+| `fix/default-selection-authenticated` | `c5fb561`+`602920a` | **缺陷**：新 Bot 默认引擎会选到还没保存 Key 的 Claude API 引擎，首条消息必失败；现在只跳过明确报告 credential 未配置的引擎 |
+| `fix/maintenance-model-groups` | `a6cb0ae` | 维护岗模型选择器列出全部 WorkBuddy 模型，并用 `Cloud`（OpenAI/GPT 系）/ `WorkBuddy` 分组；其它引擎保留一项默认 |
+| `fix/tool-activity-narration` | `b8213d8` | 聊天工具步骤不再把整条命令红色铺出来（短标签 + tooltip + 失败小标记）；维护手册要求中文叙述进度 |
+| `docs/security-review` | `ce9e85f` | `docs/security-review-1.1.2.md`：12 项发现（0 Critical / 3 High / 3 Medium / 4 Low / 2 Info） |
+| `docs/company-layer-deep-dive` | `0c3abea` | `docs/company-layer-deep-dive-1.1.2.md`：公司层/派单实现与 10 条架构风险 |
+
+验证：见 `docs/1.1.3-change-summary.md` 的「验证」一节；未做真实引擎联网验证、完整交互走查与派单模拟（无额度/需要真实账号）。
+
+已推送（老板确认）并发布 dev 构建；本机开发渠道已安装验证。下一步：肉眼确认 UI → 发下一个 dev（含构建卡升级/模型预选）→ 明确批准后合 main、升版本、发正式版。

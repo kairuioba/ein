@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { needsCli, needsSignIn } from "./EngineSetup";
+import { needsCli, needsCredential, needsSignIn } from "./EngineSetup";
 import type { InstanceInfo } from "@/state/store";
 
 function instance(snapshot: InstanceInfo["snapshot"]): InstanceInfo {
@@ -30,5 +30,16 @@ describe("needsCli / needsSignIn", () => {
     const ready = instance({ state: "available", authenticated: true, version: "0.36.1" });
     expect(needsCli(ready)).toBe(false);
     expect(needsSignIn(ready)).toBe(false);
+  });
+
+  it("recognizes an engine whose setup step is a saved API key", () => {
+    const noKey = instance({
+      state: "available",
+      authenticated: false,
+      credential: { target: "claudeApiKey", configured: false },
+    });
+    expect(needsCli(noKey)).toBe(false);
+    expect(needsCredential(noKey)).toBe(true);
+    expect(needsCredential(instance({ state: "available", authenticated: true }))).toBe(false);
   });
 });

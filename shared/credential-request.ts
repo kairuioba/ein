@@ -34,6 +34,12 @@ export const CREDENTIAL_TARGETS = {
     placeholder: "sk-…",
     helpUrl: "https://platform.openai.com/api-keys",
   },
+  claudeApiKey: {
+    label: "Claude API key",
+    description: "Runs the Claude API engine; Anthropic bills every call on this key to you, per use.",
+    placeholder: "sk-ant-…",
+    helpUrl: "https://console.anthropic.com/settings/keys",
+  },
 } as const;
 
 export type CredentialTargetId = keyof typeof CREDENTIAL_TARGETS;
@@ -43,6 +49,7 @@ export type CredentialConfig = {
   opencodeGo?: { apiKey?: string };
   tts?: { key?: string };
   imageGen?: { key?: string };
+  claudeApi?: { key?: string };
 };
 
 export function isCredentialTargetId(value: unknown): value is CredentialTargetId {
@@ -61,6 +68,8 @@ export function credentialConfigPatch(id: CredentialTargetId, value: string): Cr
       return { tts: { key: value } };
     case "openaiImageApiKey":
       return { imageGen: { key: value } };
+    case "claudeApiKey":
+      return { claudeApi: { key: value } };
   }
 }
 
@@ -76,6 +85,8 @@ export function credentialIsConfigured(config: CredentialConfig, id: CredentialT
       return Boolean(config.tts?.key);
     case "openaiImageApiKey":
       return Boolean(config.imageGen?.key);
+    case "claudeApiKey":
+      return Boolean(config.claudeApi?.key);
   }
 }
 

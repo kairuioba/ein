@@ -43,7 +43,23 @@ describe("engine state", () => {
   it("maps states to the row's action", () => {
     expect(engineAction("ready")).toBe("settings");
     expect(engineAction("signin")).toBe("signin");
+    expect(engineAction("key")).toBe("key");
     expect(engineAction("missing")).toBe("install");
+  });
+
+  it("calls a saved-key engine's missing setup a key, not a sign-in", () => {
+    const apiEngine = engine("api", "claudeAgent", {
+      state: "available",
+      authenticated: false,
+      credential: { target: "claudeApiKey", configured: false },
+    });
+    expect(engineState(apiEngine)).toBe("key");
+    expect(engineState(engine("sub", "claudeAgent", { state: "available", authenticated: false }))).toBe("signin");
+    expect(engineState(engine("api-ok", "claudeAgent", {
+      state: "available",
+      authenticated: true,
+      credential: { target: "claudeApiKey", configured: true },
+    }))).toBe("ready");
   });
 
   it("gives OpenAI-compatible servers the local chip mascot", () => {
@@ -118,6 +134,22 @@ describe("onboarding grid", () => {
       3,
     ).map((instance) => instance.driverKind);
     expect(order).toEqual(["workbuddyAgent", "claudeAgent", "codex"]);
+  });
+
+  it("keeps saved-key engines off the first-run grid (their setup is not a CLI install)", () => {
+    const grid = onboardingEngines(
+      [
+        { driverKind: "workbuddyAgent" },
+        { driverKind: "claudeAgent" },
+        {
+          driverKind: "claudeAgent",
+          snapshot: { state: "available", authenticated: false, credential: { target: "claudeApiKey", configured: false } },
+        },
+        { driverKind: "codex" },
+      ],
+      4,
+    );
+    expect(grid.map((instance) => instance.driverKind)).toEqual(["workbuddyAgent", "claudeAgent", "codex"]);
   });
 
   it("keeps the engine already chosen on the first-bot step, even when it ranks lower", () => {

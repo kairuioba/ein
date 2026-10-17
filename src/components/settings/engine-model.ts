@@ -11,13 +11,19 @@ export const RECOMMENDED_DRIVER = "workbuddyAgent";
 /** Engines whose own models are open-weights (shown with a 开源 badge). */
 const OPEN_SOURCE_DRIVERS = new Set(["hermesAgent"]);
 
-export type EngineState = "ready" | "signin" | "installed" | "found" | "missing";
+export type EngineState = "ready" | "signin" | "key" | "installed" | "found" | "missing";
 
 export interface EngineInstance {
   instanceId: string;
   driverKind: string;
   displayName: string;
-  snapshot: { state: "available" | "unavailable"; authenticated?: boolean; reason?: string };
+  snapshot: {
+    state: "available" | "unavailable";
+    authenticated?: boolean;
+    reason?: string;
+    /** set by API-key engines: the setup path is a saved key, not a sign-in */
+    credential?: { target: string; configured: boolean };
+  };
   models: { default: string; options: Array<{ id: string; label: string; custom?: boolean }> };
   access?: "subscription" | "custom";
 }
@@ -49,7 +55,9 @@ export function engineState(instance: EngineInstance): EngineState {
   if (instance.snapshot.state !== "available") return "missing";
   const custom = instance.models.options.filter((option) => option.custom);
   if (instance.access === "custom") return custom.length ? "found" : "installed";
-  if (instance.snapshot.authenticated === false) return "signin";
+  // an API-key engine cannot be "signed in": its missing setup step is a
+  // saved key, so the row/action say that instead of "Sign in"
+  if (instance.snapshot.authenticated === false) return instance.snapshot.credential ? "key" : "signin";
   return "ready";
 }
 
@@ -62,6 +70,7 @@ export function engineUsable(instance: EngineInstance): boolean {
 export const ENGINE_STATE_LABEL: Record<Exclude<EngineState, "found">, string> = {
   ready: msg("Signed in"),
   signin: msg("Not signed in"),
+  key: msg("API key required"),
   installed: msg("Installed on this computer"),
   missing: msg("Not installed"),
 };
@@ -70,15 +79,16 @@ export type EngineTone = "ok" | "warn" | "found" | "off";
 
 export function engineTone(state: EngineState): EngineTone {
   if (state === "ready" || state === "installed") return "ok";
-  if (state === "signin") return "warn";
+  if (state === "signin" || state === "key") return "warn";
   if (state === "found") return "found";
   return "off";
 }
 
-export type EngineAction = "settings" | "signin" | "install";
+export type EngineAction = "settings" | "signin" | "key" | "install";
 
 export function engineAction(state: EngineState): EngineAction {
   if (state === "signin") return "signin";
+  if (state === "key") return "key";
   if (state === "missing") return "install";
   return "settings";
 }
@@ -136,7 +146,14 @@ export function engineRows<B extends EngineBot>(instances: readonly EngineInstan
 export function foldRows<R extends Pick<EngineRow, "recommended" | "bots" | "state">>(rows: readonly R[], fill = 8): { shown: R[]; folded: R[] } {
   const keep = new Set<R>(rows.filter((row) => row.recommended || row.bots.length > 0));
   const quiet = rows.filter((row) => !keep.has(row));
-  const rank = (row: R) => (row.state === "ready" ? 0 : row.state === "found" || row.state === "installed" ? 1 : row.state === "signin" ? 2 : 3);
+  const rank = (row: R) =>
+    row.state === "ready"
+      ? 0
+      : row.state === "found" || row.state === "installed"
+        ? 1
+        : row.state === "signin" || row.state === "key"
+          ? 2
+          : 3;
   for (const row of [...quiet].sort((a, b) => rank(a) - rank(b))) {
     if (keep.size >= fill) break;
     if (row.state === "missing") continue;
@@ -151,7 +168,10 @@ export function foldedSummary(rows: ReadonlyArray<Pick<EngineRow, "state">>): { 
   for (const row of rows) counts.set(row.state, (counts.get(row.state) ?? 0) + 1);
   const parts = [...counts.entries()].map(([state, count]) => ({ state, count }));
   const allUsable = rows.every((row) => row.state === "ready" || row.state === "installed" || row.state === "found");
-  return { tone: allUsable ? "ok" : rows.some((row) => row.state === "signin") ? "warn" : "off", parts };
+  return {
+    tone: allUsable ? "ok" : rows.some((row) => row.state === "signin" || row.state === "key") ? "warn" : "off",
+    parts,
+  };
 }
 
 export interface EngineSummary {
@@ -173,13 +193,18 @@ export function engineSummary(instances: readonly EngineInstance[]): EngineSumma
  * recommended one, then the well-known ones, then the rest in server order. */
 const ONBOARDING_ORDER = [RECOMMENDED_DRIVER, "claudeAgent", "codex", "grokAgent", "kimiAgent", "qwenAgent", "hermesAgent", "openai-compat"];
 
-export function onboardingEngines<I extends Pick<EngineInstance, "driverKind">>(instances: readonly I[], limit = 8): I[] {
+export function onboardingEngines<I extends Pick<EngineInstance, "driverKind"> & Partial<Pick<EngineInstance, "snapshot">>>(
+  instances: readonly I[],
+  limit = 8,
+): I[] {
   const rank = (instance: I) => {
     const at = ONBOARDING_ORDER.indexOf(instance.driverKind);
     return at < 0 ? ONBOARDING_ORDER.length : at;
   };
   return instances
-    .filter((instance) => instance.driverKind !== "boxAgent")
+    // an engine whose setup is a key can't be ready on the first run — it is
+    // listed (with its key form) in Settings › Engines instead
+    .filter((instance) => instance.driverKind !== "boxAgent" && !instance.snapshot?.credential)
     .map((instance, index) => ({ instance, index }))
     .sort((a, b) => rank(a.instance) - rank(b.instance) || a.index - b.index)
     .slice(0, limit)

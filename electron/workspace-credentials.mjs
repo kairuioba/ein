@@ -9,6 +9,9 @@
 // prefers over the file (server/config.ts loadConfig).
 export const WORKSPACE_CREDENTIALS = [
   { section: "xai", field: "key", name: "xaiApiKey", env: "XAI_API_KEY" },
+  // The Claude API engine's Anthropic key. Ein-owned env name: an inherited
+  // ANTHROPIC_API_KEY must never be mistaken for a key the user saved.
+  { section: "claudeApi", field: "key", name: "claudeApiKey", env: "EIN_CLAUDE_API_KEY" },
   { section: "box", field: "token", name: "boxToken", env: "BOX_TOKEN" },
   { section: "tts", field: "key", name: "ttsKey", env: "OMB_TTS_KEY" },
   { section: "imageGen", field: "key", name: "openaiImageApiKey", env: "OMB_OPENAI_IMAGE_KEY" },

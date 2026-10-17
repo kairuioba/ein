@@ -38,6 +38,7 @@ import {
 import { EngineSetup } from "./EngineSetup";
 import { BotAvatar } from "./Avatar";
 import { TurnPresence } from "./TurnPresence";
+import { ProjectPulse } from "./ProjectPulse";
 import { showToolCallsEnabled } from "@/lib/feature-flags";
 import { initialTail, nextTail, showWorkingDots } from "@/lib/turn-tail";
 import { liveActivityLabel } from "@/lib/live-activity";
@@ -1175,6 +1176,9 @@ export function ChatView({ bot }: { bot: Bot }) {
         />
 
         {showToolCallsEnabled(state.config) && <TaskTimeline messages={messages} busy={bot.busy ?? false} />}
+
+        {/* 项目内协同：此刻谁在等谁（数据由派单/交接推导，不读聊天记录） */}
+        <ProjectPulse folderId={activeTask?.folderId} />
 
         {/* Messages + composer share one pane so bubbles scroll into the pill
             instead of dying on a rectangular clip above the dock. */}

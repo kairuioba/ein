@@ -148,6 +148,7 @@ import {
 } from "./send-idempotency.ts";
 import { EventBus } from "./harness/bus.ts";
 import { ProviderRegistry } from "./harness/registry.ts";
+import { migrateWorkbuddyDefaults } from "./workbuddy-defaults.ts";
 import { cancelPeerApprovalsFor, cancelPeerApprovalsForThread, dismissStalePeerCards, requestPeerApproval, resolvePeerComms, type ApprovalBus } from "./peer-approval.ts";
 import {
   mentionedBots,
@@ -736,6 +737,11 @@ function checkedModelSelection(
     }
     selection.effort = value.effort;
   }
+  const target = registry.get(selection.instanceId);
+  // Old onboarding/picker clients may still submit the removed placeholder.
+  if (target?.driverKind === "workbuddyAgent" && selection.model === "default") {
+    selection.model = target.models.default;
+  }
   const changed = current && (
     selection.instanceId !== current.selection.instanceId ||
     selection.model !== current.selection.model ||
@@ -744,7 +750,6 @@ function checkedModelSelection(
   if (current?.busy && changed) {
     return { ok: false, status: 409, error: t("the bot is working — stop it before changing models") };
   }
-  const target = registry.get(selection.instanceId);
   // Model IDs remain free-form at the app's general API boundary. Custom
   // engines can accept IDs that are not in their discovery catalog, and
   // several drivers only learn the final catalog when a turn starts. The
@@ -812,6 +817,7 @@ const store = new Store(() => bootSelection);
 const sendSequencer = new SendSequencer();
 bootSelection = await defaultSelection();
 store.seedIfEmpty();
+migrateWorkbuddyDefaults(store, registry.instances());
 // A committed profile cleanup means both its config deletion and bot-reference
 // cleanup were intended to be durable. Reconcile stale secondary references
 // before Electron can ACK and remove the journal: a crash between those writes

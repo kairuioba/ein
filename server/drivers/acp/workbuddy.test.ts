@@ -11,7 +11,6 @@ import type { ProviderInstance } from "../../contracts.ts";
 import { removeTempDir } from "../../testing/cleanup.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
 import {
-  WORKBUDDY_DEFAULT_MODEL,
   WorkBuddyAgentDriver,
   classifyWorkBuddyError,
   parseAdvertisedModels,
@@ -28,9 +27,12 @@ import {
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "testing", "fake-acp-cli.ts");
 
 describe("WorkBuddy argv", () => {
-  it("enters ACP mode and leaves the CLI default model alone", () => {
-    expect(workbuddySpawnArgs({ fullAuto: false }, undefined)).toEqual(["--acp"]);
-    expect(workbuddySpawnArgs({ fullAuto: false }, WORKBUDDY_DEFAULT_MODEL)).toEqual(["--acp"]);
+  it("defaults an unspecified model to DeepSeek V4.1 Flash", () => {
+    expect(workbuddySpawnArgs({ fullAuto: false }, undefined)).toEqual(["--acp", "--model", "deepseek-v4.1-flash"]);
+  });
+
+  it("maps the old default placeholder to DeepSeek V4.1 Flash", () => {
+    expect(workbuddySpawnArgs({ fullAuto: false }, "default")).toEqual(["--acp", "--model", "deepseek-v4.1-flash"]);
   });
 
   it("passes a picked model and auto-approval only on a full-auto instance", () => {
@@ -61,10 +63,16 @@ describe("WorkBuddy model discovery", () => {
     expect(parseAdvertisedModels(null)).toEqual([]);
   });
 
-  it("always offers the CLI default first", () => {
-    const catalog = workbuddyCatalog([{ id: "glm-4.6", label: "GLM 4.6" }]);
-    expect(catalog.default).toBe(WORKBUDDY_DEFAULT_MODEL);
-    expect(catalog.options.map((option) => option.id)).toEqual([WORKBUDDY_DEFAULT_MODEL, "glm-4.6"]);
+  it("defaults to DeepSeek V4.1 Flash before model discovery completes", () => {
+    const catalog = workbuddyCatalog([]);
+    expect(catalog.default).toBe("deepseek-v4.1-flash");
+    expect(catalog.options[0]).toEqual({ id: "deepseek-v4.1-flash", label: "DeepSeek V4.1 Flash" });
+  });
+
+  it("removes the default placeholder and puts DeepSeek before discovered models", () => {
+    const catalog = workbuddyCatalog([{ id: "default", label: "WorkBuddy default" }, { id: "glm-4.6", label: "GLM 4.6" }]);
+    expect(catalog.default).toBe("deepseek-v4.1-flash");
+    expect(catalog.options.map((option) => option.id)).toEqual(["deepseek-v4.1-flash", "glm-4.6"]);
   });
 
   it("adds the user's models.json models as Custom and honours its allow-list", () => {
@@ -82,15 +90,27 @@ describe("WorkBuddy model discovery", () => {
       available: null,
     };
     expect(workbuddyCatalog(advertised, local).options).toEqual([
-      { id: WORKBUDDY_DEFAULT_MODEL, label: "WorkBuddy default" },
+      { id: "deepseek-v4.1-flash", label: "DeepSeek V4.1 Flash" },
       { id: "hunyuan-t1", label: "Hunyuan T1" },
       { id: "deepseek-v4-pro", label: "DeepSeek via proxy", custom: true },
       { id: "glm-5.2", label: "GLM (renamed)" },
       { id: "my-gpt", label: "My GPT", custom: true },
     ]);
-    // availableModels: only these, applied after the merge, "default" kept
+    // availableModels: only these, applied after the merge, no placeholder
     const trimmed = workbuddyCatalog(advertised, { ...local, available: ["my-gpt", "glm-5.2", "kimi-k3"] });
-    expect(trimmed.options.map((option) => option.id)).toEqual([WORKBUDDY_DEFAULT_MODEL, "glm-5.2", "my-gpt", "kimi-k3"]);
+    expect(trimmed.default).toBe("my-gpt");
+    expect(trimmed.options.map((option) => option.id)).toEqual(["my-gpt", "glm-5.2", "kimi-k3"]);
+  });
+
+  it("deduplicates DeepSeek and preserves a local override and allow-list", () => {
+    const catalog = workbuddyCatalog(
+      [{ id: "deepseek-v4.1-flash", label: "DeepSeek V4.1 Flash" }],
+      { models: [{ id: "deepseek-v4.1-flash", name: "My DeepSeek", endpoint: true }], available: ["deepseek-v4.1-flash"] },
+    );
+    expect(catalog.default).toBe("deepseek-v4.1-flash");
+    expect(catalog.options).toEqual([
+      { id: "deepseek-v4.1-flash", label: "My DeepSeek", custom: true },
+    ]);
   });
 
   it("reads ~/.codebuddy/models.json and ignores a missing or broken one", () => {
@@ -196,7 +216,7 @@ describe("WorkBuddy turns (fake CLI)", () => {
     instance = await WorkBuddyAgentDriver.create({
       instanceId: "workbuddy",
       displayName: "WorkBuddy",
-      environment: {},
+      environment: { HOME: scratch, USERPROFILE: scratch, FAKE_ACP_SESSION_MODELS: "hunyuan-t1,deepseek-v4.1-flash" },
       enabled: true,
       config: { cli: FAKE_CLI, fullAuto: false },
     });
@@ -222,6 +242,36 @@ describe("WorkBuddy turns (fake CLI)", () => {
     expect(argv.slice(-3)).toEqual(["--acp", "--model", "deepseek-v4-pro"]);
   });
 
+  it.each([undefined, "default", "deepseek-v4.1-flash"])("pins DeepSeek in argv and the ACP session for default model %s", async (model) => {
+    const dump = join(scratch, "default-dump.json");
+    process.env.FAKE_ACP_DUMP = dump;
+    await instance.adapter.sendTurn({ threadId: "t-wb-default", text: "你好", model });
+    expect(await recorder.until((event) => event.type === "turn.completed")).toMatchObject({ ok: true });
+    const argv = (JSON.parse(readFileSync(dump, "utf8")) as { argv: string[] }).argv;
+    expect(argv.slice(-3)).toEqual(["--acp", "--model", "deepseek-v4.1-flash"]);
+    expect(JSON.parse(readFileSync(`${dump}.config.json`, "utf8"))).toContainEqual({
+      method: "session/set_model",
+      params: { sessionId: "fake-acp-session", modelId: "deepseek-v4.1-flash" },
+    });
+  });
+
+  it.each([undefined, "default"])("honours the model allow-list when resolving default model %s", async (model) => {
+    mkdirSync(join(scratch, ".codebuddy"), { recursive: true });
+    writeFileSync(join(scratch, ".codebuddy", "models.json"), JSON.stringify({ availableModels: ["hunyuan-t1"] }));
+    await instance.refreshModels?.();
+    expect(instance.models.default).toBe("hunyuan-t1");
+    const dump = join(scratch, "allowed-dump.json");
+    process.env.FAKE_ACP_DUMP = dump;
+    await instance.adapter.sendTurn({ threadId: "t-wb-allowed", text: "你好", model });
+    expect(await recorder.until((event) => event.type === "turn.completed")).toMatchObject({ ok: true });
+    const argv = (JSON.parse(readFileSync(dump, "utf8")) as { argv: string[] }).argv;
+    expect(argv.slice(-3)).toEqual(["--acp", "--model", "hunyuan-t1"]);
+    expect(JSON.parse(readFileSync(`${dump}.config.json`, "utf8"))).toContainEqual({
+      method: "session/set_model",
+      params: { sessionId: "fake-acp-session", modelId: "hunyuan-t1" },
+    });
+  });
+
   it("shows signed out once a background probe is refused for sign-in", async () => {
     const signedOut = await WorkBuddyAgentDriver.create({
       instanceId: "workbuddy-ioa",
@@ -244,6 +294,7 @@ describe("WorkBuddy turns (fake CLI)", () => {
 
   it("mounts the team tools so a WorkBuddy bot can be a Chief or a member", () => {
     expect(instance.adapter.capabilities.agentsMcp).toBe(true);
-    expect(instance.models.options[0]?.id).toBe(WORKBUDDY_DEFAULT_MODEL);
+    expect(instance.models.default).toBe("deepseek-v4.1-flash");
+    expect(instance.models.options[0]?.id).toBe("deepseek-v4.1-flash");
   });
 });

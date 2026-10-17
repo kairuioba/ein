@@ -702,13 +702,13 @@ function askBotAndWait(targetBotId: string, message: string, depth: number, from
 // default selection for new bots: first available instance, claude preferred
 async function defaultSelection() {
   const described = await registry.describe();
-  // "available" is not enough: a configured engine that still needs a
-  // credential (the Claude API engine before the user saves a key, an
-  // OpenAI-compatible engine without its key, …) would become the default
-  // for every new bot and fail on the first send. Treat an unauthenticated
-  // engine like a missing CLI: honest empty state, the setup path instead.
+  // "available" is not enough when the engine itself says a credential is
+  // still missing (the Claude API engine before the user saves a key): that
+  // engine would become the default for every new bot and fail on the first
+  // send. Engines that merely do not report a login (CLI-probed drivers) stay
+  // eligible — "authenticated: false" is not the same as "cannot answer".
   const available = described.filter(
-    (d) => d.snapshot.state === "available" && d.snapshot.authenticated !== false,
+    (d) => d.snapshot.state === "available" && d.snapshot.credential?.configured !== false,
   );
   // Deliberately NO fallback to described[0]. Handing a bot an engine whose
   // CLI isn't installed makes it look ready and then fail on send with a raw

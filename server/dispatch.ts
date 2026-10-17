@@ -25,7 +25,7 @@
 // Dispatch routes (派发通道) are the workbench's wires: by default a Chief
 // can dispatch to every visible member of its own section; an explicit route
 // adds a bot from any section, and an unplugged route removes one.
-import { readFileSync, statSync } from "node:fs";
+import { appendFileSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 import { t } from "../shared/i18n.ts";
@@ -388,6 +388,34 @@ function isStopReason(reason: string | undefined): boolean {
   return code === "interrupted" || code === "cancelled" || code === "canceled";
 }
 
+/** One dispatch run's retrospective record: hard facts only, written when the
+ * run settles. The self-improvement loop reads these; nothing here is a model
+ * judgment. */
+export interface DispatchRetro {
+  at: number;
+  runId: string;
+  goal: string;
+  status: "done" | "failed" | "canceled";
+  parentRunId?: string;
+  chiefBotId: string;
+  startedAt?: number;
+  finishedAt: number;
+  durationMs?: number;
+  counts: { total: number; done: number; failed: number; canceled: number; skipped: number; retried: number };
+  subtasks: Array<{
+    id: string;
+    title: string;
+    role: string;
+    status: string;
+    attempts: number;
+    assigneeBotId: string;
+    reviewer?: string;
+    acceptanceMet?: boolean;
+    ranWith?: { instanceId: string; model: string; effort?: string };
+    durationMs?: number;
+  }>;
+}
+
 export class Dispatcher {
   private runs: DispatchRun[] = [];
   private routeList: DispatchRoute[] = [];
@@ -398,6 +426,7 @@ export class Dispatcher {
   /** chief's thread → the run whose consolidated-report turn runs there */
   private readonly synthesisWatch = new Map<string, string>();
   private readonly host: DispatchHost;
+  private readonly retroFile: string;
   private readonly runsFile: string;
   private readonly routesFile: string;
   private readonly orgFile: string;
@@ -405,6 +434,7 @@ export class Dispatcher {
 
   constructor(host: DispatchHost, dataDir = DATA_DIR) {
     this.host = host;
+    this.retroFile = join(dataDir, "dispatch-retros.ndjson");
     this.runsFile = join(dataDir, "dispatch-runs.json");
     this.routesFile = join(dataDir, "dispatch-routes.json");
     this.orgFile = join(dataDir, "org.json");
@@ -463,6 +493,70 @@ export class Dispatcher {
     const runs = this.restartFinishes;
     this.restartFinishes = [];
     return runs;
+  }
+
+  /** Append one retrospective record when a run settles. Never throws: a
+   * missing record must not break the run. */
+  private recordRetro(run: DispatchRun): void {
+    try {
+      const counts = { total: run.subtasks.length, done: 0, failed: 0, canceled: 0, skipped: 0, retried: 0 };
+      const subtasks = run.subtasks.map((subtask) => {
+        if (subtask.status === "done") counts.done += 1;
+        else if (subtask.status === "failed") counts.failed += 1;
+        else if (subtask.status === "canceled") counts.canceled += 1;
+        else if (subtask.status === "skipped") counts.skipped += 1;
+        if (subtask.attempts > 1) counts.retried += 1;
+        return {
+          id: subtask.id,
+          title: subtask.title,
+          role: subtask.role,
+          status: subtask.status,
+          attempts: subtask.attempts,
+          assigneeBotId: subtask.assigneeBotId,
+          ...(subtask.reviewer ? { reviewer: subtask.reviewer } : {}),
+          ...(subtask.ranWith
+            ? { ranWith: { instanceId: subtask.ranWith.instanceId, model: subtask.ranWith.model, ...(subtask.ranWith.effort ? { effort: subtask.ranWith.effort } : {}) } }
+            : {}),
+          ...(subtask.startedAt && subtask.finishedAt ? { durationMs: subtask.finishedAt - subtask.startedAt } : {}),
+        };
+      });
+      const retro: DispatchRetro = {
+        at: Date.now(),
+        runId: run.id,
+        goal: run.goal,
+        status: run.status as DispatchRetro["status"],
+        ...(run.parentRunId ? { parentRunId: run.parentRunId } : {}),
+        chiefBotId: run.chiefBotId,
+        ...(run.createdAt ? { startedAt: run.createdAt } : {}),
+        finishedAt: run.finishedAt ?? Date.now(),
+        ...(run.createdAt && run.finishedAt ? { durationMs: run.finishedAt - run.createdAt } : {}),
+        counts,
+        subtasks,
+      };
+      appendFileSync(this.retroFile, `${JSON.stringify(retro)}\n`, { mode: 0o600 });
+    } catch (error) {
+      console.error("dispatch: could not write the retrospective", error);
+    }
+  }
+
+  /** The latest retrospective records, newest first. */
+  retros(limit = 20): DispatchRetro[] {
+    try {
+      const lines = readFileSync(this.retroFile, "utf8").split("\n").filter(Boolean);
+      return lines
+        .slice(-Math.max(1, Math.min(200, limit)))
+        .map((line) => {
+          try {
+            return JSON.parse(line) as DispatchRetro;
+          } catch {
+            return null;
+          }
+        })
+        .filter((entry): entry is DispatchRetro => entry !== null)
+        .reverse();
+    } catch {
+      return [];
+    }
   }
 
   private saveRuns(): void {
@@ -1341,6 +1435,7 @@ export class Dispatcher {
     run.finishedAt = now;
     dissolveSquads(run, now);
     this.touch(run);
+    this.recordRetro(run);
     if (!run.parentRunId) return;
     const parent = this.get(run.parentRunId);
     const subtask = parent?.subtasks.find((entry) => entry.id === run.parentSubtaskId);

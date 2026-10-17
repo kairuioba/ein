@@ -346,6 +346,26 @@ describe("Dispatcher", () => {
     expect(prompt).toContain("Reviewer: Ops");
   });
 
+  it("records a retrospective when a run settles", async () => {
+    const result = submit([
+      { id: "a", title: "文案", brief: "写文案", role: "文案策划", acceptance: "三段以内" },
+      { id: "b", title: "数据", brief: "整理数据", role: "数据分析师", depends_on: ["a"] },
+    ]);
+    expect("error" in result).toBe(false);
+    if ("error" in result) return;
+    await dispatcher.cancel(result.run.id);
+    const retros = dispatcher.retros();
+    expect(retros[0]).toMatchObject({
+      runId: result.run.id,
+      status: "canceled",
+      goal: result.run.goal,
+      counts: { total: 2, canceled: 2, retried: 0 },
+    });
+    expect(retros[0]!.subtasks).toHaveLength(2);
+    expect(retros[0]!.subtasks[0]).toMatchObject({ title: "文案", role: "文案策划", reviewer: "总控" });
+    expect(typeof retros[0]!.finishedAt).toBe("number");
+  });
+
   it("falls back to the Chief's model when nothing can be recommended", () => {
     host.recommendation = null;
     const result = submit([{ id: "x", title: "视频剪辑", brief: "剪一条 30 秒预告片", role: "视频剪辑师" }]);

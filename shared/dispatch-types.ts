@@ -124,6 +124,9 @@ export interface DispatchSubtask {
   childRunId?: string;
   /** The squad it was moved to when people were added mid-run. */
   squad?: string;
+  /** the bot that originally held this subtask before a faster teammate took
+   * it over mid-run (same task only) */
+  reassignedFrom?: string;
   /** When an engine throttled this subtask (rate limited), newest last, at most 20. */
   rateLimitedAt?: number[];
   /** Attempts that ended because the engine was rate limited (not the worker's fault). */

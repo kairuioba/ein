@@ -382,6 +382,45 @@ describe("Dispatcher", () => {
     expect(dispatcher.checkpoint(result.run.id, { note: "  " })).toMatchObject({ error: expect.stringContaining("note") });
   });
 
+  it("never gives one bot a second task while it still holds one (one bot, one task)", async () => {
+    const first = submit([{ id: "a", title: "发布会文案", brief: "写文案", role: "文案策划" }]);
+    expect("error" in first).toBe(false);
+    if ("error" in first) return;
+    await settle();
+    expect(first.run.subtasks[0]!.assigneeBotId).toBe("writer");
+    expect(host.bot("writer")!.busy).toBe(true);
+    // the writer still holds the first task: the second task gets a new bot
+    const second = submit([{ id: "b", title: "产品文案", brief: "写产品文案", role: "文案策划" }]);
+    expect("error" in second).toBe(false);
+    if ("error" in second) return;
+    expect(second.run.subtasks[0]!.assigneeBotId).not.toBe("writer");
+    expect(second.run.subtasks[0]!.createdBot).toBe(true);
+  });
+
+  it("lets a fast teammate take a busy teammate's not-started subtask in the same task", async () => {
+    host.add({ id: "editor", name: "小笔", title: "文案策划", description: "负责文案与校对", section: "市场部" });
+    host.settingsValue = dispatchSettings({ maxConcurrent: 2 });
+    const result = submit([
+      { id: "s1", title: "主文案", brief: "写主文案", role: "文案策划", assignee: "小文" },
+      { id: "s2", title: "副文案", brief: "写副文案", role: "文案策划", assignee: "小笔" },
+      { id: "s3", title: "收尾文案", brief: "写收尾文案", role: "文案策划", assignee: "小笔" },
+    ]);
+    expect("error" in result).toBe(false);
+    if ("error" in result) return;
+    await settle();
+    const s1Turn = host.workerTurns().find((turn) => turn.botId === "writer");
+    expect(s1Turn).toBeTruthy();
+    host.finish(dispatcher, s1Turn!.threadId, true, "主文案好了");
+    await settle();
+    const run = dispatcher.get(result.run.id)!;
+    const s3 = run.subtasks.find((subtask) => subtask.id === "s3")!;
+    // the writer finished early; 小笔 is still busy, so the unwritten s3 moves
+    expect(s3.assigneeBotId).toBe("writer");
+    expect(s3.reassignedFrom).toBe("editor");
+    expect(s3.status).toBe("running");
+    expect(host.chips.some((chip) => chip.label.includes("took over"))).toBe(true);
+  });
+
   it("records a retrospective when a run settles", async () => {
     const result = submit([
       { id: "a", title: "文案", brief: "写文案", role: "文案策划", acceptance: "三段以内" },

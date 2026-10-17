@@ -974,6 +974,7 @@ export class Dispatcher {
         score = Math.max(roleSimilarity(item.role, profile), 0.8 * roleSimilarity(`${item.title} ${item.role}`, profile));
       }
       if (score < REUSE_THRESHOLD) continue;
+      if (this.assignedElsewhere(bot.id)) continue;
       if (bot.busy) score -= 0.1;
       score -= 0.05 * assigned.filter((subtask) => subtask.assigneeBotId === bot.id).length;
       if (!best || score > best.score) best = { bot, score };
@@ -984,8 +985,56 @@ export class Dispatcher {
   private leastLoaded(team: DispatchBot[], assigned: DispatchSubtask[], orgChief: boolean): DispatchBot | undefined {
     const workers = team.filter((bot) => !bot.chiefOfStaff || (orgChief && this.isLead(bot)));
     return workers
+      .filter((bot) => !this.assignedElsewhere(bot.id))
       .map((bot) => ({ bot, load: assigned.filter((subtask) => subtask.assigneeBotId === bot.id).length }))
       .sort((a, b) => a.load - b.load)[0]?.bot;
+  }
+
+  /** The hard company rule: one bot belongs to one task at a time. A bot with
+   * unfinished work in another live run cannot be handed a second task; the
+   * dispatcher creates a new specialist instead. */
+  private assignedElsewhere(botId: string): boolean {
+    return this.runs.some(
+      (run) =>
+        !isFinished(run.status) &&
+        run.subtasks.some((subtask) => subtask.assigneeBotId === botId && (subtask.status === "pending" || subtask.status === "running")),
+    );
+  }
+
+  /** A teammate that finished its share early takes more work from the SAME
+   * task: a pending subtask whose owner is busy, same department first, then
+   * one whose role it plausibly fits. Never steals running or started work,
+   * and never borrows a bot that belongs to another task. */
+  private rebalance(run: DispatchRun): void {
+    if (run.status !== "running") return;
+    const pending = run.subtasks.filter((subtask) => subtask.status === "pending" && subtask.attempts === 0 && !subtask.threadId);
+    if (!pending.length) return;
+    const assignees = [...new Set(run.subtasks.map((subtask) => subtask.assigneeBotId))];
+    for (const botId of assignees) {
+      const bot = this.host.bot(botId);
+      if (!bot || bot.busy) continue;
+      if (run.subtasks.some((entry) => entry.assigneeBotId === botId && (entry.status === "running" || entry.status === "pending"))) continue;
+      if (this.assignedElsewhere(botId)) continue;
+      const section = sectionKey(bot.section);
+      const ownerBusy = (subtask: DispatchSubtask) => Boolean(this.host.bot(subtask.assigneeBotId)?.busy);
+      const sameDepartment = pending.find(
+        (subtask) => ownerBusy(subtask) && section && sectionKey(this.host.bot(subtask.assigneeBotId)?.section) === section,
+      );
+      const profile = `${bot.title} ${bot.description} ${bot.name}`;
+      const fits = pending
+        .filter((subtask) => ownerBusy(subtask))
+        .map((subtask) => ({ subtask, score: roleSimilarity(subtask.role, profile) }))
+        .filter((entry) => entry.score >= REUSE_THRESHOLD)
+        .sort((a, b) => b.score - a.score)[0]?.subtask;
+      const pick = sameDepartment ?? fits;
+      if (!pick) continue;
+      const previous = pick.assigneeBotId;
+      if (previous === botId) continue;
+      pick.assigneeBotId = botId;
+      pick.reassignedFrom = previous;
+      pending.splice(pending.indexOf(pick), 1);
+      this.host.activity(run.sourceThreadId, t("@{name} finished early and took over “{title}”", { name: bot.name, title: pick.title }));
+    }
   }
 
   // ── lifecycle ──
@@ -1132,6 +1181,7 @@ export class Dispatcher {
         run.sourceThreadId,
         t("@{name} finished “{title}” ({done}/{total})", { name: bot?.name ?? "?", title: subtask.title, done: finishedCount(), total: run.subtasks.length }),
       );
+      this.rebalance(run);
     } else {
       // an ok turn's reason is just how it ended ("end_turn"), not a failure
       const why = ok ? t("finished without a reply") : reason?.trim() ? reasonLabel(reason) : t("did not finish");

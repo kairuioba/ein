@@ -270,6 +270,7 @@ function ReportCard({ model, report, open, onToggle, actions }: { model: Workben
   if (subtask.boundaries) fields.push([t("Out of scope"), subtask.boundaries]);
   if (subtask.acceptance) fields.push([t("Acceptance"), subtask.acceptance]);
   if (subtask.reviewer) fields.push([t("Reviewer"), subtask.reviewer]);
+  if (subtask.reassignedFrom) fields.push([t("Took over from"), model.botById.get(subtask.reassignedFrom)?.name ?? subtask.reassignedFrom]);
   if (subtask.dependsOn.length) {
     const titles = subtask.dependsOn.map((id) => report.run.subtasks.find((entry) => entry.id === id)?.title ?? id);
     fields.push([t("Depends on"), titles.join(t(", "))]);

@@ -84,7 +84,7 @@ import { buildProjectOffice, emptyProjectOffice } from "./office-view.ts";
 import { buildContextShare, type ContextSource } from "./context-share.ts";
 import { InboxStore } from "./inbox-store.ts";
 import { applyReviewVerdicts, criteriaFor } from "./review-gate.ts";
-import { ReviewLedger } from "./review-ledger.ts";
+import { ReviewLedger, reviewLedgerPath } from "./review-ledger.ts";
 import { runReview, type ReviewHost } from "./review-runner.ts";
 import { deriveSignals, EvolutionStore, proposeImprovements, type EvolutionItem } from "./evolution.ts";
 import { writeFileAtomic } from "./atomic.ts";
@@ -5104,7 +5104,7 @@ function isAllowedOrigin(origin: string | undefined | null): boolean {
 const REVIEWER_MARKER = "system:reviewer";
 const REVIEW_TIMEOUT_MS = 90_000;
 const REVIEW_MAX_PER_RUN = 8;
-const reviewLedger = new ReviewLedger(DATA_DIR);
+const reviewLedger = new ReviewLedger(reviewLedgerPath(DATA_DIR));
 const reviewedAttempts = new Set<string>();
 const reviewCountsByRun = new Map<string, number>();
 let reviewerBotId: string | null = null;
@@ -5175,7 +5175,9 @@ async function doReview(runId: string, subtaskId: string): Promise<void> {
   const run = dispatcher.get(runId);
   const subtask = run?.subtasks.find((entry) => entry.id === subtaskId);
   if (!run || !subtask || !subtask.gate) return;
-  if (run.status !== "running" && run.status !== "synthesizing") return;
+  // reviews are queued; a run may have settled while earlier reviews ran.
+  // Only cancelled/failed runs have nothing worth reviewing.
+  if (run.status === "canceled" || run.status === "failed") return;
   if (subtask.status !== "done") return;
   const attemptKey = `${runId}:${subtaskId}:${subtask.currentAttemptId ?? ""}`;
   if (reviewedAttempts.has(attemptKey)) return;

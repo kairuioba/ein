@@ -68,6 +68,13 @@ export function InboxPanel({
                 <b className="min-w-0 truncate text-[13.5px] text-ink">{item.title}</b>
               </div>
               <p className="mt-1 text-[12.5px] leading-relaxed text-ink-secondary">{item.reason}</p>
+              <p className="mt-1 text-[11px] text-ink-secondary/70">
+                {item.kind === "gate_failed"
+                  ? t("Approve: accept this result. Send back: it redoes the work with your sentence.")
+                  : item.kind === "signoff"
+                    ? t("Approve: the task becomes finished. Send back: record the issue for later.")
+                    : t("Approve to continue.")}
+              </p>
               {item.evidence?.length ? (
                 <ul className="mt-1 list-disc pl-4 text-[11.5px] text-ink-secondary/85">
                   {item.evidence.slice(0, 4).map((line) => (
@@ -85,7 +92,7 @@ export function InboxPanel({
                   />
                   <div className="flex gap-2">
                     <Button size="sm" disabled={!note.trim() || busy === item.id} onClick={() => void act(item, "reject", note.trim())}>
-                      {t("Send back")}
+                      {t("Send back and redo")}
                     </Button>
                     <Button size="sm" variant="soft" onClick={() => { setRejecting(null); setNote(""); }}>
                       {t("Cancel")}
@@ -95,10 +102,10 @@ export function InboxPanel({
               ) : (
                 <div className="mt-2 flex items-center gap-2">
                   <Button size="sm" disabled={busy === item.id} onClick={() => void act(item, "approve")} className="gap-1">
-                    <CheckCircle2 size={13} /> {t("Approve")}
+                    <CheckCircle2 size={13} /> {t("Approve and continue")}
                   </Button>
                   <Button size="sm" variant="soft" disabled={busy === item.id} onClick={() => { setRejecting(item.id); setNote(""); }}>
-                    {t("Send back")}
+                    {t("Send back and redo")}
                   </Button>
                   <Button size="sm" variant="ghost" onClick={() => { void markInboxSeen(item.id).then(onChanged); }}>
                     {t("Later")}

@@ -18,10 +18,13 @@ const STATE_FILE = join(STATE_DIR, "state.json");
 const LOCK_FILE = join(STATE_DIR, "run.lock");
 const OUT_DIR = join(REPO, "docs", "collab");
 const TRANSCRIPT = join(OUT_DIR, "transcript.jsonl");
-const WINDOW_MS = 5 * 60 * 60 * 1000; // 5 小时窗口
-const MAX_CALLS = 12;
-const TOTAL_BUDGET_USD = 6;
-const MIN_INTERVAL_MS = 60_000;
+const WINDOW_MS = 5 * 60 * 60 * 1000; // 5 小时窗口（老板只对时间有要求）
+// No call-count or total-cost cap: the owner asked for unlimited Q&A within
+// the time window. The per-call --max-budget-usd stays as a runaway guard, and
+// the single-instance lock + interval keep the account out of abuse territory.
+const MAX_CALLS = Number.POSITIVE_INFINITY;
+const TOTAL_BUDGET_USD = Number.POSITIVE_INFINITY;
+const MIN_INTERVAL_MS = 30_000;
 const TIMEOUT_MS = 300_000;
 
 const args = process.argv.slice(2);
@@ -88,8 +91,7 @@ if (!state.windowStartedAt) {
   state.windowStartedAt = Date.now();
 }
 if (Date.now() - state.windowStartedAt > WINDOW_MS) fail("5 小时窗口已用完，停止协作。", 3);
-if (state.calls >= MAX_CALLS) fail(`本窗口调用次数上限（${MAX_CALLS}）已到，停止。`, 3);
-if (state.totalCostUsd >= TOTAL_BUDGET_USD) fail(`本窗口预算上限（$${TOTAL_BUDGET_USD}）已到，停止。`, 3);
+// no call-count / total-cost caps (owner: only the time window matters)
 if (Date.now() - (state.lastCallAt || 0) < MIN_INTERVAL_MS) {
   fail(`两次调用间隔不足 ${MIN_INTERVAL_MS / 1000}s，稍后再试（避免高频触发风控）。`, 2);
 }
@@ -176,7 +178,7 @@ child.on("close", (code) => {
     `- 模型：${MODEL}（effort ${EFFORT}）`,
     `- 耗时：${(durationMs / 1000).toFixed(1)}s`,
     `- 本次花费：$${cost.toFixed(4)}（累计 $${next.totalCostUsd.toFixed(4)} / 上限 $${TOTAL_BUDGET_USD}）`,
-    `- 调用：${next.calls}/${MAX_CALLS}（窗口剩余 ${Math.max(0, Math.round((WINDOW_MS - (Date.now() - next.windowStartedAt)) / 60000))} 分钟）`,
+    `- 调用：第 ${next.calls} 次（窗口剩余 ${Math.max(0, Math.round((WINDOW_MS - (Date.now() - next.windowStartedAt)) / 60000))} 分钟）`,
     ...(quota ? ["- ⚠️ 检测到额度/限流信号，已按约定停止"] : []),
     "",
     "## 我们的问题",

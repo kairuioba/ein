@@ -73,6 +73,8 @@ import { chiefOfStaffSystemPrompt } from "./chief-of-staff.ts";
 import { reasonLabel } from "./reason-labels.ts";
 import { Dispatcher, dispatchSettings } from "./dispatch.ts";
 import { TaskFolderStore } from "./task-folders.ts";
+import { buildTaskRetro } from "./task-retro.ts";
+import { buildContextShare, type ContextSource } from "./context-share.ts";
 import type { DispatchRun } from "../shared/dispatch-types.ts";
 import { DEPARTMENT_COLORS } from "../shared/org-types.ts";
 import { UnattendedBots } from "./unattended-state.ts";
@@ -2324,7 +2326,12 @@ const dispatcher = new Dispatcher({
     orgLayer.onDispatchRun(run);
     if (run.parentRunId) return;
     try {
-      taskFolders?.ensureForRun(run, taskLeadForRun(run), run.sourceThreadId);
+      const folder = taskFolders?.ensureForRun(run, taskLeadForRun(run), run.sourceThreadId);
+      // the task is over: its windows stay readable (for review) but closed
+      if (run.status === "done" || run.status === "failed" || run.status === "canceled") {
+        if (folder?.conversationId) store.closeTask(folder.conversationId);
+        for (const subtask of run.subtasks) if (subtask.threadId) store.closeTask(subtask.threadId);
+      }
       broadcast({ kind: "task-folders", tasks: taskFolderViews() });
     } catch (error) {
       console.error("task folders: could not sync a dispatch run", error);
@@ -5582,6 +5589,82 @@ const server = createServer(async (req, res) => {
         broadcast({ kind: "task-folders", tasks });
         return json(res, 200, { task: tasks.find((task) => task.id === created.id), tasks });
       }
+    }
+    const shareMatch = path.match(/^\/api\/task-folders\/([\w-]+)\/context-shares$/);
+    if (shareMatch && method === "POST") {
+      if (!taskFolders) return json(res, 503, { error: "task folders are not ready yet" });
+      const target = taskFolders.byId(shareMatch[1]!);
+      if (!target) return json(res, 404, { error: "no such task folder" });
+      const body = (await readBody(req)) ?? {};
+      const ids = Array.isArray(body.fromTaskIds) ? body.fromTaskIds.map(String).filter(Boolean).slice(0, 3) : [];
+      if (!ids.length) return json(res, 400, { error: "fromTaskIds is required (max 3)" });
+      const sectionsOf = (folder: typeof target): Set<string> => {
+        const run = folder.runId ? dispatcher.get(folder.runId) : undefined;
+        const sections = new Set<string>();
+        for (const subtask of run?.subtasks ?? []) {
+          const section = store.bot(subtask.assigneeBotId)?.section?.trim();
+          if (section) sections.add(section);
+        }
+        const leadSection = folder.leadBotId ? store.bot(folder.leadBotId)?.section?.trim() : undefined;
+        if (leadSection) sections.add(leadSection);
+        return sections;
+      };
+      const targetSections = sectionsOf(target);
+      const sources: ContextSource[] = [];
+      for (const id of ids) {
+        const source = taskFolders.byId(id);
+        if (!source || source.id === target.id) return json(res, 400, { error: "unknown or self source task" });
+        const sourceSections = sectionsOf(source);
+        // same-department rule is enforced here, not in the UI
+        if (targetSections.size && sourceSections.size && ![...sourceSections].some((section) => targetSections.has(section))) {
+          return json(res, 400, { error: "context can only be shared inside the same department" });
+        }
+        const run = source.runId ? dispatcher.get(source.runId) : undefined;
+        const accepted = Boolean(run && run.status === "done" && run.subtasks.every((subtask) => subtask.status === "done" || subtask.status === "skipped"));
+        sources.push({
+          taskId: source.id,
+          title: source.title,
+          accepted,
+          ...(run?.goal ? { goal: run.goal } : {}),
+          artifacts: run?.subtasks.flatMap((subtask) => subtask.handoff?.artifacts ?? []) ?? [],
+          decisions: run?.subtasks.flatMap((subtask) => subtask.handoff?.decisions?.map((entry) => entry.what) ?? []) ?? [],
+          acceptance: run?.subtasks.flatMap((subtask) => (subtask.acceptance ? [subtask.acceptance] : [])) ?? [],
+          pitfalls: run?.subtasks.flatMap((subtask) => subtask.handoff?.risks?.map((entry) => entry.risk) ?? []) ?? [],
+          openIssues: run?.subtasks.flatMap((subtask) => subtask.handoff?.openQuestions ?? []) ?? [],
+        });
+      }
+      const rendered = buildContextShare(sources);
+      const saved = taskFolders.setContextShare(target.id, rendered);
+      if ("error" in saved) return json(res, 400, saved);
+      broadcast({ kind: "task-folders", tasks: taskFolderViews() });
+      return json(res, 200, { share: rendered, tasks: taskFolderViews() });
+    }
+    const retroMatch = path.match(/^\/api\/task-folders\/([\w-]+)\/retro$/);
+    if (retroMatch && method === "GET") {
+      if (!taskFolders) return json(res, 503, { error: "task folders are not ready yet" });
+      const folder = taskFolders.byId(retroMatch[1]!);
+      if (!folder) return json(res, 404, { error: "no such task folder" });
+      const run = folder.runId ? dispatcher.get(folder.runId) : undefined;
+      const conversations = new Map<string, { title: string; botId: string; botName: string; createdAt?: number; closedAt?: number; attemptId?: string }>();
+      for (const bot of store.bots) {
+        for (const task of bot.tasks ?? []) {
+          conversations.set(task.threadId, {
+            title: task.title,
+            botId: bot.id,
+            botName: bot.name,
+            ...(task.createdAt ? { createdAt: task.createdAt } : {}),
+            ...(task.closedAt ? { closedAt: task.closedAt } : {}),
+            ...(task.attemptId ? { attemptId: task.attemptId } : {}),
+          });
+        }
+      }
+      const retro = buildTaskRetro({
+        folder,
+        ...(run ? { run } : {}),
+        conversation: (threadId) => conversations.get(threadId),
+        botName: (botId) => store.bot(botId)?.name,
+      });
+      return json(res, 200, { retro });
     }
     const folderMatch = path.match(/^\/api\/task-folders\/([\w-]+)$/);
     if (folderMatch) {

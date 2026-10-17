@@ -26,6 +26,13 @@ export interface TaskFolderRecord {
   /** handoff summaries explicitly shared from earlier tasks (read-only
    * context, never the old transcript) */
   sharedFromTaskIds?: string[];
+  /** the rendered, budgeted context that was actually injected (audit) */
+  contextShare?: {
+    at: number;
+    fromTaskIds: string[];
+    tokens: number;
+    text: string;
+  };
   createdAt: number;
   archivedAt?: number;
 }

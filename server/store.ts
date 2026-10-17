@@ -1515,6 +1515,20 @@ export class Store {
     return task;
   }
 
+  /** A task ended: keep its window readable but mark it closed so nothing
+   * new is started in it. The conversation is never moved or deleted. */
+  closeTask(threadId: string): void {
+    for (const bot of this.bots) {
+      const task = bot.tasks?.find((entry) => entry.threadId === threadId);
+      if (!task) continue;
+      if (task.closedAt) return;
+      task.closedAt = Date.now();
+      this.saveBots();
+      this.emit({ type: "bot", botId: bot.id });
+      return;
+    }
+  }
+
   switchTask(botId: string, threadId: string): BotRecord | null {
     const bot = this.bot(botId);
     const task = bot?.tasks?.find((t) => t.threadId === threadId);

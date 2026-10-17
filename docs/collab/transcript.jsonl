@@ -28,3 +28,4 @@
 {"ts":1792252923589,"kind":"note","text":"第 6 轮结论：Claude 建议权威字段放会话侧（conversation.folderId/role/botId/attemptId），folder.conversationId 只当主窗口派生指针；Bot 用 currentTaskId 原子 claim/release；上下文共享只让已验收任务贡献做法、失败任务只贡献 negative 教训，≤1500 tokens、≤3 个来源、带只读声明与审计快照；复盘页只读；下 3 个 commit = 归属强制 → 复盘读模型 → 上下文共享 v1。 --slug round-6","slug":"round-6"}
 {"ts":1792252923612,"kind":"conclusion","text":"第 6 轮共识：①任务窗口权威在会话侧，多对一，旧会话永不搬；②Bot 归属靠 currentTaskId 原子抢占/释放，旧会话随任务保留；③上下文共享分两层：v1 事实+教训（只读、有界、有审计），v2 再沉淀岗位经验卡；④复盘是已完成任务里的只读页；⑤按 C1→C2→C3 落地。 --slug round-6","slug":"round-6"}
 {"ts":1792252923636,"kind":"note","text":"下一轮开始实现 C1：会话 folderId/role/botId/attemptId + bot.currentTaskId 原子抢占/释放 + 终态任务拒绝派单；继续用实时看板记录。 --slug round-7","slug":"round-7"}
+{"ts":1792253212243,"kind":"note","text":"C1 落地（提交）：会话绑定 folderId/attemptId/dispatchRole（一次写入、永不搬动）；Bot currentTaskId 作为「一个 Bot 只能一个任务」的唯一权威，plan→run 时原子 claim、终态 release、重启清理；store+dispatch+task-folders 共 153 条测试通过。 --slug round-7","slug":"round-7"}

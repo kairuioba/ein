@@ -85,7 +85,7 @@ export function InboxPanel({
                 {item.kind === "gate_failed"
                   ? t("Approve: accept this result. Send back: it redoes the work with your sentence.")
                   : item.kind === "signoff"
-                    ? t("Approve: the task becomes finished. Send back: record the issue for later.")
+                    ? t("Approve: the task becomes finished (the machine only checked form and facts — the content is yours to judge). Send back: record the issue for later.")
                     : t("Approve to continue.")}
               </p>
               {item.evidence?.length ? (

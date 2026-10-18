@@ -757,6 +757,10 @@ function checkedModelSelection(
   raw: unknown,
   current?: { selection: ModelSelection; busy: boolean },
   requireAvailableModel = false,
+  /** A desktop model switch while the bot is mid-turn only affects its NEXT
+   * turn — the running turn keeps the model it started with — so it is safe
+   * to accept instead of bouncing the picker back. */
+  allowWhileBusy = false,
 ): { ok: true; selection: ModelSelection } | { ok: false; status: number; error: string } {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     return { ok: false, status: 400, error: "modelSelection must be an object" };
@@ -788,7 +792,7 @@ function checkedModelSelection(
     selection.model !== current.selection.model ||
     selection.effort !== current.selection.effort
   );
-  if (current?.busy && changed) {
+  if (current?.busy && changed && !allowWhileBusy) {
     return { ok: false, status: 409, error: t("the bot is working — stop it before changing models") };
   }
   // Model IDs remain free-form at the app's general API boundary. Custom
@@ -7780,6 +7784,7 @@ const server = createServer(async (req, res) => {
           rawSelection,
           existingBot ? { selection: existingBot.modelSelection, busy: Boolean(existingBot.busy) } : undefined,
           body.requireAvailableModel === true,
+          true,
         );
         if (!checked.ok) return json(res, checked.status, { error: checked.error });
         normalizedSelection = checked.selection;

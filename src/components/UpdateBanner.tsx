@@ -3,7 +3,7 @@
 // and while idle/checking; appears only when actionable: an update to
 // download, a download in progress, a restart to apply, or an error.
 import { useEffect, useState } from "react";
-import { ArrowDownToLine, Loader2, RefreshCw, Sparkles, X } from "lucide-react";
+import { ArrowDownToLine, Loader2, Sparkles, X } from "lucide-react";
 import { useUpdaterState } from "@/lib/updater";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
@@ -35,11 +35,13 @@ export function UpdateBanner() {
   // A click has to go renderer → main → broadcast before the real status
   // arrives. Latch the pressed button as busy on the same frame so it greys
   // out immediately; the incoming status clears the latch.
-  const [pending, setPending] = useState<"download" | "install" | "check" | null>(null);
+  const [pending, setPending] = useState<"download" | "check" | null>(null);
   const status = s?.status;
   useEffect(() => setPending(null), [status]);
 
-  if (!s || s.status === "idle" || s.status === "checking") return null;
+  // a fully downloaded update is owned by the one-click modal (UpdatePrompt);
+  // the small card only covers downloading/available/error states
+  if (!s || s.status === "idle" || s.status === "checking" || s.status === "downloaded") return null;
   const key = `${s.status}:${s.version ?? ""}`;
   if (dismissed === key) return null;
   const updater = window.ogb!.updater!;
@@ -55,9 +57,7 @@ export function UpdateBanner() {
         ? s.version
           ? t("Downloading {version}…", { version: s.version })
           : t("Downloading update…")
-        : s.status === "downloaded"
-          ? t("{version} is ready", { version: s.version })
-          : installing
+        : installing
             ? t("Restarting to update…")
             : t("Update check failed");
   const subtitle =
@@ -68,9 +68,7 @@ export function UpdateBanner() {
           s.percent == null
           ? t("Starting download…")
           : `${Math.round(s.percent)}%`
-        : s.status === "downloaded"
-          ? t("Restart to finish updating.")
-          : installing
+        : installing
             ? t("Ein will reopen in a moment.")
             : friendlyError(s.message);
 
@@ -141,27 +139,6 @@ export function UpdateBanner() {
                 <>
                   <ArrowDownToLine size={13} />{" "}
                   {t("Download")}
-                </>
-              )}
-            </button>
-          )}
-          {s.status === "downloaded" && (
-            <button
-              onClick={() => {
-                setPending("install");
-                void updater.install();
-              }}
-              disabled={pending !== null}
-              className={primaryAction}
-            >
-              {pending === "install" ? (
-                <>
-                  <Loader2 size={13} className="animate-spin" /> {t("Restarting…")}
-                </>
-              ) : (
-                <>
-                  <RefreshCw size={13} />{" "}
-                  {t("Restart to update")}
                 </>
               )}
             </button>

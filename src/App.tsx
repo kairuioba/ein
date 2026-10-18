@@ -11,6 +11,7 @@ import { PluginsPanel, preloadConnectedApps } from "@/components/PluginsPanel";
 import { ComputerPanel } from "@/components/ComputerPanel";
 import { InspectorPanel } from "@/components/InspectorPanel";
 import { UpdateBanner } from "@/components/UpdateBanner";
+import { UpdatePrompt } from "@/components/UpdatePrompt";
 import { DesktopCapabilitiesProvider } from "@/components/DesktopCapabilities";
 import { RoutinesPage } from "@/components/RoutinesPage";
 import { NoEngines } from "@/components/NoEngines";
@@ -240,6 +241,8 @@ function Shell() {
     <div className="flex h-full flex-col bg-panel">
       {/* fixed-position popup, bottom-left — outside the layout flow */}
       <UpdateBanner />
+      {/* one-click restart prompt once the background download is ready */}
+      <UpdatePrompt />
       <div className="relative flex min-h-0 flex-1">
       <button
         type="button"

@@ -38,7 +38,7 @@ export const DEFAULT_DISPATCH_SETTINGS: DispatchSettings = {
   maxSubtasks: 8,
   maxNewBots: 4,
   autoSynthesize: true,
-  requireApproval: false,
+  requireApproval: true,
   maxAttempts: 2,
   autoEffort: true,
 };
@@ -189,7 +189,7 @@ export interface SubtaskGate {
 /** One thing waiting on the owner. */
 export interface InboxItem {
   id: string;
-  kind: "gate_failed" | "signoff" | "question" | "failed_exhausted" | "handoff_stuck";
+  kind: "gate_failed" | "signoff" | "question" | "failed_exhausted" | "handoff_stuck" | "plan_approval";
   taskId?: string;
   runId?: string;
   subtaskId?: string;

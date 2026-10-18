@@ -1,11 +1,12 @@
 // 侧栏的任务文件夹：进行中在上、已完成折叠、点一下打开任务窗口。
 import { useMemo, useState } from "react";
-import { CheckCircle2, ChevronDown, Plus, Users } from "lucide-react";
+import { CheckCircle2, ChevronDown, ChevronRight, Plus, Users } from "lucide-react";
 
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import { createTask, forkTask, useTaskFolders } from "@/lib/task-folders";
 import type { TaskFolderView } from "../../shared/task-folders";
+import { TaskHierarchy } from "./TaskHierarchy";
 
 const DONE = new Set(["done", "failed", "canceled"]);
 
@@ -35,6 +36,7 @@ export function TaskFolderList({
 }) {
   const { tasks, refresh } = useTaskFolders();
   const [showDone, setShowDone] = useState(false);
+  const [expandedTasks, setExpandedTasks] = useState<ReadonlySet<string>>(() => new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const active = useMemo(() => tasks.filter((task) => !DONE.has(task.status)), [tasks]);
@@ -80,6 +82,19 @@ export function TaskFolderList({
         <div className="flex min-w-0 items-center gap-0.5">
           <button
             type="button"
+            aria-label={t("Show the team")}
+            title={t("Show the team")}
+            onClick={() => setExpandedTasks((state) => {
+              const next = new Set(state);
+              if (next.has(task.id)) next.delete(task.id); else next.add(task.id);
+              return next;
+            })}
+            className="grid size-6 shrink-0 place-items-center rounded-md text-ink-secondary/65 hover:bg-raised hover:text-ink"
+          >
+            {expandedTasks.has(task.id) ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+          </button>
+          <button
+            type="button"
             onClick={() => open(task)}
             className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-[7px] text-left hover:bg-raised-hover/70"
             title={`${task.title} · ${statusLabel(task)}`}
@@ -105,6 +120,7 @@ export function TaskFolderList({
             </button>
           )}
         </div>
+        {expandedTasks.has(task.id) && <TaskHierarchy task={task} onOpenTask={() => open(task)} />}
         {DONE.has(task.status) && (
           <button
             type="button"

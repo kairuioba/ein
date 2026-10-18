@@ -60,6 +60,7 @@ const KIND_TITLE: Record<InboxItem["kind"], string> = {
   question: "有一个问题等你回答",
   failed_exhausted: "任务重试已用尽",
   handoff_stuck: "交接卡住了",
+  plan_approval: "计划等你确认",
 };
 
 /** 通过后会发生什么（门禁/签收两句是产品定稿文案，其余给一句合理的）。 */
@@ -69,6 +70,7 @@ const APPROVE_EFFECT: Record<InboxItem["kind"], string> = {
   question: "通过即视为已答复，公司继续推进",
   failed_exhausted: "通过即接受失败，不再重试",
   handoff_stuck: "通过即视为已知悉；重发请在对话里让负责人处理",
+  plan_approval: "通过后团队才开始执行",
 };
 
 /** 三种动作对四类条目都能落到现有的 resolve 语义上（approve/reject/abandon）。 */

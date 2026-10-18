@@ -31,6 +31,11 @@ import {
 } from "./dispatch.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
 
+/** Mechanics tests start runs immediately; the owner-confirmation gate has
+ * its own tests that pass `requireApproval: true` explicitly. */
+const settings = (overrides: Parameters<typeof dispatchSettings>[0] = {}) =>
+  dispatchSettings({ requireApproval: false, ...overrides });
+
 interface Turn {
   botId: string;
   text: string;
@@ -63,7 +68,9 @@ class FakeHost implements DispatchHost {
   spentToday?: (section?: string) => number;
   dispatcher?: Dispatcher;
   maxBots = 100;
-  settingsValue: DispatchSettings = dispatchSettings({});
+  // mechanics tests opt out of the owner-confirmation gate; the dedicated
+  // approval tests set requireApproval back on.
+  settingsValue: DispatchSettings = settings({ requireApproval: false });
   recommendation: Recommendation | null = {
     instanceId: "claude",
     engineName: "Claude",
@@ -278,10 +285,10 @@ describe("plan validation", () => {
   });
 
   it("allows plans of up to 30 subtasks", () => {
-    expect(dispatchSettings({ maxSubtasks: 99 }).maxSubtasks).toBe(30);
-    expect(dispatchSettings({ maxSubtasks: 24 }).maxSubtasks).toBe(24);
+    expect(settings({ maxSubtasks: 99 }).maxSubtasks).toBe(30);
+    expect(settings({ maxSubtasks: 24 }).maxSubtasks).toBe(24);
     const thirty = Array.from({ length: 30 }, (_, i) => ({ title: `P${i + 1}`, brief: "做一页" }));
-    expect("error" in validatePlan({ goal: "24 页详情页", subtasks: thirty }, dispatchSettings({ maxSubtasks: 30 }).maxSubtasks)).toBe(false);
+    expect("error" in validatePlan({ goal: "24 页详情页", subtasks: thirty }, settings({ maxSubtasks: 30 }).maxSubtasks)).toBe(false);
   });
 });
 
@@ -298,7 +305,7 @@ describe("matching helpers", () => {
   });
 
   it("clamps settings", () => {
-    expect(dispatchSettings({ maxConcurrent: 99, policy: "nonsense" as never })).toMatchObject({ maxConcurrent: 8, policy: "balanced" });
+    expect(settings({ maxConcurrent: 99, policy: "nonsense" as never })).toMatchObject({ maxConcurrent: 8, policy: "balanced" });
   });
 
   it("reads an org config defensively", () => {
@@ -449,7 +456,7 @@ describe("Dispatcher", () => {
 
   it("lets a fast teammate take a busy teammate's not-started subtask in the same task", async () => {
     host.add({ id: "editor", name: "小笔", title: "文案策划", description: "负责文案与校对", section: "市场部" });
-    host.settingsValue = dispatchSettings({ maxConcurrent: 2 });
+    host.settingsValue = settings({ maxConcurrent: 2 });
     const result = submit([
       { id: "s1", title: "主文案", brief: "写主文案", role: "文案策划", assignee: "小文" },
       { id: "s2", title: "副文案", brief: "写副文案", role: "文案策划", assignee: "小笔" },
@@ -743,7 +750,7 @@ describe("Dispatcher", () => {
   });
 
   it("lets you pick a model and an effort for a subtask that has not started; the bot's own effort beats the automatic one", async () => {
-    host.settingsValue = dispatchSettings({ requireApproval: true });
+    host.settingsValue = settings({ requireApproval: true });
     host.bot("writer")!.modelSelection = { instanceId: "claude", model: "sonnet", effort: "high" };
     const result = submit([
       { id: "a", title: "发布会主持稿", brief: "写主持稿", role: "文案策划", difficulty: 2 },
@@ -775,20 +782,20 @@ describe("Dispatcher", () => {
   });
 
   it("leaves the effort alone when automatic effort is off or the engine has no such knob", async () => {
-    host.settingsValue = dispatchSettings({ autoEffort: false });
+    host.settingsValue = settings({ autoEffort: false });
     host.bot("writer")!.modelSelection = { instanceId: "claude", model: "sonnet" };
     const off = submit([{ id: "a", title: "主持稿", brief: "写主持稿", role: "文案策划", difficulty: 5 }]);
     if ("error" in off) throw new Error(off.error);
     await flush();
     expect(dispatcher.get(off.run.id)!.subtasks[0]!.ranWith).toEqual({ instanceId: "claude", model: "sonnet" });
     // Codex here has no effort levels
-    host.settingsValue = dispatchSettings({});
+    host.settingsValue = settings({});
     host.bot("other")!.modelSelection = { instanceId: "codex", model: "gpt-5.5" };
     expect(dispatcher.turnPick({ difficulty: 5 } as never, host.bot("other")!)).toEqual({ instanceId: "codex", model: "gpt-5.5" });
   });
 
   it("lets you pick any model on any engine you are signed in to; the bot keeps its own", async () => {
-    host.settingsValue = dispatchSettings({ requireApproval: true });
+    host.settingsValue = settings({ requireApproval: true });
     host.bot("writer")!.modelSelection = { instanceId: "claude", model: "sonnet" };
     const result = submit([
       { id: "a", title: "主持稿", brief: "写主持稿", role: "文案策划", difficulty: 2 },
@@ -847,7 +854,7 @@ describe("Dispatcher", () => {
   });
 
   it("takes your pick over HTTP: PATCH a subtask with an engine, a model and an effort", async () => {
-    host.settingsValue = dispatchSettings({ requireApproval: true });
+    host.settingsValue = settings({ requireApproval: true });
     host.bot("writer")!.modelSelection = { instanceId: "claude", model: "sonnet" };
     const result = submit([{ id: "a", title: "主持稿", brief: "写主持稿", role: "文案策划", difficulty: 3 }]);
     if ("error" in result) throw new Error(result.error);
@@ -887,7 +894,7 @@ describe("Dispatcher", () => {
   });
 
   it("lets a failed subtask change its model before it is retried", async () => {
-    host.settingsValue = dispatchSettings({ maxAttempts: 1 });
+    host.settingsValue = settings({ maxAttempts: 1 });
     host.bot("writer")!.modelSelection = { instanceId: "claude", model: "sonnet" };
     const result = submit([{ id: "a", title: "主持稿", brief: "写主持稿", role: "文案策划", difficulty: 4 }]);
     if ("error" in result) throw new Error(result.error);
@@ -970,7 +977,7 @@ describe("Dispatcher", () => {
   });
 
   it("runs independent subtasks in parallel up to the concurrency limit", async () => {
-    host.settingsValue = dispatchSettings({ maxConcurrent: 2 });
+    host.settingsValue = settings({ maxConcurrent: 2 });
     host.add({ id: "w2", name: "设计", title: "视觉设计师", section: "市场部" });
     host.add({ id: "w3", name: "运营", title: "社群运营", section: "市场部" });
     submit([
@@ -1006,7 +1013,7 @@ describe("Dispatcher", () => {
 
   it("treats a turn that cannot start as a failed attempt", async () => {
     host.failStart.add("writer");
-    host.settingsValue = dispatchSettings({ maxAttempts: 1, autoSynthesize: false });
+    host.settingsValue = settings({ maxAttempts: 1, autoSynthesize: false });
     const result = submit([{ id: "a", title: "文案", brief: "写", role: "文案策划" }]);
     if ("error" in result) throw new Error(result.error);
     await flush();
@@ -1025,12 +1032,14 @@ describe("Dispatcher", () => {
   });
 
   it("holds a run for approval when required", async () => {
-    host.settingsValue = dispatchSettings({ requireApproval: true });
+    host.settingsValue = settings({ requireApproval: true });
     const result = submit([{ id: "a", title: "文案", brief: "写", role: "文案策划" }]);
     if ("error" in result) throw new Error(result.error);
     await flush();
     expect(result.run.status).toBe("awaiting-approval");
     expect(host.workerTurns()).toHaveLength(0);
+    // the owner gets a confirmation card before any work can start
+    expect(host.inbox.some((item) => item.kind === "plan_approval" && item.runId === result.run.id)).toBe(true);
     dispatcher.approve(result.run.id);
     await flush();
     expect(host.workerTurns()).toHaveLength(1);
@@ -1047,7 +1056,7 @@ describe("Dispatcher", () => {
   });
 
   it("limits how many specialists one run creates and shares the rest", () => {
-    host.settingsValue = dispatchSettings({ maxNewBots: 1 });
+    host.settingsValue = settings({ maxNewBots: 1 });
     const result = submit([
       { id: "a", title: "法务审核", brief: "审合同", role: "法务顾问" },
       { id: "b", title: "财务测算", brief: "算成本", role: "财务分析" },
@@ -1089,7 +1098,7 @@ describe("Dispatcher", () => {
   });
 
   it("ends the run when a retried subtask's bot is gone, instead of leaving its dependents waiting", async () => {
-    host.settingsValue = dispatchSettings({ autoSynthesize: false });
+    host.settingsValue = settings({ autoSynthesize: false });
     host.add({ id: "w2", name: "设计", title: "视觉设计师", section: "市场部" });
     const result = submit([
       { id: "a", title: "第一步", brief: "做", role: "文案策划" },
@@ -1110,7 +1119,7 @@ describe("Dispatcher", () => {
   });
 
   it("never drops a run still in progress to make room for finished ones", async () => {
-    host.settingsValue = dispatchSettings({ requireApproval: true });
+    host.settingsValue = settings({ requireApproval: true });
     const waiting = submit([{ id: "a", title: "文案", brief: "写", role: "文案策划" }], "等你批的计划");
     if ("error" in waiting) throw new Error(waiting.error);
     // sixty more plans come and go while it waits for the owner
@@ -1129,7 +1138,7 @@ describe("Dispatcher", () => {
   });
 
   it("waits for a fresh report when a subtask is retried while the chief writes one", async () => {
-    host.settingsValue = dispatchSettings({ maxAttempts: 1 });
+    host.settingsValue = settings({ maxAttempts: 1 });
     host.add({ id: "w2", name: "设计", title: "视觉设计师", section: "市场部" });
     const result = submit([
       { id: "copy", title: "文案", brief: "写", role: "文案策划" },
@@ -1169,7 +1178,7 @@ describe("Dispatcher", () => {
   describe("settling every turn", () => {
     it("settles a subtask whose setup fails after startTurn resolved", async () => {
       host.setupFailures.set("writer", ["connected apps could not start"]);
-      host.settingsValue = dispatchSettings({ maxAttempts: 1, autoSynthesize: false });
+      host.settingsValue = settings({ maxAttempts: 1, autoSynthesize: false });
       const result = submit([{ id: "a", title: "文案", brief: "写", role: "文案策划" }]);
       if ("error" in result) throw new Error(result.error);
       await settle();
@@ -1222,7 +1231,7 @@ describe("Dispatcher", () => {
     });
 
     it("treats an engine's ok-but-cancelled settle as a stop, not a finished deliverable", async () => {
-      host.settingsValue = dispatchSettings({ autoSynthesize: false });
+      host.settingsValue = settings({ autoSynthesize: false });
       const result = submit([{ id: "a", title: "文案", brief: "写", role: "文案策划" }]);
       if ("error" in result) throw new Error(result.error);
       await flush();
@@ -1344,7 +1353,7 @@ describe("Dispatcher", () => {
 
     it("keeps a lead that plans its department's share on an engine that can coordinate", () => {
       writeOrg({ chiefBotId: "boss" });
-      host.settingsValue = dispatchSettings({ requireApproval: true });
+      host.settingsValue = settings({ requireApproval: true });
       host.bot("tech")!.modelSelection = { instanceId: "claude", model: "sonnet" };
       const result = orgPlan([
         { id: "page", title: "落地页", brief: "做发布会落地页", role: "前端工程师" },
@@ -1470,7 +1479,7 @@ describe("Dispatcher", () => {
 
     it("fails the lead's subtask when its team's plan produced nothing", async () => {
       writeOrg({ chiefBotId: "boss" });
-      host.settingsValue = dispatchSettings({ maxAttempts: 1 });
+      host.settingsValue = settings({ maxAttempts: 1 });
       const top = orgPlan([{ id: "page", title: "落地页", brief: "做落地页", role: "前端工程师" }]);
       if ("error" in top) throw new Error(top.error);
       await flush();
@@ -1488,7 +1497,7 @@ describe("Dispatcher", () => {
 
     it("brings back the company subtasks that wait on a department whose plan is retried", async () => {
       writeOrg({ chiefBotId: "boss" });
-      host.settingsValue = dispatchSettings({ maxAttempts: 1 });
+      host.settingsValue = settings({ maxAttempts: 1 });
       const top = orgPlan([
         { id: "page", title: "落地页", brief: "做发布会落地页", role: "前端工程师" },
         { id: "en", title: "英文版", brief: "把落地页译成英文", role: "翻译", depends_on: ["page"] },
@@ -1528,7 +1537,7 @@ describe("Dispatcher", () => {
 
     it("reopens a company plan that failed for want of a department whose plan is retried", async () => {
       writeOrg({ chiefBotId: "boss" });
-      host.settingsValue = dispatchSettings({ maxAttempts: 1 });
+      host.settingsValue = settings({ maxAttempts: 1 });
       const top = orgPlan([{ id: "page", title: "落地页", brief: "做落地页", role: "前端工程师" }]);
       if ("error" in top) throw new Error(top.error);
       await flush();
@@ -1556,7 +1565,7 @@ describe("Dispatcher", () => {
 
     it("leaves the company plan alone when a department's superseded plan is retried", async () => {
       writeOrg({ chiefBotId: "boss" });
-      host.settingsValue = dispatchSettings({ maxAttempts: 1 });
+      host.settingsValue = settings({ maxAttempts: 1 });
       const top = orgPlan([{ id: "page", title: "落地页", brief: "做落地页", role: "前端工程师" }]);
       if ("error" in top) throw new Error(top.error);
       await flush();
@@ -1733,7 +1742,7 @@ describe("Dispatcher", () => {
 
   describe("adding people", () => {
     beforeEach(() => {
-      host.settingsValue = dispatchSettings({ maxConcurrent: 2 });
+      host.settingsValue = settings({ maxConcurrent: 2 });
       host.add({ id: "w2", name: "小美", title: "文案策划", description: "写小红书", section: "市场部" });
     });
 

@@ -65,6 +65,8 @@ export interface TaskFolderView extends TaskFolderRecord {
   leadName?: string;
   /** the bot whose conversation is the task window (to open it) */
   conversationBotId?: string;
+  /** that bot's display name (任务总控) */
+  conversationBotName?: string;
 }
 
 export const TASK_FOLDER_COLORS = ["#0EA5E9", "#EC4899", "#8B5CF6", "#F59E0B", "#14B8A6", "#F97316", "#65A30D", "#475467"] as const;

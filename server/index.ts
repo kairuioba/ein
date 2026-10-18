@@ -2295,7 +2295,7 @@ function taskFolderViews(): TaskFolderView[] {
       memberCount: members.length,
       departments,
       ...(lead ? { leadName: lead.name } : {}),
-      ...(conversationBot ? { conversationBotId: conversationBot.id } : {}),
+      ...(conversationBot ? { conversationBotId: conversationBot.id, conversationBotName: conversationBot.name } : {}),
     };
   });
 }
@@ -2399,6 +2399,12 @@ const dispatcher = new Dispatcher({
   broadcast: (run) => {
     broadcast({ kind: "dispatch.run", run });
     orgLayer.onDispatchRun(run);
+    // a plan approved from the workbench must also clear its inbox card
+    if (run.status !== "awaiting-approval") {
+      for (const item of inbox.list("open")) {
+        if (item.kind === "plan_approval" && item.runId === run.id) inbox.resolve(item.id, "approve", t("Confirmed from the workbench"));
+      }
+    }
     if (run.parentRunId) return;
     try {
       const folder = taskFolders?.ensureForRun(run, taskLeadForRun(run), run.sourceThreadId);
@@ -6039,6 +6045,14 @@ const server = createServer(async (req, res) => {
       // act on the task before dropping the item: a send-back runs the work
       // again with the owner's sentence as feedback; an approval records the
       // override of a needs_human gate
+      if (item.kind === "plan_approval" && item.runId) {
+        if (action === "approve") {
+          const approved = dispatcher.approve(item.runId);
+          if ("error" in approved) return json(res, 409, { error: approved.error });
+        } else if (action === "reject" || action === "abandon") {
+          await dispatcher.cancel(item.runId);
+        }
+      }
       if (item.kind === "signoff" && action === "approve" && item.taskId && taskFolders) {
         taskFolders.accept(item.taskId);
       }

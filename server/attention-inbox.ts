@@ -9,6 +9,7 @@ const riskFor = (item: InboxItem): AttentionCard["risk"] => {
     case "signoff":
     case "gate_failed":
     case "handoff_stuck":
+    case "plan_approval":
       return "high";
     case "question":
       return "medium";
@@ -25,7 +26,7 @@ export function attentionCardFor(item: InboxItem, _audit: ApprovalAuditStore, no
   return {
     id: item.id,
     risk: riskFor(item),
-    irreversible: item.kind === "signoff" || item.kind === "gate_failed",
+    irreversible: item.kind === "signoff" || item.kind === "gate_failed" || item.kind === "plan_approval",
     blastRadius: "internal",
     hasSafeDefault: item.kind === "question" || item.kind === "failed_exhausted",
     waitAgeMs: now - item.createdAt,

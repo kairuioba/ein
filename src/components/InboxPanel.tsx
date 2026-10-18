@@ -31,6 +31,7 @@ const KIND_LABEL: Record<InboxItem["kind"], string> = {
   question: t("Waiting for your answer"),
   failed_exhausted: t("Gave up — needs you"),
   handoff_stuck: t("A handoff is stuck"),
+  plan_approval: t("A plan is waiting for your confirmation"),
 };
 
 export function InboxPanel({

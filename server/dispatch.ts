@@ -172,7 +172,7 @@ export interface DispatchHost {
    * the reviewer folds its verdicts back through applyReview). */
   review?(input: { runId: string; subtaskId: string; attemptId?: string }): void;
   /** Put something in the owner's inbox (gate escalation / final sign-off). */
-  needsYou?(item: { kind: "gate_failed" | "signoff" | "question" | "failed_exhausted" | "handoff_stuck"; runId: string; subtaskId?: string; attemptId?: string; title: string; reason: string; evidence?: string[] }): void;
+  needsYou?(item: { kind: "gate_failed" | "signoff" | "question" | "failed_exhausted" | "handoff_stuck" | "plan_approval"; runId: string; subtaskId?: string; attemptId?: string; title: string; reason: string; evidence?: string[] }): void;
   /** Start a turn; rejects when the bot cannot start (busy, missing, no engine). */
   startTurn(botId: string, text: string, opts: DispatchTurnOptions): Promise<void>;
   interrupt(botId: string, threadId: string): Promise<void>;
@@ -1008,6 +1008,16 @@ export class Dispatcher {
       t("Dispatch plan accepted: {count} subtasks for “{goal}”", { count: subtasks.length, goal: clip(plan.goal, 60) }),
     );
     this.host.broadcast(run);
+    if (run.status === "awaiting-approval") {
+      // nothing starts before the owner confirms the plan
+      this.host.needsYou?.({
+        kind: "plan_approval",
+        runId: run.id,
+        title: clip(run.goal, 60),
+        reason: t("A dispatch plan is ready — confirm it and the team will start."),
+        evidence: subtasks.map((subtask) => `${subtask.title} · ${this.host.bot(subtask.assigneeBotId)?.name ?? ""}`),
+      });
+    }
     if (parent) {
       parent.subtask.childRunId = run.id;
       this.touch(parent.run);

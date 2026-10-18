@@ -5,7 +5,7 @@ import { api } from "@/state/store";
 
 export interface InboxItem {
   id: string;
-  kind: "gate_failed" | "signoff" | "question" | "failed_exhausted" | "handoff_stuck";
+  kind: "gate_failed" | "signoff" | "question" | "failed_exhausted" | "handoff_stuck" | "plan_approval";
   taskId?: string;
   runId?: string;
   subtaskId?: string;

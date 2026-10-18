@@ -1,7 +1,7 @@
 {
   "name": "ein",
   "private": true,
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "一念 Ein — 一念起，万 Bot 动. A local-first app for running a team of AI agents.",
   "homepage": "https://github.com/kairuioba/ein-releases",
   "repository": {

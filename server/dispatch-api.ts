@@ -8,6 +8,16 @@ import { t } from "../shared/i18n.ts";
 import type { DispatchDiagnosis, DispatchRun } from "../shared/dispatch-types.ts";
 import type { Dispatcher } from "./dispatch.ts";
 
+/** One task window owns at most one live run: a second plan from the same
+ * conversation would fight over the window (and both auto-resume after a
+ * restart). Exported for tests. */
+export function hasActiveRunInWindow(
+  runs: readonly { sourceThreadId: string; status: string }[],
+  threadId: string,
+): boolean {
+  return runs.some((run) => run.sourceThreadId === threadId && run.status !== "done" && run.status !== "failed" && run.status !== "canceled");
+}
+
 export interface DispatchApiDeps {
   dispatcher: Dispatcher;
   readBody(req: IncomingMessage): Promise<any>;
@@ -163,6 +173,13 @@ export async function handleDispatchApi(
       return true;
     }
     await deps.refreshEngines?.();
+    if (hasActiveRunInWindow(dispatcher.list(), fromThreadId)) {
+      // 200 with an error body: the agent reads it and waits/cancels instead
+      json(res, 200, {
+        error: "This conversation already has a dispatch run in progress. Wait for it to finish, or tell the owner to cancel it before starting another plan.",
+      });
+      return true;
+    }
     const result = dispatcher.submitPlan(fromBotId, fromThreadId, { goal: body.goal, charter: body.charter, subtasks: body.subtasks });
     // 200 with an error body: the agent reads the message and fixes its plan
     if ("error" in result) {
